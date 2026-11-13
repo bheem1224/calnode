@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v*"
   workflow_dispatch:
 
 jobs:
@@ -25,22 +23,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.REGISTRY_TOKEN }}
 
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: forgejo.jwala.net/${{ github.repository }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=sha,prefix=sha-
-            type=raw,value=latest,enable={{is_default_branch}}
-
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: forgejo.jwala.net/${{ github.repository }}:latest
