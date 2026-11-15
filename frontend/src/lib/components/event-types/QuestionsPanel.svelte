@@ -9,6 +9,7 @@
   import { Textarea } from "$lib/components/ui/textarea";
   import * as Select from "$lib/components/ui/select";
   import * as Tooltip from "$lib/components/ui/tooltip";
+  import * as Dialog from "$lib/components/ui/dialog";
   import { toast } from "svelte-sonner";
   import { t, tr } from "$lib/i18n";
 
@@ -41,6 +42,7 @@
     required: false,
   });
   let qAdding = $state(false);
+  let addQOpen = $state(false);
 
   let editingQId = $state<string | null>(null);
   let deleteQOpen = $state(false);
@@ -721,68 +723,79 @@
       </p>
     {/if}
 
-    <!-- Add question form -->
-    <div class="border-t px-4 py-4">
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div class="space-y-1.5">
-          <Label for="q-label">{$t("eventTypeEditor.questions.label")}</Label>
-          <Input
-            id="q-label"
-            bind:value={qForm.label}
-            placeholder={$t("eventTypeEditor.questions.labelPlaceholder")}
-          />
-        </div>
-        <div class="space-y-1.5">
-          <Label for="q-type"
-            >{$t("eventTypeEditor.questions.table.type")}</Label
-          >
-          <Select.Root
-            type="single"
-            value={qForm.type}
-            onValueChange={(v) => {
-              if (v) qForm.type = v as "text" | "select" | "checkbox";
-            }}
-          >
-            <Select.Trigger id="q-type" class="w-full">
-              {QUESTION_TYPES.find((t) => t.value === qForm.type)?.label ??
-                $t("common.select")}
-            </Select.Trigger>
-            <Select.Content>
-              {#each QUESTION_TYPES as qt}
-                <Select.Item value={qt.value} label={qt.label}
-                  >{qt.label}</Select.Item
-                >
-              {/each}
-            </Select.Content>
-          </Select.Root>
-        </div>
-        {#if qForm.type === "select"}
-          <div class="col-span-2 space-y-1.5">
-            <Label for="q-options"
-              >{$t("eventTypeEditor.questions.options")}</Label
-            >
-            <Textarea
-              id="q-options"
-              bind:value={qForm.options}
-              rows={3}
-              placeholder={$t("eventTypeEditor.questions.optionsPlaceholder")}
-            />
-          </div>
-        {/if}
-        <div
-          class="col-span-2 flex items-center justify-between rounded-md border px-3 py-2"
-        >
-          <Label for="q-required" class="cursor-pointer font-normal"
-            >{$t("eventTypeEditor.questions.table.required")}</Label
-          >
-          <Switch id="q-required" bind:checked={qForm.required} />
-        </div>
-      </div>
-      <Button onclick={addQuestion} disabled={qAdding} class="mt-3">
-        {qAdding
-          ? $t("eventTypeEditor.questions.adding")
-          : $t("eventTypeEditor.questions.add")}
+    <!-- Add question button + modal -->
+    <div class="border-t px-4 py-3">
+      <Button type="button" variant="outline" size="sm" onclick={() => (addQOpen = true)}>
+        + {$t("eventTypeEditor.questions.add")}
       </Button>
     </div>
   </div>
 </div>
+
+<Dialog.Root bind:open={addQOpen}>
+  <Dialog.Content class="sm:max-w-md">
+    <Dialog.Header>
+      <Dialog.Title>{$t("eventTypeEditor.questions.add")}</Dialog.Title>
+      <Dialog.Description>Add a custom question to the booking form.</Dialog.Description>
+    </Dialog.Header>
+    <div class="space-y-4 py-2">
+      <div class="space-y-1.5">
+        <Label for="q-type">{$t("eventTypeEditor.questions.table.type")}</Label>
+        <Select.Root
+          type="single"
+          value={qForm.type}
+          onValueChange={(v) => {
+            if (v) qForm.type = v as "text" | "select" | "checkbox";
+          }}
+        >
+          <Select.Trigger id="q-type" class="w-full">
+            {QUESTION_TYPES.find((t) => t.value === qForm.type)?.label ?? $t("common.select")}
+          </Select.Trigger>
+          <Select.Content>
+            {#each QUESTION_TYPES as qt}
+              <Select.Item value={qt.value} label={qt.label}>{qt.label}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+      <div class="space-y-1.5">
+        <Label for="q-label">{$t("eventTypeEditor.questions.label")}</Label>
+        <Input
+          id="q-label"
+          bind:value={qForm.label}
+          placeholder={$t("eventTypeEditor.questions.labelPlaceholder")}
+        />
+      </div>
+      {#if qForm.type === "select"}
+        <div class="space-y-1.5">
+          <Label for="q-options">{$t("eventTypeEditor.questions.options")}</Label>
+          <Textarea
+            id="q-options"
+            bind:value={qForm.options}
+            rows={3}
+            placeholder={$t("eventTypeEditor.questions.optionsPlaceholder")}
+          />
+        </div>
+      {/if}
+      <div class="flex items-center justify-between rounded-md border px-3 py-2.5">
+        <Label for="q-required" class="cursor-pointer font-normal">{$t("eventTypeEditor.questions.table.required")}</Label>
+        <Switch id="q-required" bind:checked={qForm.required} />
+      </div>
+    </div>
+    <Dialog.Footer>
+      <Button type="button" variant="outline" onclick={() => (addQOpen = false)}>
+        {$t("common.cancel")}
+      </Button>
+      <Button
+        type="button"
+        disabled={qAdding}
+        onclick={async () => {
+          await addQuestion();
+          if (!qForm.label) addQOpen = false;
+        }}
+      >
+        {qAdding ? $t("eventTypeEditor.questions.adding") : $t("eventTypeEditor.questions.add")}
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>

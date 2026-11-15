@@ -2095,12 +2095,12 @@
           <div class="rounded-lg border bg-card p-6 space-y-6">
             <!-- Reminders -->
             <div>
-              <p class="mb-1 text-sm font-medium">
-                {$t("eventTypeEditor.notifications.reminders")}
-              </p>
-              <p class="mb-3 text-xs text-muted-foreground">
-                {$t("eventTypeEditor.notifications.remindersHint")}
-              </p>
+              <div class="mb-3 flex items-center gap-1.5">
+                <p class="text-sm font-medium">
+                  {$t("eventTypeEditor.notifications.reminders")}
+                </p>
+                {@render infoTip($t("eventTypeEditor.notifications.remindersHint"))}
+              </div>
               <div class="space-y-2">
                 {#each reminders as hb, i}
                   <div class="flex items-center gap-2">
@@ -2177,12 +2177,12 @@
 
             <!-- Custom messages -->
             <div class="border-t pt-5">
-              <p class="mb-1 text-sm font-medium">
-                {$t("eventTypeEditor.notifications.customMessages")}
-              </p>
-              <p class="mb-3 text-xs text-muted-foreground">
-                {$t("eventTypeEditor.notifications.customMessagesHint")}
-              </p>
+              <div class="mb-3 flex items-center gap-1.5">
+                <p class="text-sm font-medium">
+                  {$t("eventTypeEditor.notifications.customMessages")}
+                </p>
+                {@render infoTip($t("eventTypeEditor.notifications.customMessagesHint"))}
+              </div>
               <div class="space-y-2">
                 {#each [{ key: "confirmation" as const, label: $t("eventTypeEditor.notifications.msg.confirmation") }, { key: "cancellation" as const, label: $t("eventTypeEditor.notifications.msg.cancellation") }, { key: "reschedule" as const, label: $t("eventTypeEditor.notifications.msg.reschedule") }, { key: "reminder" as const, label: $t("eventTypeEditor.notifications.msg.reminder") }] as item}
                   <div class="rounded-md border">
@@ -2367,12 +2367,12 @@
 
             <!-- Assistant greeting -->
             <div class="border-t pt-5">
-              <p class="mb-1 text-sm font-medium">
-                {$t("eventTypeEditor.notifications.assistantGreeting")}
-              </p>
-              <p class="mb-3 text-xs text-muted-foreground">
-                {$t("eventTypeEditor.notifications.assistantGreetingHint")}
-              </p>
+              <div class="mb-3 flex items-center gap-1.5">
+                <p class="text-sm font-medium">
+                  {$t("eventTypeEditor.notifications.assistantGreeting")}
+                </p>
+                {@render infoTip($t("eventTypeEditor.notifications.assistantGreetingHint"))}
+              </div>
               <Textarea
                 bind:value={msg_greeting}
                 rows={2}
