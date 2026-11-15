@@ -725,7 +725,12 @@
 
     <!-- Add question button + modal -->
     <div class="border-t px-4 py-3">
-      <Button type="button" variant="outline" size="sm" onclick={() => (addQOpen = true)}>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onclick={() => (addQOpen = true)}
+      >
         + {$t("eventTypeEditor.questions.add")}
       </Button>
     </div>
@@ -736,7 +741,9 @@
   <Dialog.Content class="sm:max-w-md">
     <Dialog.Header>
       <Dialog.Title>{$t("eventTypeEditor.questions.add")}</Dialog.Title>
-      <Dialog.Description>Add a custom question to the booking form.</Dialog.Description>
+      <Dialog.Description
+        >Add a custom question to the booking form.</Dialog.Description
+      >
     </Dialog.Header>
     <div class="space-y-4 py-2">
       <div class="space-y-1.5">
@@ -749,11 +756,14 @@
           }}
         >
           <Select.Trigger id="q-type" class="w-full">
-            {QUESTION_TYPES.find((t) => t.value === qForm.type)?.label ?? $t("common.select")}
+            {QUESTION_TYPES.find((t) => t.value === qForm.type)?.label ??
+              $t("common.select")}
           </Select.Trigger>
           <Select.Content>
             {#each QUESTION_TYPES as qt}
-              <Select.Item value={qt.value} label={qt.label}>{qt.label}</Select.Item>
+              <Select.Item value={qt.value} label={qt.label}
+                >{qt.label}</Select.Item
+              >
             {/each}
           </Select.Content>
         </Select.Root>
@@ -768,7 +778,9 @@
       </div>
       {#if qForm.type === "select"}
         <div class="space-y-1.5">
-          <Label for="q-options">{$t("eventTypeEditor.questions.options")}</Label>
+          <Label for="q-options"
+            >{$t("eventTypeEditor.questions.options")}</Label
+          >
           <Textarea
             id="q-options"
             bind:value={qForm.options}
@@ -777,13 +789,21 @@
           />
         </div>
       {/if}
-      <div class="flex items-center justify-between rounded-md border px-3 py-2.5">
-        <Label for="q-required" class="cursor-pointer font-normal">{$t("eventTypeEditor.questions.table.required")}</Label>
+      <div
+        class="flex items-center justify-between rounded-md border px-3 py-2.5"
+      >
+        <Label for="q-required" class="cursor-pointer font-normal"
+          >{$t("eventTypeEditor.questions.table.required")}</Label
+        >
         <Switch id="q-required" bind:checked={qForm.required} />
       </div>
     </div>
     <Dialog.Footer>
-      <Button type="button" variant="outline" onclick={() => (addQOpen = false)}>
+      <Button
+        type="button"
+        variant="outline"
+        onclick={() => (addQOpen = false)}
+      >
         {$t("common.cancel")}
       </Button>
       <Button
@@ -794,7 +814,9 @@
           if (!qForm.label) addQOpen = false;
         }}
       >
-        {qAdding ? $t("eventTypeEditor.questions.adding") : $t("eventTypeEditor.questions.add")}
+        {qAdding
+          ? $t("eventTypeEditor.questions.adding")
+          : $t("eventTypeEditor.questions.add")}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>

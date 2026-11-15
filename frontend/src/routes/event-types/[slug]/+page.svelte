@@ -2099,7 +2099,9 @@
                 <p class="text-sm font-medium">
                   {$t("eventTypeEditor.notifications.reminders")}
                 </p>
-                {@render infoTip($t("eventTypeEditor.notifications.remindersHint"))}
+                {@render infoTip(
+                  $t("eventTypeEditor.notifications.remindersHint"),
+                )}
               </div>
               <div class="space-y-2">
                 {#each reminders as hb, i}
@@ -2181,7 +2183,9 @@
                 <p class="text-sm font-medium">
                   {$t("eventTypeEditor.notifications.customMessages")}
                 </p>
-                {@render infoTip($t("eventTypeEditor.notifications.customMessagesHint"))}
+                {@render infoTip(
+                  $t("eventTypeEditor.notifications.customMessagesHint"),
+                )}
               </div>
               <div class="space-y-2">
                 {#each [{ key: "confirmation" as const, label: $t("eventTypeEditor.notifications.msg.confirmation") }, { key: "cancellation" as const, label: $t("eventTypeEditor.notifications.msg.cancellation") }, { key: "reschedule" as const, label: $t("eventTypeEditor.notifications.msg.reschedule") }, { key: "reminder" as const, label: $t("eventTypeEditor.notifications.msg.reminder") }] as item}
@@ -2371,7 +2375,9 @@
                 <p class="text-sm font-medium">
                   {$t("eventTypeEditor.notifications.assistantGreeting")}
                 </p>
-                {@render infoTip($t("eventTypeEditor.notifications.assistantGreetingHint"))}
+                {@render infoTip(
+                  $t("eventTypeEditor.notifications.assistantGreetingHint"),
+                )}
               </div>
               <Textarea
                 bind:value={msg_greeting}
