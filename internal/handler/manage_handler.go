@@ -8,6 +8,7 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/calnode/calnode/internal/booking"
@@ -49,9 +50,12 @@ type managePageData struct {
 	MaxFutureDays   int
 	DurationMinutes int
 	CurrentStartISO string // RFC3339 for JS
-	OrganizerTZ     string
-	Status          string // "confirmed" or "cancelled"
-	TokenInvalid    bool   // token not found or expired
+	OrganizerTZ         string
+	Status              string // "confirmed" or "cancelled"
+	TokenInvalid        bool   // token not found or expired
+	CanCancel           bool
+	CanReschedule       bool
+	RequireCancelReason string // "none", "optional", "required"
 	// Tracking
 	HeadHTML         template.HTML
 	DataLayerEnabled bool
@@ -95,15 +99,20 @@ func (h *Handler) ManagePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var etName, etSlug, locType, locValue string
+	var etName, etSlug, locType, locValue, requireCancelReason string
 	var durMins, maxDays, minNotice int
+	var disableCancel, disableReschedule, allowReschedulePast int
 	var hostName, accentColor string
 	if err := h.db.QueryRowContext(r.Context(), `
 		SELECT et.name, et.slug, et.duration_minutes, et.max_future_days, et.min_notice_minutes,
-		       et.location_type, COALESCE(et.location_value,''), u.name, u.booking_accent
+		       et.location_type, COALESCE(et.location_value,''),
+		       et.disable_cancel, et.disable_reschedule, et.require_cancel_reason, et.allow_reschedule_past,
+		       u.name, u.booking_accent
 		FROM event_types et JOIN users u ON u.id = et.user_id
 		WHERE et.id = ?`, b.EventTypeID).
-		Scan(&etName, &etSlug, &durMins, &maxDays, &minNotice, &locType, &locValue, &hostName, &accentColor); err != nil {
+		Scan(&etName, &etSlug, &durMins, &maxDays, &minNotice, &locType, &locValue,
+			&disableCancel, &disableReschedule, &requireCancelReason, &allowReschedulePast,
+			&hostName, &accentColor); err != nil {
 		h.logger.ErrorContext(r.Context(), "manage page: load event type", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -158,9 +167,12 @@ func (h *Handler) ManagePage(w http.ResponseWriter, r *http.Request) {
 		LocationLabel:    locationLabel(locType, locValue, loc),
 		MaxFutureDays:    maxDays,
 		DurationMinutes:  durMins,
-		CurrentStartISO:  b.StartAt.UTC().Format(time.RFC3339),
-		OrganizerTZ:      orgTZ,
-		Status:           b.Status,
+		CurrentStartISO:     b.StartAt.UTC().Format(time.RFC3339),
+		OrganizerTZ:         orgTZ,
+		Status:              b.Status,
+		CanCancel:           disableCancel == 0,
+		CanReschedule:       disableReschedule == 0 && (allowReschedulePast == 1 || !b.StartAt.Before(time.Now().UTC())),
+		RequireCancelReason: requireCancelReason,
 	}
 	h.renderManage(w, r, data, loc)
 }
@@ -234,12 +246,20 @@ func (h *Handler) RescheduleByToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var durMins int
+	var durMins, disableReschedule, allowReschedulePast int
 	if err := h.db.QueryRowContext(r.Context(),
-		`SELECT duration_minutes FROM event_types WHERE id = ?`, b.EventTypeID).
-		Scan(&durMins); err != nil {
+		`SELECT duration_minutes, disable_reschedule, allow_reschedule_past FROM event_types WHERE id = ?`, b.EventTypeID).
+		Scan(&durMins, &disableReschedule, &allowReschedulePast); err != nil {
 		h.logger.ErrorContext(r.Context(), "reschedule: load duration", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if disableReschedule == 1 {
+		h.writeError(w, http.StatusForbidden, "rescheduling is disabled for this event type")
+		return
+	}
+	if allowReschedulePast == 0 && b.StartAt.Before(time.Now().UTC()) {
+		h.writeError(w, http.StatusForbidden, "past bookings cannot be rescheduled")
 		return
 	}
 
@@ -377,7 +397,41 @@ func (h *Handler) CancelByToken(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req) // reason is optional; ignore decode errors
 
-	b, err := h.bookingSvc.CancelByToken(r.Context(), token, req.Reason)
+	existing, err := h.bookingSvc.ValidateManageToken(r.Context(), token)
+	if errors.Is(err, booking.ErrTokenNotFound) {
+		h.writeError(w, http.StatusNotFound, "manage link not found or expired")
+		return
+	}
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "cancel by token: validate", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	var disableCancel int
+	var requireCancelReason string
+	if err := h.db.QueryRowContext(r.Context(),
+		`SELECT disable_cancel, require_cancel_reason FROM event_types WHERE id = ?`, existing.EventTypeID).
+		Scan(&disableCancel, &requireCancelReason); err != nil {
+		h.logger.ErrorContext(r.Context(), "cancel by token: load policy", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if disableCancel == 1 {
+		h.writeError(w, http.StatusForbidden, "cancellation is disabled for this event type")
+		return
+	}
+	reason := strings.TrimSpace(req.Reason)
+	switch requireCancelReason {
+	case "required":
+		if reason == "" {
+			h.writeError(w, http.StatusBadRequest, "cancellation reason is required")
+			return
+		}
+	case "none":
+		reason = ""
+	}
+
+	b, err := h.bookingSvc.CancelByToken(r.Context(), token, reason)
 	if errors.Is(err, booking.ErrTokenNotFound) {
 		h.writeError(w, http.StatusNotFound, "manage link not found or expired")
 		return

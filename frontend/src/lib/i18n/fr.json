@@ -1584,6 +1584,19 @@
 			"questions": "Questions",
 			"embed": "Intégration"
 		},
+		"policies": {
+			"title": "Reprogrammation et annulation",
+			"disableCancel": "Désactiver l'annulation",
+			"disableCancelHint": "Masque l'option d'annulation sur la page de gestion de l'invité.",
+			"disableReschedule": "Désactiver la reprogrammation",
+			"disableRescheduleHint": "Masque l'option de reprogrammation sur la page de gestion de l'invité.",
+			"cancelReason": "Motif d'annulation",
+			"cancelReasonNone": "Masqué (aucun champ)",
+			"cancelReasonOptional": "Optionnel",
+			"cancelReasonRequired": "Obligatoire",
+			"allowReschedulePast": "Autoriser la reprogrammation d'événements passés",
+			"allowReschedulePastHint": "Permet aux invités de reprogrammer même après l'heure de début initiale."
+		},
 		"readOnly": {
 			"banner": "a créé ce type de rendez-vous.",
 			"messageThem": "Écrivez-leur",

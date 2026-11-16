@@ -178,8 +178,8 @@ body {
     <div id="main-view">
       <p class="scheduled-label">{{call .T "scheduled_for"}}</p>
       <p class="scheduled-time" id="current-time"></p>
-      <button class="btn-primary" id="reschedule-btn">{{call .T "reschedule"}}</button>
-      <button class="btn-secondary" id="cancel-btn">{{call .T "cancel_booking"}}</button>
+      {{if .CanReschedule}}<button class="btn-primary" id="reschedule-btn">{{call .T "reschedule"}}</button>{{end}}
+      {{if .CanCancel}}<button class="btn-secondary" id="cancel-btn">{{call .T "cancel_booking"}}</button>{{end}}
     </div>
 
     <!-- Reschedule: pick a new time -->
@@ -215,10 +215,12 @@ body {
       </button>
       <p class="section-title">{{call .T "cancel_this_booking_question"}}</p>
       <p class="hint" style="margin-bottom:1rem">{{call .T "cancel_booking_notice"}}</p>
+      {{if ne .RequireCancelReason "none"}}
       <div class="field">
-        <label for="cancel-reason">{{call .T "reason_optional_label"}}</label>
-        <input id="cancel-reason" type="text" placeholder="{{call .T "reason_placeholder"}}" maxlength="200">
+        <label for="cancel-reason">{{call .T "reason_optional_label"}}{{if eq .RequireCancelReason "required"}} *{{end}}</label>
+        <input id="cancel-reason" type="text" placeholder="{{call .T "reason_placeholder"}}" maxlength="200"{{if eq .RequireCancelReason "required"}} required{{end}}>
       </div>
+      {{end}}
       <p id="cancel-error" class="form-error" role="alert" aria-live="assertive"></p>
       <button class="btn-secondary" id="confirm-cancel-btn" style="margin-top:0">{{call .T "yes_cancel_booking"}}</button>
     </div>
@@ -548,16 +550,20 @@ body {
   });
 
   // ── Navigation ──────────────────────────────────────────────────────────────
-  $('reschedule-btn').addEventListener('click', () => {
-    showView('reschedule-view');
-    setRStep('cal'); // mobile: start on the calendar step
-    if (!pickedDate) {
-      $('slots-date').textContent = t('select_a_date');
-      $('slots-list').innerHTML = `<p class="hint">${t('pick_day_hint')}</p>`;
-    }
-    loadMonthAvailability(navYear, navMonth);
-  });
-  $('cancel-btn').addEventListener('click', () => showView('cancel-confirm-view'));
+  if ($('reschedule-btn')) {
+    $('reschedule-btn').addEventListener('click', () => {
+      showView('reschedule-view');
+      setRStep('cal'); // mobile: start on the calendar step
+      if (!pickedDate) {
+        $('slots-date').textContent = t('select_a_date');
+        $('slots-list').innerHTML = `<p class="hint">${t('pick_day_hint')}</p>`;
+      }
+      loadMonthAvailability(navYear, navMonth);
+    });
+  }
+  if ($('cancel-btn')) {
+    $('cancel-btn').addEventListener('click', () => showView('cancel-confirm-view'));
+  }
   // In the reschedule slots step on mobile, "Back" returns to the calendar step;
   // otherwise (desktop, or calendar step) it exits to the main view.
   $('back-to-main-btn').addEventListener('click', () => {
@@ -578,7 +584,8 @@ body {
         body: JSON.stringify({ start_at: pickedSlot.start }),
       });
       if (r.status === 409) {
-        errEl.textContent = t('slot_no_longer_available_error');
+        const data = await r.json().catch(() => ({}));
+        errEl.textContent = data.error || t('slot_no_longer_available_error');
         btn.disabled = false; btn.textContent = t('confirm_reschedule'); return;
       }
       if (!r.ok) {
@@ -608,11 +615,18 @@ body {
   // ── Confirm cancel ──────────────────────────────────────────────────────────
   $('confirm-cancel-btn').addEventListener('click', async () => {
     const btn = $('confirm-cancel-btn'), errEl = $('cancel-error');
+    const reasonEl = $('cancel-reason');
+    const reasonVal = reasonEl ? reasonEl.value.trim() : '';
+    if (reasonEl && reasonEl.required && !reasonVal) {
+      errEl.textContent = 'Please enter a reason.';
+      reasonEl.focus();
+      return;
+    }
     btn.disabled = true; btn.textContent = t('cancelling'); errEl.textContent = '';
     try {
       const r = await fetch(`/manage/${TOKEN}/cancel`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: $('cancel-reason').value.trim() }),
+        body: JSON.stringify({ reason: reasonVal }),
       });
       if (r.status === 409) {
         errEl.textContent = t('already_cancelled_error');

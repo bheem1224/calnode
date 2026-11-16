@@ -56,6 +56,10 @@ export type EventType = {
 	max_active_bookings: number;
 	max_per_day?: number | null;
 	max_per_week?: number | null;
+	disable_cancel?: boolean;
+	disable_reschedule?: boolean;
+	require_cancel_reason?: 'none' | 'optional' | 'required';
+	allow_reschedule_past?: boolean;
 	price_cents: number; // 0 = free
 	currency: string;    // ISO 4217, lowercase (e.g. "usd")
 	created_at: string;

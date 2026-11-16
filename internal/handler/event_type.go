@@ -40,6 +40,10 @@ type eventTypeJSON struct {
 	MaxActiveBookings   int     `json:"max_active_bookings"`
 	MaxPerDay           *int    `json:"max_per_day"`
 	MaxPerWeek          *int    `json:"max_per_week"`
+	DisableCancel       bool    `json:"disable_cancel"`
+	DisableReschedule   bool    `json:"disable_reschedule"`
+	RequireCancelReason string  `json:"require_cancel_reason"`
+	AllowReschedulePast bool    `json:"allow_reschedule_past"`
 	IsActive            bool    `json:"is_active"`
 	// ShowTakenSlots renders already-booked times greyed out on the booking page
 	// instead of omitting them. Off by default: the slots endpoint is public, so this
@@ -111,6 +115,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	var subjConf, subjCancel, subjResched, subjRemind sql.NullString
 	var maxPerDay, maxPerWeek sql.NullInt64
 	var isActive, isPublic, showTaken int
+	var disableCancel, disableResched, allowReschedPast int
 
 	dests := []any{
 		&et.ID, &et.Slug, &et.Name, &desc,
@@ -124,6 +129,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 		&subjConf, &subjCancel, &subjResched, &subjRemind,
 		&et.PriceCents, &et.Currency, &et.InviteDelivery, &et.DisplayOrder,
 		&maxPerDay, &maxPerWeek,
+		&disableCancel, &disableResched, &et.RequireCancelReason, &allowReschedPast,
 	}
 	dests = append(dests, trailing...)
 	err := s.Scan(dests...)
@@ -171,6 +177,9 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	}
 	et.MaxPerDay = nullIntPtr(maxPerDay)
 	et.MaxPerWeek = nullIntPtr(maxPerWeek)
+	et.DisableCancel = disableCancel != 0
+	et.DisableReschedule = disableResched != 0
+	et.AllowReschedulePast = allowReschedPast != 0
 	et.Reminders = []int{} // initialise to non-nil so JSON encodes as [] not null
 	return &et, nil
 }
@@ -227,7 +236,8 @@ const etColumns = `id, slug, name, description,
 	msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, msg_greeting,
 	subj_confirmation, subj_cancellation, subj_reschedule, subj_reminder,
 	price_cents, currency, invite_delivery, display_order,
-	max_per_day, max_per_week`
+	max_per_day, max_per_week,
+	disable_cancel, disable_reschedule, require_cancel_reason, allow_reschedule_past`
 
 // selectETCols fetches a single event type without the caller-relative columns.
 const selectETCols = "SELECT " + etColumns + " FROM event_types"
@@ -582,6 +592,10 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		MaxActiveBookings   *int        `json:"max_active_bookings"`
 		MaxPerDay           nullableInt `json:"max_per_day"`
 		MaxPerWeek          nullableInt `json:"max_per_week"`
+		DisableCancel       *bool       `json:"disable_cancel"`
+		DisableReschedule   *bool       `json:"disable_reschedule"`
+		RequireCancelReason *string     `json:"require_cancel_reason"`
+		AllowReschedulePast *bool       `json:"allow_reschedule_past"`
 		IsActive            *bool       `json:"is_active"`
 		IsPublic            *bool   `json:"is_public"`
 		AllowPhoneCall      *bool   `json:"allow_phone_call"`
@@ -714,6 +728,24 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		set("max_per_week", v)
+	}
+	if req.DisableCancel != nil {
+		set("disable_cancel", *req.DisableCancel)
+	}
+	if req.DisableReschedule != nil {
+		set("disable_reschedule", *req.DisableReschedule)
+	}
+	if req.RequireCancelReason != nil {
+		switch *req.RequireCancelReason {
+		case "none", "optional", "required":
+			set("require_cancel_reason", *req.RequireCancelReason)
+		default:
+			h.writeError(w, http.StatusBadRequest, "require_cancel_reason must be none, optional, or required")
+			return
+		}
+	}
+	if req.AllowReschedulePast != nil {
+		set("allow_reschedule_past", *req.AllowReschedulePast)
 	}
 	if req.PriceCents != nil {
 		if *req.PriceCents < 0 {

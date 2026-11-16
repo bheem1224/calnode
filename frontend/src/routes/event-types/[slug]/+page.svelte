@@ -133,6 +133,10 @@
     max_active_bookings: 1,
     max_per_day: "" as number | "" | null,
     max_per_week: "" as number | "" | null,
+    disable_cancel: false,
+    disable_reschedule: false,
+    require_cancel_reason: "optional" as "none" | "optional" | "required",
+    allow_reschedule_past: false,
     price_cents: 0,
     currency: "usd",
   });
@@ -568,6 +572,10 @@
         max_active_bookings: et.max_active_bookings,
         max_per_day: et.max_per_day ?? "",
         max_per_week: et.max_per_week ?? "",
+        disable_cancel: !!et.disable_cancel,
+        disable_reschedule: !!et.disable_reschedule,
+        require_cancel_reason: et.require_cancel_reason ?? "optional",
+        allow_reschedule_past: !!et.allow_reschedule_past,
         price_cents: et.price_cents ?? 0,
         currency: et.currency ?? "usd",
       };
@@ -688,6 +696,10 @@
         max_active_bookings: Number(form.max_active_bookings),
         max_per_day: maxPerDay === 0 ? null : maxPerDay,
         max_per_week: maxPerWeek === 0 ? null : maxPerWeek,
+        disable_cancel: form.disable_cancel,
+        disable_reschedule: form.disable_reschedule,
+        require_cancel_reason: form.require_cancel_reason,
+        allow_reschedule_past: form.allow_reschedule_past,
         price_cents: Math.max(0, Math.round(Number(priceMajor) * 100)) || 0,
         currency: form.currency.trim().toLowerCase() || "usd",
         routing_mode: routingMode,
@@ -1822,6 +1834,75 @@
                 </div>
               {/if}
             </div>
+          </div>
+
+          <h2
+            class="mb-3 mt-8 text-sm font-semibold uppercase tracking-wider text-muted-foreground"
+          >
+            {$t("eventTypeEditor.policies.title")}
+          </h2>
+          <div class="space-y-4 rounded-lg border bg-card p-6">
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <Label>{$t("eventTypeEditor.policies.disableCancel")}</Label>
+                <p class="text-xs text-muted-foreground">
+                  {$t("eventTypeEditor.policies.disableCancelHint")}
+                </p>
+              </div>
+              <Switch bind:checked={form.disable_cancel} />
+            </div>
+
+            {#if !form.disable_cancel}
+              <div class="space-y-1.5 border-t pt-4">
+                <Label for="et-cancel-reason"
+                  >{$t("eventTypeEditor.policies.cancelReason")}</Label
+                >
+                <select
+                  id="et-cancel-reason"
+                  bind:value={form.require_cancel_reason}
+                  class="flex h-9 w-full max-w-xs rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <option value="none"
+                    >{$t("eventTypeEditor.policies.cancelReasonNone")}</option
+                  >
+                  <option value="optional"
+                    >{$t(
+                      "eventTypeEditor.policies.cancelReasonOptional",
+                    )}</option
+                  >
+                  <option value="required"
+                    >{$t(
+                      "eventTypeEditor.policies.cancelReasonRequired",
+                    )}</option
+                  >
+                </select>
+              </div>
+            {/if}
+
+            <div class="flex items-center justify-between gap-4 border-t pt-4">
+              <div>
+                <Label>{$t("eventTypeEditor.policies.disableReschedule")}</Label
+                >
+                <p class="text-xs text-muted-foreground">
+                  {$t("eventTypeEditor.policies.disableRescheduleHint")}
+                </p>
+              </div>
+              <Switch bind:checked={form.disable_reschedule} />
+            </div>
+
+            {#if !form.disable_reschedule}
+              <div class="flex items-center justify-between gap-4 border-t pt-4">
+                <div>
+                  <Label
+                    >{$t("eventTypeEditor.policies.allowReschedulePast")}</Label
+                  >
+                  <p class="text-xs text-muted-foreground">
+                    {$t("eventTypeEditor.policies.allowReschedulePastHint")}
+                  </p>
+                </div>
+                <Switch bind:checked={form.allow_reschedule_past} />
+              </div>
+            {/if}
           </div>
         </div>
       {/if}

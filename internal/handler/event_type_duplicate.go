@@ -144,7 +144,8 @@ func (h *Handler) DuplicateEventType(w http.ResponseWriter, r *http.Request) {
 		  msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, msg_greeting,
 		  subj_confirmation, subj_cancellation, subj_reschedule, subj_reminder,
 		  price_cents, currency, invite_delivery, display_order,
-		  max_per_day, max_per_week)
+		  max_per_day, max_per_week,
+		  disable_cancel, disable_reschedule, require_cancel_reason, allow_reschedule_past)
 		SELECT
 		  ?, user_id, team_id, ?, name, description,
 		  duration_minutes, slot_interval_minutes,
@@ -156,7 +157,8 @@ func (h *Handler) DuplicateEventType(w http.ResponseWriter, r *http.Request) {
 		  msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, msg_greeting,
 		  subj_confirmation, subj_cancellation, subj_reschedule, subj_reminder,
 		  price_cents, currency, invite_delivery, display_order,
-		  max_per_day, max_per_week
+		  max_per_day, max_per_week,
+		  disable_cancel, disable_reschedule, require_cancel_reason, allow_reschedule_past
 		FROM event_types WHERE id = ?`, newID, newSlug, srcID); err != nil {
 		h.logger.ErrorContext(r.Context(), "duplicate event type: copy row", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
