@@ -1387,21 +1387,99 @@
                   <Input id="et-slug" class="min-w-0" bind:value={form.slug} />
                 </div>
               </div>
-              <div class="space-y-1.5 min-w-0">
-                <div class="flex items-center gap-1.5">
-                  <Label for="et-dur"
-                    >{$t("eventTypeEditor.general.duration")}</Label
-                  >
-                  {@render infoTip($t("eventTypeEditor.general.durationHint"))}
+              {#if form.allow_multiple_durations}
+                {@const remainingDurations = [15, 30, 45, 60, 90, 120].filter((d) => !form.duration_options.includes(d))}
+                <div class="sm:col-span-2 space-y-1.5 min-w-0">
+                  <Label>{$t("eventTypeEditor.general.availableDurations")}</Label>
+                  <div class="flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border bg-background px-2.5 py-1.5">
+                    {#each form.duration_options as d}
+                      <span class="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs font-medium">
+                        {d} mins
+                        {#if form.duration_options.length > 1}
+                          <button
+                            type="button"
+                            class="text-muted-foreground hover:text-foreground"
+                            aria-label="Remove {d} mins"
+                            onclick={() => {
+                              const next = form.duration_options.filter((x) => x !== d);
+                              form.duration_options = next;
+                              if (!next.includes(form.duration_minutes) && next.length > 0) {
+                                form.duration_minutes = next[0];
+                              }
+                            }}
+                          >×</button>
+                        {/if}
+                      </span>
+                    {/each}
+                    {#if remainingDurations.length > 0}
+                      <Select.Root
+                        type="single"
+                        value=""
+                        onValueChange={(v) => {
+                          if (v) {
+                            const val = Number(v);
+                            if (!form.duration_options.includes(val)) {
+                              form.duration_options = [...form.duration_options, val].sort((a, b) => a - b);
+                            }
+                          }
+                        }}
+                      >
+                        <Select.Trigger class="h-6 w-auto border-0 bg-transparent px-1.5 text-xs text-muted-foreground shadow-none focus:ring-0">
+                          <span>+ {$t("eventTypeEditor.general.addDurationPlaceholder")}</span>
+                        </Select.Trigger>
+                        <Select.Content>
+                          {#each remainingDurations as d}
+                            <Select.Item value={String(d)} label="{d} mins">{d} mins</Select.Item>
+                          {/each}
+                        </Select.Content>
+                      </Select.Root>
+                    {/if}
+                  </div>
                 </div>
-                <Input
-                  id="et-dur"
-                  type="number"
-                  min="5"
-                  step="5"
-                  bind:value={form.duration_minutes}
-                />
-              </div>
+                <div class="space-y-1.5 min-w-0">
+                  <div class="flex items-center gap-1.5">
+                    <Label for="et-dur-default"
+                      >{$t("eventTypeEditor.general.defaultDuration")}</Label
+                    >
+                    {@render infoTip($t("eventTypeEditor.general.durationHint"))}
+                  </div>
+                  <Select.Root
+                    type="single"
+                    value={String(form.duration_minutes)}
+                    onValueChange={(v) => {
+                      if (v) form.duration_minutes = Number(v);
+                    }}
+                  >
+                    <Select.Trigger
+                      id="et-dur-default"
+                      class="w-full min-w-0 overflow-hidden"
+                    >
+                      <span class="truncate">{form.duration_minutes} mins</span>
+                    </Select.Trigger>
+                    <Select.Content>
+                      {#each form.duration_options as d}
+                        <Select.Item value={String(d)} label="{d} mins">{d} mins</Select.Item>
+                      {/each}
+                    </Select.Content>
+                  </Select.Root>
+                </div>
+              {:else}
+                <div class="space-y-1.5 min-w-0">
+                  <div class="flex items-center gap-1.5">
+                    <Label for="et-dur"
+                      >{$t("eventTypeEditor.general.duration")}</Label
+                    >
+                    {@render infoTip($t("eventTypeEditor.general.durationHint"))}
+                  </div>
+                  <Input
+                    id="et-dur"
+                    type="number"
+                    min="5"
+                    step="5"
+                    bind:value={form.duration_minutes}
+                  />
+                </div>
+              {/if}
               <div class="space-y-1.5 min-w-0">
                 <div class="flex items-center gap-1.5">
                   <Label for="et-slot"
@@ -1439,41 +1517,25 @@
                   </Select.Content>
                 </Select.Root>
               </div>
-              <div class="sm:col-span-2 space-y-2.5 rounded-md border p-3.5">
-                <div class="flex items-center justify-between gap-4">
-                  <div>
-                    <Label for="et-multi-dur"
-                      >{$t("eventTypeEditor.general.allowMultipleDurations")}</Label
-                    >
-                    <p class="text-xs text-muted-foreground">
-                      {$t("eventTypeEditor.general.allowMultipleDurationsHint")}
-                    </p>
-                  </div>
-                  <Switch
-                    id="et-multi-dur"
-                    bind:checked={form.allow_multiple_durations}
-                  />
+              <div class="sm:col-span-2 flex items-center justify-between gap-4 rounded-md border p-3.5">
+                <div>
+                  <Label for="et-multi-dur"
+                    >{$t("eventTypeEditor.general.allowMultipleDurations")}</Label
+                  >
+                  <p class="text-xs text-muted-foreground">
+                    {$t("eventTypeEditor.general.allowMultipleDurationsHint")}
+                  </p>
                 </div>
-                {#if form.allow_multiple_durations}
-                  <div class="flex flex-wrap gap-2 pt-1">
-                    {#each [15, 30, 45, 60, 90, 120] as d}
-                      {@const selected = form.duration_options.includes(d)}
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={selected ? "default" : "outline"}
-                        class="h-7 px-2.5 text-xs"
-                        onclick={() => {
-                          if (selected && form.duration_options.length > 1) {
-                            form.duration_options = form.duration_options.filter((x) => x !== d);
-                          } else if (!selected) {
-                            form.duration_options = [...form.duration_options, d].sort((a, b) => a - b);
-                          }
-                        }}>{d}m</Button
-                      >
-                    {/each}
-                  </div>
-                {/if}
+                <Switch
+                  id="et-multi-dur"
+                  checked={form.allow_multiple_durations}
+                  onCheckedChange={(checked) => {
+                    form.allow_multiple_durations = checked;
+                    if (checked && !form.duration_options.includes(form.duration_minutes)) {
+                      form.duration_options = [...form.duration_options, form.duration_minutes].sort((a, b) => a - b);
+                    }
+                  }}
+                />
               </div>
               <div class="sm:col-span-2 space-y-1.5 min-w-0">
                 <Label for="et-desc"
