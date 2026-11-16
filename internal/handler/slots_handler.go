@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -66,11 +67,20 @@ var (
 func (h *Handler) GetSlots(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	tzName := r.URL.Query().Get("tz")
+	var reqDuration int
+	if rawDur := strings.TrimSpace(r.URL.Query().Get("duration")); rawDur != "" {
+		d, err := strconv.Atoi(rawDur)
+		if err != nil || d <= 0 {
+			h.writeError(w, http.StatusBadRequest, "invalid duration")
+			return
+		}
+		reqDuration = d
+	}
 	// The public booking page is the one surface that may see taken slots, and only
 	// when the event type opted in; computeSlots enforces the second half.
 	res, err := h.computeSlots(r.Context(), slug, tzName,
 		r.URL.Query().Get("from"), r.URL.Query().Get("to"),
-		slotsWanted{Taken: true, NoticeGap: true, SingleUseToken: r.URL.Query().Get("single_use_token")})
+		slotsWanted{Taken: true, NoticeGap: true, SingleUseToken: r.URL.Query().Get("single_use_token"), DurationMinutes: reqDuration})
 	switch {
 	case errors.Is(err, errEventTypeNotFound):
 		h.writeError(w, http.StatusNotFound, "event type not found")
@@ -80,6 +90,9 @@ func (h *Handler) GetSlots(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, errBadDateRange):
 		h.writeError(w, http.StatusBadRequest, "from/to must be YYYY-MM-DD and from <= to")
+		return
+	case errors.Is(err, errInvalidDuration):
+		h.writeError(w, http.StatusBadRequest, "requested duration is not allowed")
 		return
 	case err != nil:
 		h.logger.ErrorContext(r.Context(), "slots", "error", err)
@@ -149,6 +162,8 @@ func (h *Handler) GetSlots(w http.ResponseWriter, r *http.Request) {
 // in the payload to mark them unbookable. The notice gap is a presentation aid for a
 // human staring at a thin calendar; an agent is handed only bookable times and has
 // nothing to explain.
+var errInvalidDuration = errors.New("invalid duration")
+
 type slotsWanted struct {
 	// Taken asks for the starts a booking or calendar conflict removed. Still subject
 	// to the event type's own show_taken_slots opt-in.
@@ -157,6 +172,8 @@ type slotsWanted struct {
 	NoticeGap bool
 	// SingleUseToken optionally authorizes slot visibility for a private (is_public=0) event type.
 	SingleUseToken string
+	// DurationMinutes optionally overrides et.DurationMinutes when allow_multiple_durations is enabled.
+	DurationMinutes int
 }
 
 // computeSlots returns the bookable slots (and the candidate hosts' display map) for
@@ -184,6 +201,12 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 	}
 	if err != nil {
 		return slotsResult{}, err
+	}
+	if want.DurationMinutes > 0 && want.DurationMinutes != et.DurationMinutes {
+		if !et.AllowMultipleDurations || !et.allowsDuration(want.DurationMinutes) {
+			return slotsResult{}, errInvalidDuration
+		}
+		et.DurationMinutes = want.DurationMinutes
 	}
 
 	if tzName == "" {

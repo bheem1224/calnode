@@ -21,6 +21,11 @@ export type User = {
 	notify_host_reschedule: boolean;
 };
 
+export type LocationOption = {
+	type: string;
+	value?: string;
+};
+
 export type EventType = {
 	/** Lower first on public person/team pages; ties sort by name, then slug. */
 	display_order: number;
@@ -78,6 +83,9 @@ export type EventType = {
 	confirm_notice_minutes?: number;
 	unconfirmed_blocks_slots?: boolean;
 	require_email_verification?: boolean;
+	allow_multiple_durations?: boolean;
+	duration_options?: number[];
+	location_options?: LocationOption[];
 	price_cents: number; // 0 = free
 	currency: string;    // ISO 4217, lowercase (e.g. "usd")
 	created_at: string;

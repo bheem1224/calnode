@@ -630,6 +630,9 @@ func TestDuplicateEventType_handlesEveryEventTypeColumn(t *testing.T) {
 		"confirm_notice_minutes":      true,
 		"unconfirmed_blocks_slots":    true,
 		"require_email_verification":  true,
+		"allow_multiple_durations":    true,
+		"duration_options":            true,
+		"location_options":            true,
 	}
 	// Deliberately not inherited, with the reason.
 	notInherited := map[string]string{

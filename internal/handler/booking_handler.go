@@ -528,6 +528,24 @@ type bookableEventType struct {
 	ConfirmMode              string
 	ConfirmNoticeMinutes     int
 	RequireEmailVerification bool
+	AllowMultipleDurations   bool
+	DurationOptions          []int
+	LocationOptions          []LocationOption
+}
+
+func (et *bookableEventType) allowsDuration(d int) bool {
+	if d == et.DurationMinutes {
+		return true
+	}
+	if !et.AllowMultipleDurations {
+		return false
+	}
+	for _, opt := range et.DurationOptions {
+		if opt == d {
+			return true
+		}
+	}
+	return false
 }
 
 // loadBookableEventType loads an event type by slug for the booking-creation/slot paths.
@@ -542,9 +560,9 @@ func (h *Handler) loadBookableEventType(ctx context.Context, slug string) (*book
 func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug string, allowPrivate bool) (*bookableEventType, error) {
 	var et bookableEventType
 	var isActive, isPublic, showTaken, showFirst int
-	var reqConfirm, reqEmailVerify int
+	var reqConfirm, reqEmailVerify, allowMultiDur int
 	var maxPerDay, maxPerWeek, maxPerMonth, maxPerYear, maxDurDay, maxDurWeek sql.NullInt64
-	var rangeStart, rangeEnd sql.NullString
+	var rangeStart, rangeEnd, durOptsRaw, locOptsRaw sql.NullString
 	err := h.db.QueryRowContext(ctx, `
 		SELECT et.id, et.user_id, et.name, et.duration_minutes, et.slot_interval_minutes,
 		       et.location_type, et.location_value, et.allow_phone_call, et.routing_mode, et.rr_strategy,
@@ -554,7 +572,8 @@ func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug 
 		       et.max_per_month, et.max_per_year, et.max_duration_per_day, et.max_duration_per_week,
 		       et.show_first_slot_only, et.future_limit_mode, et.future_range_start, et.future_range_end,
 		       COALESCE(u.iana_timezone, 'UTC'),
-		       et.requires_confirmation, et.confirm_mode, et.confirm_notice_minutes, et.require_email_verification
+		       et.requires_confirmation, et.confirm_mode, et.confirm_notice_minutes, et.require_email_verification,
+		       et.allow_multiple_durations, et.duration_options, et.location_options
 		FROM event_types et
 		LEFT JOIN users u ON u.id = et.user_id
 		WHERE et.slug = ?`, slug).
@@ -566,7 +585,8 @@ func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug 
 			&maxPerMonth, &maxPerYear, &maxDurDay, &maxDurWeek,
 			&showFirst, &et.FutureLimitMode, &rangeStart, &rangeEnd,
 			&et.OwnerTimezone,
-			&reqConfirm, &et.ConfirmMode, &et.ConfirmNoticeMinutes, &reqEmailVerify)
+			&reqConfirm, &et.ConfirmMode, &et.ConfirmNoticeMinutes, &reqEmailVerify,
+			&allowMultiDur, &durOptsRaw, &locOptsRaw)
 	if err != nil || isActive == 0 || (!allowPrivate && isPublic == 0) {
 		return nil, errEventTypeNotFound
 	}
@@ -574,6 +594,13 @@ func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug 
 	et.ShowFirstSlotOnly = showFirst != 0
 	et.RequiresConfirmation = reqConfirm != 0
 	et.RequireEmailVerification = reqEmailVerify != 0
+	et.AllowMultipleDurations = allowMultiDur != 0
+	if durOptsRaw.Valid && durOptsRaw.String != "" {
+		_ = json.Unmarshal([]byte(durOptsRaw.String), &et.DurationOptions)
+	}
+	if locOptsRaw.Valid && locOptsRaw.String != "" {
+		_ = json.Unmarshal([]byte(locOptsRaw.String), &et.LocationOptions)
+	}
 	et.MaxPerDay = nullIntPtr(maxPerDay)
 	et.MaxPerWeek = nullIntPtr(maxPerWeek)
 	et.MaxPerMonth = nullIntPtr(maxPerMonth)
@@ -816,9 +843,11 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		// Deliberately NOT named "company": browsers map that to the organization
 		// autofill entry (ignoring autocomplete="off") and fill this invisible field
 		// for real humans, who are then rejected as bots (#33).
-		Honeypot          string `json:"hp_extra"`
-		SingleUseToken    string `json:"single_use_token"`
-		VerificationToken string `json:"verification_token"`
+		Honeypot          string          `json:"hp_extra"`
+		SingleUseToken    string          `json:"single_use_token"`
+		VerificationToken string          `json:"verification_token"`
+		DurationMinutes   *int            `json:"duration_minutes"`
+		SelectedLocation  *LocationOption `json:"selected_location"`
 		Answers           []struct {
 			QuestionID string `json:"question_id"`
 			Value      string `json:"value"`
@@ -949,18 +978,44 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		return // validateAnswers already wrote the error response
 	}
 
-	endAt := startAt.UTC().Add(time.Duration(et.DurationMinutes) * time.Minute)
+	durMins := et.DurationMinutes
+	if req.DurationMinutes != nil && *req.DurationMinutes != et.DurationMinutes {
+		if !et.allowsDuration(*req.DurationMinutes) {
+			h.writeError(w, http.StatusBadRequest, "requested duration is not allowed for this event type")
+			return
+		}
+		durMins = *req.DurationMinutes
+	}
+	endAt := startAt.UTC().Add(time.Duration(durMins) * time.Minute)
 
 	locValue := ""
 	if et.LocationValue != nil {
 		locValue = *et.LocationValue
+	}
+	if req.SelectedLocation != nil && len(et.LocationOptions) > 0 {
+		selType := strings.TrimSpace(req.SelectedLocation.Type)
+		selVal := strings.TrimSpace(req.SelectedLocation.Value)
+		matched := false
+		for _, opt := range et.LocationOptions {
+			if opt.Type == selType && (opt.Value == "" || opt.Value == selVal || selVal == "") {
+				et.LocationType = opt.Type
+				locValue = opt.Value
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			h.writeError(w, http.StatusBadRequest, "selected_location is not configured for this event type")
+			return
+		}
 	}
 
 	// Resolve candidate hosts by routing mode: rotation hosts for round-robin,
 	// required hosts otherwise. Archived hosts are excluded by resolveEventTypeHosts.
 	req.Phone = strings.TrimSpace(req.Phone)
 	if req.Phone != "" {
-		if !et.AllowPhoneCall || !onlineMeetingLocation(et.LocationType) || len(req.Phone) > 40 || !validPhone(req.Phone) {
+		allowPhone := et.AllowPhoneCall || et.LocationType == "phone" || et.LocationType == "attendee_phone"
+		if !allowPhone || len(req.Phone) > 40 || !validPhone(req.Phone) {
 			h.writeError(w, http.StatusBadRequest, "invalid telephone number")
 			return
 		}

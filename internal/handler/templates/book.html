@@ -138,6 +138,13 @@ body {
     <p id="host-name" class="host-name">{{.HostsLabel}}</p>
     <h1 class="event-name">{{.Name}}</h1>
     {{template "eventMeta" .}}
+    {{if and .AllowMultipleDurations (gt (len .DurationOptions) 1)}}
+    <div id="duration-picker" style="display:flex;flex-wrap:wrap;gap:0.35rem;margin-top:0.75rem">
+      {{range .DurationOptions}}
+      <button type="button" class="btn-secondary dur-pill{{if eq . $.DurationMinutes}} active{{end}}" data-duration="{{.}}" style="width:auto;padding:0.3rem 0.65rem;font-size:0.8rem">{{.}}m</button>
+      {{end}}
+    </div>
+    {{end}}
     {{if .AssistantEnabled}}
     <button type="button" class="asst-link" id="asst-open-inline">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.8L18.7 9.7l-4.8 1.9L12 16.4l-1.9-4.8L5.3 9.7l4.8-1.9L12 3z"/></svg>
@@ -219,6 +226,16 @@ body {
              .ID is the event type's own intake-question primary key (admin-configured, not
              attacker-controlled at booking time), and Go's html/template context-aware-escapes
              every {{.ID}} below regardless — there is no raw/unescaped output here. */}}
+        {{if gt (len .LocationOptions) 1}}
+        <div class="field">
+          <label for="f-location-select">Location</label>
+          <select id="f-location-select" name="selected_location">
+            {{range $idx, $opt := .LocationOptions}}
+            <option value="{{$opt.Type}}|{{$opt.Value}}" data-type="{{$opt.Type}}" data-value="{{$opt.Value}}">{{$opt.Label}}</option>
+            {{end}}
+          </select>
+        </div>
+        {{end}}
         {{if .PhoneChoice}}
         <div class="field">
           <label for="f-phone">{{call .T "phone_call_number"}}</label>
@@ -319,6 +336,7 @@ body {
   const SINGLE_USE_TOKEN = "{{.SingleUseToken}}";
   const REDIRECT_URL     = "{{.RedirectURL}}";
   const REQUIRE_EMAIL_VERIFY = {{if .RequireEmailVerification}}true{{else}}false{{end}};
+  let selectedDuration = {{.DurationMinutes}};
   let verificationToken = '';
   let verifiedEmail = '';
   const MAX_DAYS = {{.MaxFutureDays}};
@@ -504,7 +522,8 @@ body {
     const to   = toDateStr(y, m, lastDay);
     try {
       const tokenParam = SINGLE_USE_TOKEN ? `&single_use_token=${encodeURIComponent(SINGLE_USE_TOKEN)}` : '';
-      const r = await fetch(`/v1/event-types/${SLUG}/slots?from=${from}&to=${to}&tz=${encodeURIComponent(TZ)}${tokenParam}`);
+      const durParam = selectedDuration > 0 ? `&duration=${selectedDuration}` : '';
+      const r = await fetch(`/v1/event-types/${SLUG}/slots?from=${from}&to=${to}&tz=${encodeURIComponent(TZ)}${tokenParam}${durParam}`);
       if (!r.ok) throw new Error(r.status);
       const data = await r.json();
       Object.assign(hostMeta, data.hosts || {});
@@ -685,7 +704,8 @@ body {
     list.innerHTML = `<p class="hint">${t('loading')}</p>`;
     try {
       const tokenParam = SINGLE_USE_TOKEN ? `&single_use_token=${encodeURIComponent(SINGLE_USE_TOKEN)}` : '';
-      const r = await fetch(`/v1/event-types/${SLUG}/slots?from=${ds}&to=${ds}&tz=${encodeURIComponent(TZ)}${tokenParam}`);
+      const durParam = selectedDuration > 0 ? `&duration=${selectedDuration}` : '';
+      const r = await fetch(`/v1/event-types/${SLUG}/slots?from=${ds}&to=${ds}&tz=${encodeURIComponent(TZ)}${tokenParam}${durParam}`);
       if (!r.ok) throw new Error(r.status);
       const data = await r.json();
       Object.assign(hostMeta, data.hosts || {});
@@ -771,6 +791,21 @@ body {
       }
     });
   })();
+
+  document.querySelectorAll('.dur-pill').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const d = parseInt(btn.dataset.duration || '0', 10);
+      if (!d || d === selectedDuration) return;
+      selectedDuration = d;
+      document.querySelectorAll('.dur-pill').forEach(b => b.classList.toggle('active', b === btn));
+      pickedSlot = null;
+      await loadMonthAvailability(navYear, navMonth);
+      if (pickedDate) {
+        const ds = toDateStr(pickedDate.getFullYear(), pickedDate.getMonth(), pickedDate.getDate());
+        await pickDate(ds, pickedDate.getFullYear(), pickedDate.getMonth(), pickedDate.getDate());
+      }
+    });
+  });
 
   // ── Email verification (when enabled) ───────────────────────────────────
   if (REQUIRE_EMAIL_VERIFY) {
@@ -906,6 +941,13 @@ body {
           hp_extra: form.hp_extra.value,
           single_use_token: SINGLE_USE_TOKEN || undefined,
           verification_token: verificationToken || undefined,
+          duration_minutes: selectedDuration || undefined,
+          selected_location: (() => {
+            const sel = $('f-location-select');
+            if (!sel) return undefined;
+            const opt = sel.options[sel.selectedIndex];
+            return opt ? { type: opt.dataset.type || '', value: opt.dataset.value || '' } : undefined;
+          })(),
           answers,
         }),
       });

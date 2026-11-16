@@ -35,6 +35,12 @@ var bookTmpl = template.Must(template.Must(template.New("book").Funcs(template.F
 	"supportedLocales": i18n.SupportedLocales,
 }).Parse(sharedPartialsSrc)).Parse(bookTmplSrc))
 
+type bookLocationOption struct {
+	Type  string
+	Value string
+	Label string
+}
+
 type bookQuestion struct {
 	ID              string
 	Label           string
@@ -54,6 +60,7 @@ type bookPageData struct {
 	Name             string
 	Description      template.HTML
 	DurationLabel    string
+	DurationMinutes  int
 	HostName         string
 	HostInitial      string
 	AvatarURL        string
@@ -77,6 +84,9 @@ type bookPageData struct {
 	MaxFutureDays            int
 	Questions                []bookQuestion
 	RequireEmailVerification bool
+	AllowMultipleDurations   bool
+	DurationOptions          []int
+	LocationOptions          []bookLocationOption
 	// AssistantEnabled shows the conversational-booking chat panel when the LLM layer is on.
 	AssistantEnabled bool
 	// AssistantDisclosure is the persistent AI-disclosure notice on the chat panel (Art. 50(1)).
@@ -491,13 +501,17 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		accentColor    string
 		redirectURL    string
 		reqEmailVerify bool
+		allowMultiDur  bool
+		durOptsRaw     sql.NullString
+		locOptsRaw     sql.NullString
 	)
 	query := `
 		SELECT et.id, et.name, COALESCE(et.description, ''),
 		       et.duration_minutes, et.location_type, COALESCE(et.location_value, ''),
 		       et.max_future_days, et.min_notice_minutes, et.routing_mode, u.name, COALESCE(u.avatar_url, ''),
 		       et.price_cents, et.currency, et.msg_greeting, et.allow_phone_call, u.booking_accent,
-		       COALESCE(et.redirect_url, ''), et.require_email_verification
+		       COALESCE(et.redirect_url, ''), et.require_email_verification,
+		       et.allow_multiple_durations, et.duration_options, et.location_options
 		FROM event_types et
 		JOIN users u ON u.id = et.user_id
 		WHERE et.slug = ? AND et.is_active = 1`
@@ -505,7 +519,7 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		query += ` AND et.is_public = 1`
 	}
 	err := h.db.QueryRowContext(r.Context(), query, slug).
-		Scan(&etID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor, &redirectURL, &reqEmailVerify)
+		Scan(&etID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor, &redirectURL, &reqEmailVerify, &allowMultiDur, &durOptsRaw, &locOptsRaw)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Page not found", http.StatusNotFound)
@@ -570,6 +584,36 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 	loc := h.resolveLocaleWithFallback(r, brand.FallbackLocale)
 	i18nJSON, _ := loc.JSON()
 
+	var durOptions []int
+	if allowMultiDur && durOptsRaw.Valid && durOptsRaw.String != "" {
+		_ = json.Unmarshal([]byte(durOptsRaw.String), &durOptions)
+	}
+	if allowMultiDur && len(durOptions) > 0 {
+		hasDefault := false
+		for _, d := range durOptions {
+			if d == durMins {
+				hasDefault = true
+				break
+			}
+		}
+		if !hasDefault {
+			durOptions = append([]int{durMins}, durOptions...)
+		}
+	}
+	var locOptions []bookLocationOption
+	if locOptsRaw.Valid && locOptsRaw.String != "" {
+		var rawOpts []LocationOption
+		if json.Unmarshal([]byte(locOptsRaw.String), &rawOpts) == nil {
+			for _, o := range rawOpts {
+				lbl := locationLabel(o.Type, o.Value, loc)
+				if lbl == "" {
+					lbl = o.Type
+				}
+				locOptions = append(locOptions, bookLocationOption{Type: o.Type, Value: o.Value, Label: lbl})
+			}
+		}
+	}
+
 	data := bookPageData{
 		PhoneChoice:         allowPhoneCall && onlineMeetingLocation(locType),
 		AccentColor:         accentColor,
@@ -578,6 +622,7 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		Name:                name,
 		Description:         renderMarkdown(description),
 		DurationLabel:       durationLabel(durMins, loc),
+		DurationMinutes:     durMins,
 		HostName:            hosts[0].Name,
 		HostInitial:         hosts[0].Initial,
 		AvatarURL:           hosts[0].AvatarURL,
@@ -622,6 +667,9 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		PrefillEmail:             prefill.Email,
 		RedirectURL:              redirectURL,
 		RequireEmailVerification: reqEmailVerify,
+		AllowMultipleDurations:   allowMultiDur,
+		DurationOptions:          durOptions,
+		LocationOptions:          locOptions,
 	}
 
 	h.persistLangOverride(w, r)

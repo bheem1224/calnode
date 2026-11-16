@@ -7,6 +7,7 @@
     api,
     type EventType,
     type EventTypeHost,
+    type LocationOption,
     type TeamMember,
     type Team,
     type CalendarStatus,
@@ -158,6 +159,9 @@
     confirm_notice_minutes: 30,
     unconfirmed_blocks_slots: true,
     require_email_verification: false,
+    allow_multiple_durations: false,
+    duration_options: [15, 30, 45, 60] as number[],
+    location_options: [] as LocationOption[],
     price_cents: 0,
     currency: "usd",
   });
@@ -671,6 +675,15 @@
         confirm_notice_minutes: et.confirm_notice_minutes ?? 30,
         unconfirmed_blocks_slots: et.unconfirmed_blocks_slots ?? true,
         require_email_verification: !!et.require_email_verification,
+        allow_multiple_durations: !!et.allow_multiple_durations,
+        duration_options:
+          et.duration_options && et.duration_options.length > 0
+            ? [...et.duration_options]
+            : [15, 30, 45, 60],
+        location_options: (et.location_options ?? []).map((o) => ({
+          type: o.type,
+          value: o.value ?? "",
+        })),
         price_cents: et.price_cents ?? 0,
         currency: et.currency ?? "usd",
       };
@@ -821,6 +834,11 @@
         confirm_notice_minutes: Math.max(0, Number(form.confirm_notice_minutes) || 0),
         unconfirmed_blocks_slots: form.unconfirmed_blocks_slots,
         require_email_verification: form.require_email_verification,
+        allow_multiple_durations: form.allow_multiple_durations,
+        duration_options: form.allow_multiple_durations
+          ? form.duration_options
+          : [],
+        location_options: form.location_options,
         price_cents: Math.max(0, Math.round(Number(priceMajor) * 100)) || 0,
         currency: form.currency.trim().toLowerCase() || "usd",
         routing_mode: routingMode,
@@ -1404,6 +1422,42 @@
                   </Select.Content>
                 </Select.Root>
               </div>
+              <div class="sm:col-span-2 space-y-2.5 rounded-md border p-3.5">
+                <div class="flex items-center justify-between gap-4">
+                  <div>
+                    <Label for="et-multi-dur"
+                      >{$t("eventTypeEditor.general.allowMultipleDurations")}</Label
+                    >
+                    <p class="text-xs text-muted-foreground">
+                      {$t("eventTypeEditor.general.allowMultipleDurationsHint")}
+                    </p>
+                  </div>
+                  <Switch
+                    id="et-multi-dur"
+                    bind:checked={form.allow_multiple_durations}
+                  />
+                </div>
+                {#if form.allow_multiple_durations}
+                  <div class="flex flex-wrap gap-2 pt-1">
+                    {#each [15, 30, 45, 60, 90, 120] as d}
+                      {@const selected = form.duration_options.includes(d)}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={selected ? "default" : "outline"}
+                        class="h-7 px-2.5 text-xs"
+                        onclick={() => {
+                          if (selected && form.duration_options.length > 1) {
+                            form.duration_options = form.duration_options.filter((x) => x !== d);
+                          } else if (!selected) {
+                            form.duration_options = [...form.duration_options, d].sort((a, b) => a - b);
+                          }
+                        }}>{d}m</Button
+                      >
+                    {/each}
+                  </div>
+                {/if}
+              </div>
               <div class="sm:col-span-2 space-y-1.5 min-w-0">
                 <Label for="et-desc"
                   >{$t("eventTypeEditor.general.description")}</Label
@@ -1621,8 +1675,78 @@
 
             <!-- Calendar invites -->
             <div class="mt-6 border-t pt-5">
+              <div class="mt-4 space-y-2 border-t pt-4">
+                <div class="flex items-center justify-between gap-2">
+                  <div>
+                    <Label>{$t("eventTypeEditor.location.multiOptionsTitle")}</Label>
+                    <p class="text-xs text-muted-foreground">
+                      {$t("eventTypeEditor.location.multiOptionsHint")}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onclick={() => {
+                      form.location_options = [
+                        ...form.location_options,
+                        { type: form.location_type || "google_meet", value: form.location_value || "" },
+                      ];
+                    }}>+ {$t("eventTypeEditor.location.addOption")}</Button
+                  >
+                </div>
+                {#if form.location_options.length > 0}
+                  <div class="space-y-2 pt-1">
+                    {#each form.location_options as opt, idx}
+                      <div class="flex flex-wrap items-center gap-2">
+                        <Select.Root
+                          type="single"
+                          value={opt.type}
+                          onValueChange={(v) => {
+                            if (v) {
+                              form.location_options = form.location_options.map((item, i) =>
+                                i === idx ? { ...item, type: v } : item
+                              );
+                            }
+                          }}
+                        >
+                          <Select.Trigger class="w-48">
+                            {LOCATION_TYPES.find((lt) => lt.value === opt.type)?.label ?? opt.type}
+                          </Select.Trigger>
+                          <Select.Content>
+                            {#each LOCATION_TYPES as lt}
+                              <Select.Item value={lt.value} label={lt.label}>{lt.label}</Select.Item>
+                            {/each}
+                          </Select.Content>
+                        </Select.Root>
+                        <Input
+                          class="flex-1 min-w-[180px]"
+                          placeholder={$t("eventTypeEditor.location.optionValuePlaceholder")}
+                          value={opt.value ?? ""}
+                          oninput={(e) => {
+                            const val = (e.currentTarget as HTMLInputElement).value;
+                            form.location_options = form.location_options.map((item, i) =>
+                              i === idx ? { ...item, value: val } : item
+                            );
+                          }}
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          class="text-destructive hover:text-destructive"
+                          onclick={() => {
+                            form.location_options = form.location_options.filter((_, i) => i !== idx);
+                          }}>{$t("common.remove")}</Button
+                        >
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+
               <p
-                class="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                class="mb-3 mt-4 border-t pt-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
               >
                 {$t("eventTypeEditor.invite.section")}
               </p>

@@ -1692,6 +1692,8 @@
 			"slugHint": "Modifiable jusqu'à la première réservation, après laquelle les liens sont déjà en circulation. Surtout utile juste après une duplication, où la copie arrive avec -copy à la fin.",
 			"duration": "Durée (minutes)",
 			"durationHint": "Durée de la réunion.",
+			"allowMultipleDurations": "Autoriser plusieurs durées",
+			"allowMultipleDurationsHint": "Permet aux invités de choisir parmi plusieurs durées sur la page de réservation.",
 			"slotInterval": "Intervalle des créneaux (minutes)",
 			"slotIntervalHint": "Fréquence à laquelle une réservation peut commencer. En général égal à la durée. Réglez-le plus bas pour offrir plus d'heures de début, ou plus haut pour garder les créneaux à l'heure pile.",
 			"description": "Description",
@@ -1708,6 +1710,10 @@
 		"location": {
 			"section": "Lieu",
 			"type": "Type",
+			"multiOptionsTitle": "Options de lieu supplémentaires",
+			"multiOptionsHint": "Proposez plusieurs lieux afin que le participant puisse choisir.",
+			"addOption": "Ajouter un lieu",
+			"optionValuePlaceholder": "Adresse, numéro ou lien (facultatif)",
 			"types": {
 				"zoom": "Zoom",
 				"teams": "Microsoft Teams",

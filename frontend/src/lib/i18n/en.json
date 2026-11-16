@@ -1692,6 +1692,8 @@
 			"slugHint": "Editable until the first booking, after which the links are already in circulation. Mainly useful right after duplicating, where the copy arrives with -copy on the end.",
 			"duration": "Duration (minutes)",
 			"durationHint": "How long the meeting runs.",
+			"allowMultipleDurations": "Allow multiple durations",
+			"allowMultipleDurationsHint": "Let bookers choose from multiple meeting lengths on the booking page.",
 			"slotInterval": "Slot interval (minutes)",
 			"slotIntervalHint": "How often a booking can start. Usually the same as the duration. Set it lower to offer more start times, or higher to keep slots on the hour.",
 			"description": "Description",
@@ -1708,6 +1710,10 @@
 		"location": {
 			"section": "Location",
 			"type": "Type",
+			"multiOptionsTitle": "Additional location options",
+			"multiOptionsHint": "Offer multiple locations so bookers can choose where to meet.",
+			"addOption": "Add location",
+			"optionValuePlaceholder": "Address, phone number, or link (optional)",
 			"types": {
 				"zoom": "Zoom",
 				"teams": "Microsoft Teams",
