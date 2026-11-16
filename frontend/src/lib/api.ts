@@ -5,6 +5,8 @@ export type User = {
 	email: string;
 	name: string;
 	timezone: string;
+	scheduled_timezone?: string;
+	timezone_effective_at?: string;
 	time_format: '12h' | '24h';
 	week_start: number; // 0=Sunday, 1=Monday
 	date_format: 'dmy' | 'mdy' | 'ymd';
@@ -87,6 +89,7 @@ export type EventType = {
 	duration_options?: number[];
 	location_options?: LocationOption[];
 	destination_calendar_id?: string;
+	schedule_id?: string | null;
 	price_cents: number; // 0 = free
 	currency: string;    // ISO 4217, lowercase (e.g. "usd")
 	created_at: string;
@@ -378,9 +381,31 @@ export type Invite = {
 export type AvailabilityRule = {
 	id: string;
 	event_type_id: string | null;
+	schedule_id?: string | null;
 	day_of_week: number;
 	start_time: string;
 	end_time: string;
+};
+
+export type AvailabilitySchedule = {
+	id: string;
+	name: string;
+	timezone: string;
+	is_default: boolean;
+};
+
+export type OOOEntry = {
+	id: string;
+	user_id: string;
+	team_id?: string | null;
+	team_name?: string;
+	dates: string[];
+	reason: 'ooo' | 'vacation' | 'holiday' | 'sick' | 'travel' | 'other';
+	public_note: string;
+	redirect_user_id?: string | null;
+	redirect_user_name?: string;
+	redirect_user_handle?: string;
+	created_at: string;
 };
 
 export type AvailabilityOverride = {

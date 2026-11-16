@@ -27,6 +27,8 @@
 	let name = $state('');
 	let booking_accent = $state('#111827');
 	let timezone = $state('UTC');
+	let scheduledTimezone = $state('');
+	let timezoneEffectiveLocal = $state('');
 	let time_format = $state<'12h' | '24h'>('12h');
 	let week_start = $state(1);
 	let date_format = $state<'dmy' | 'mdy' | 'ymd'>('dmy');
@@ -80,6 +82,10 @@
 		handle = user.handle ?? '';
 		booking_accent = user.booking_accent;
 		timezone = user.timezone;
+		scheduledTimezone = user.scheduled_timezone ?? '';
+		timezoneEffectiveLocal = user.timezone_effective_at
+			? new Date(user.timezone_effective_at).toISOString().slice(0, 16)
+			: '';
 		time_format = user.time_format ?? '12h';
 		week_start = user.week_start ?? 1;
 		date_format = user.date_format ?? 'dmy';
@@ -132,12 +138,24 @@
 
 	async function save() {
 		await savingFlag.run(async () => {
-			const updated = await api.patch<User>('/v1/users/me', {
+			const payload: Record<string, any> = {
 				name, timezone, time_format, week_start, date_format, booking_accent, handle,
-			});
+			};
+			if (scheduledTimezone && timezoneEffectiveLocal) {
+				payload.scheduled_timezone = scheduledTimezone;
+				payload.timezone_effective_at = new Date(timezoneEffectiveLocal).toISOString();
+			} else if (!scheduledTimezone) {
+				payload.scheduled_timezone = '';
+				payload.timezone_effective_at = '';
+			}
+			const updated = await api.patch<User>('/v1/users/me', payload);
 			currentUser.set(updated);
 			prefs.set(prefsFromUser(updated));
 			user = updated;
+			scheduledTimezone = updated.scheduled_timezone ?? '';
+			timezoneEffectiveLocal = updated.timezone_effective_at
+				? new Date(updated.timezone_effective_at).toISOString().slice(0, 16)
+				: '';
 			toast.success(tr('settings.profile.toast.settingsSaved'));
 		}, tr('settings.profile.error.save'));
 	}
@@ -260,6 +278,29 @@
 						searchPlaceholder={$t('settings.profile.timezone.searchPlaceholder')}
 					/>
 					<p class="text-xs text-muted-foreground">{$t('settings.profile.timezone.hint')}</p>
+				</div>
+
+				<div class="space-y-2 rounded-md border p-3">
+					<div class="flex items-center justify-between gap-2">
+						<Label>Scheduled timezone change (optional)</Label>
+						{#if scheduledTimezone}
+							<Button type="button" variant="ghost" size="sm" class="h-6 px-2 text-xs" onclick={() => { scheduledTimezone = ''; timezoneEffectiveLocal = ''; }}>
+								Clear
+							</Button>
+						{/if}
+					</div>
+					<Combobox
+						items={TIMEZONES.map((tz) => ({ value: tz, label: tz }))}
+						bind:value={scheduledTimezone}
+						placeholder="Select future timezone..."
+						searchPlaceholder={$t('settings.profile.timezone.searchPlaceholder')}
+					/>
+					{#if scheduledTimezone}
+						<div class="space-y-1">
+							<Label for="tz-effective">Effective date & time</Label>
+							<Input id="tz-effective" type="datetime-local" bind:value={timezoneEffectiveLocal} />
+						</div>
+					{/if}
 				</div>
 
 				<div class="space-y-1.5">

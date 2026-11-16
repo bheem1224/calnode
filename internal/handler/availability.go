@@ -12,6 +12,7 @@ import (
 type availRuleJSON struct {
 	ID          string  `json:"id"`
 	EventTypeID *string `json:"event_type_id"`
+	ScheduleID  *string `json:"schedule_id,omitempty"`
 	DayOfWeek   int     `json:"day_of_week"`
 	StartTime   string  `json:"start_time"`
 	EndTime     string  `json:"end_time"`
@@ -24,6 +25,7 @@ func (h *Handler) CreateAvailabilityRule(w http.ResponseWriter, r *http.Request)
 
 	var req struct {
 		EventTypeID *string `json:"event_type_id"`
+		ScheduleID  *string `json:"schedule_id"`
 		DayOfWeek   int     `json:"day_of_week"`
 		StartTime   string  `json:"start_time"`
 		EndTime     string  `json:"end_time"`
@@ -41,11 +43,22 @@ func (h *Handler) CreateAvailabilityRule(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if req.ScheduleID != nil && *req.ScheduleID != "" {
+		var exists int
+		if err := h.db.QueryRowContext(r.Context(),
+			`SELECT 1 FROM availability_schedules WHERE id = ? AND user_id = ?`, *req.ScheduleID, user.ID).Scan(&exists); err != nil {
+			h.writeError(w, http.StatusBadRequest, "invalid schedule_id")
+			return
+		}
+	} else {
+		req.ScheduleID = nil
+	}
+
 	id := uid.New()
 	_, err := h.db.ExecContext(r.Context(), `
-		INSERT INTO availability_rules (id, user_id, event_type_id, day_of_week, start_time, end_time)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		id, user.ID, req.EventTypeID, req.DayOfWeek, req.StartTime, req.EndTime)
+		INSERT INTO availability_rules (id, user_id, event_type_id, schedule_id, day_of_week, start_time, end_time)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, user.ID, req.EventTypeID, req.ScheduleID, req.DayOfWeek, req.StartTime, req.EndTime)
 	if err != nil {
 		if db.IsUniqueViolation(err) {
 			h.writeError(w, http.StatusConflict, "a rule for this day and time already exists")
@@ -59,6 +72,7 @@ func (h *Handler) CreateAvailabilityRule(w http.ResponseWriter, r *http.Request)
 	h.writeJSON(w, http.StatusCreated, availRuleJSON{
 		ID:          id,
 		EventTypeID: req.EventTypeID,
+		ScheduleID:  req.ScheduleID,
 		DayOfWeek:   req.DayOfWeek,
 		StartTime:   req.StartTime,
 		EndTime:     req.EndTime,
@@ -76,15 +90,21 @@ func (h *Handler) ListAvailabilityRules(w http.ResponseWriter, r *http.Request) 
 	)
 	if etID := r.URL.Query().Get("event_type_id"); etID != "" {
 		rows, err = h.db.QueryContext(r.Context(), `
-			SELECT id, event_type_id, day_of_week, start_time, end_time
+			SELECT id, event_type_id, schedule_id, day_of_week, start_time, end_time
 			FROM availability_rules
 			WHERE user_id = ? AND event_type_id = ?
 			ORDER BY day_of_week, start_time`, user.ID, etID)
+	} else if schedID := r.URL.Query().Get("schedule_id"); schedID != "" {
+		rows, err = h.db.QueryContext(r.Context(), `
+			SELECT id, event_type_id, schedule_id, day_of_week, start_time, end_time
+			FROM availability_rules
+			WHERE user_id = ? AND schedule_id = ?
+			ORDER BY day_of_week, start_time`, user.ID, schedID)
 	} else {
 		rows, err = h.db.QueryContext(r.Context(), `
-			SELECT id, event_type_id, day_of_week, start_time, end_time
+			SELECT id, event_type_id, schedule_id, day_of_week, start_time, end_time
 			FROM availability_rules
-			WHERE user_id = ?
+			WHERE user_id = ? AND schedule_id IS NULL
 			ORDER BY day_of_week, start_time`, user.ID)
 	}
 	if err != nil {
@@ -97,14 +117,17 @@ func (h *Handler) ListAvailabilityRules(w http.ResponseWriter, r *http.Request) 
 	items := make([]availRuleJSON, 0)
 	for rows.Next() {
 		var rule availRuleJSON
-		var etID sql.NullString
-		if err := rows.Scan(&rule.ID, &etID, &rule.DayOfWeek, &rule.StartTime, &rule.EndTime); err != nil {
+		var etID, schedID sql.NullString
+		if err := rows.Scan(&rule.ID, &etID, &schedID, &rule.DayOfWeek, &rule.StartTime, &rule.EndTime); err != nil {
 			h.logger.ErrorContext(r.Context(), "scan availability rule", "error", err)
 			h.writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 		if etID.Valid {
 			rule.EventTypeID = &etID.String
+		}
+		if schedID.Valid {
+			rule.ScheduleID = &schedID.String
 		}
 		items = append(items, rule)
 	}

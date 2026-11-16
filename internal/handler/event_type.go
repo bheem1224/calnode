@@ -75,6 +75,7 @@ type eventTypeJSON struct {
 	DurationOptions          []int            `json:"duration_options,omitempty"`
 	LocationOptions          []LocationOption `json:"location_options,omitempty"`
 	DestinationCalendarID    string           `json:"destination_calendar_id,omitempty"`
+	ScheduleID               *string          `json:"schedule_id,omitempty"`
 	IsActive                 bool             `json:"is_active"`
 	// ShowTakenSlots renders already-booked times greyed out on the booking page
 	// instead of omitting them. Off by default: the slots endpoint is public, so this
@@ -146,7 +147,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	var subjConf, subjCancel, subjResched, subjRemind sql.NullString
 	var maxPerDay, maxPerWeek, maxPerMonth, maxPerYear, maxDurDay, maxDurWeek sql.NullInt64
 	var futureRangeStart, futureRangeEnd, calEventTitle, redirectURL, replyTo sql.NullString
-	var durOptionsRaw, locOptionsRaw sql.NullString
+	var durOptionsRaw, locOptionsRaw, schedID sql.NullString
 	var isActive, isPublic, showTaken int
 	var disableCancel, disableResched, allowReschedPast, showFirstSlotOnly int
 	var hideNotesCal, hideCalDetails, reqConfirm, unconfirmedBlocks, reqEmailVerify, allowMultiDur int
@@ -169,7 +170,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 		&calEventTitle, &redirectURL, &replyTo,
 		&hideNotesCal, &hideCalDetails, &reqConfirm, &et.ConfirmMode,
 		&et.ConfirmNoticeMinutes, &unconfirmedBlocks, &reqEmailVerify,
-		&allowMultiDur, &durOptionsRaw, &locOptionsRaw, &et.DestinationCalendarID,
+		&allowMultiDur, &durOptionsRaw, &locOptionsRaw, &et.DestinationCalendarID, &schedID,
 	}
 	dests = append(dests, trailing...)
 	err := s.Scan(dests...)
@@ -181,6 +182,9 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	}
 	if desc.Valid {
 		et.Description = &desc.String
+	}
+	if schedID.Valid {
+		et.ScheduleID = &schedID.String
 	}
 	if locVal.Valid {
 		et.LocationValue = &locVal.String
@@ -315,7 +319,7 @@ const etColumns = `id, slug, name, description,
 	calendar_event_title, redirect_url, reply_to,
 	hide_notes_in_calendar, hide_calendar_event_details, requires_confirmation,
 	confirm_mode, confirm_notice_minutes, unconfirmed_blocks_slots, require_email_verification,
-	allow_multiple_durations, duration_options, location_options, destination_calendar_id`
+	allow_multiple_durations, duration_options, location_options, destination_calendar_id, schedule_id`
 
 // selectETCols fetches a single event type without the caller-relative columns.
 const selectETCols = "SELECT " + etColumns + " FROM event_types"
@@ -696,6 +700,7 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		DurationOptions          []int            `json:"duration_options"`
 		LocationOptions          []LocationOption `json:"location_options"`
 		DestinationCalendarID    *string          `json:"destination_calendar_id"`
+		ScheduleID               *string          `json:"schedule_id"`
 		IsActive                 *bool            `json:"is_active"`
 		IsPublic                 *bool            `json:"is_public"`
 		AllowPhoneCall           *bool            `json:"allow_phone_call"`
@@ -1010,6 +1015,20 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DestinationCalendarID != nil {
 		set("destination_calendar_id", strings.TrimSpace(*req.DestinationCalendarID))
+	}
+	if req.ScheduleID != nil {
+		sid := strings.TrimSpace(*req.ScheduleID)
+		if sid == "" {
+			set("schedule_id", nil)
+		} else {
+			var exists int
+			if err := h.db.QueryRowContext(r.Context(),
+				`SELECT 1 FROM availability_schedules WHERE id = ? AND user_id = ?`, sid, user.ID).Scan(&exists); err != nil {
+				h.writeError(w, http.StatusBadRequest, "invalid schedule_id")
+				return
+			}
+			set("schedule_id", sid)
+		}
 	}
 	if req.PriceCents != nil {
 		if *req.PriceCents < 0 {

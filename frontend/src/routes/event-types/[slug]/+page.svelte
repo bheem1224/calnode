@@ -14,6 +14,7 @@
     type ZoomStatus,
     type SingleUseLink,
     type Question,
+    type AvailabilitySchedule,
   } from "$lib/api";
   import { currentUser } from "$lib/stores";
   import { Button, buttonVariants } from "$lib/components/ui/button";
@@ -163,6 +164,7 @@
     duration_options: [15, 30, 45, 60] as number[],
     location_options: [] as LocationOption[],
     destination_calendar_id: "",
+    schedule_id: "",
     price_cents: 0,
     currency: "usd",
   });
@@ -634,6 +636,7 @@
     is_destination: boolean;
   };
   let connectedCalendars = $state<ConnectedCalendarItem[]>([]);
+  let availSchedules = $state<AvailabilitySchedule[]>([]);
 
   let allowPhoneCall = $state(false);
   const slug = $page.params.slug;
@@ -641,12 +644,14 @@
   async function loadET() {
     etError = "";
     try {
-      const [etRes, calRes] = await Promise.all([
+      const [etRes, calRes, schedRes] = await Promise.all([
         api.get<EventType>(`/v1/event-types/${slug}`),
         api.get<{ items: ConnectedCalendarItem[] }>("/v1/calendar/calendars").catch(() => ({ items: [] })),
+        api.get<{ items: AvailabilitySchedule[] }>("/v1/availability-schedules").catch(() => ({ items: [] })),
       ]);
       et = etRes;
       connectedCalendars = calRes.items ?? [];
+      availSchedules = schedRes.items ?? [];
       allowPhoneCall = et.allow_phone_call;
       form = {
         display_order: et.display_order,
@@ -700,6 +705,7 @@
           value: o.value ?? "",
         })),
         destination_calendar_id: et.destination_calendar_id ?? "",
+        schedule_id: et.schedule_id ?? "",
         price_cents: et.price_cents ?? 0,
         currency: et.currency ?? "usd",
       };
@@ -856,6 +862,7 @@
           : [],
         location_options: form.location_options,
         destination_calendar_id: form.destination_calendar_id,
+        schedule_id: form.schedule_id,
         price_cents: Math.max(0, Math.round(Number(priceMajor) * 100)) || 0,
         currency: form.currency.trim().toLowerCase() || "usd",
         routing_mode: routingMode,
@@ -1537,6 +1544,34 @@
                   }}
                 />
               </div>
+              {#if availSchedules.length > 0}
+                <div class="sm:col-span-2 space-y-1.5 min-w-0">
+                  <Label>Availability schedule</Label>
+                  <Select.Root
+                    type="single"
+                    value={form.schedule_id}
+                    onValueChange={(v) => {
+                      form.schedule_id = v ?? "";
+                    }}
+                  >
+                    <Select.Trigger class="w-full min-w-0 overflow-hidden">
+                      <span class="truncate">
+                        {form.schedule_id
+                          ? (availSchedules.find((s) => s.id === form.schedule_id)?.name ?? form.schedule_id)
+                          : "Default schedule"}
+                      </span>
+                    </Select.Trigger>
+                    <Select.Content>
+                      <Select.Item value="" label="Default schedule">Default schedule</Select.Item>
+                      {#each availSchedules as sched}
+                        <Select.Item value={sched.id} label={sched.name}>
+                          {sched.name}{sched.timezone ? ` (${sched.timezone})` : ""}
+                        </Select.Item>
+                      {/each}
+                    </Select.Content>
+                  </Select.Root>
+                </div>
+              {/if}
               <div class="sm:col-span-2 space-y-1.5 min-w-0">
                 <Label for="et-desc"
                   >{$t("eventTypeEditor.general.description")}</Label

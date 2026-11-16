@@ -154,7 +154,7 @@ func (h *Handler) DuplicateEventType(w http.ResponseWriter, r *http.Request) {
 		  calendar_event_title, redirect_url, reply_to,
 		  hide_notes_in_calendar, hide_calendar_event_details, requires_confirmation,
 		  confirm_mode, confirm_notice_minutes, unconfirmed_blocks_slots, require_email_verification,
-		  allow_multiple_durations, duration_options, location_options, destination_calendar_id)
+		  allow_multiple_durations, duration_options, location_options, destination_calendar_id, schedule_id)
 		SELECT
 		  ?, user_id, team_id, ?, name, description,
 		  duration_minutes, slot_interval_minutes,
@@ -173,7 +173,7 @@ func (h *Handler) DuplicateEventType(w http.ResponseWriter, r *http.Request) {
 		  calendar_event_title, redirect_url, reply_to,
 		  hide_notes_in_calendar, hide_calendar_event_details, requires_confirmation,
 		  confirm_mode, confirm_notice_minutes, unconfirmed_blocks_slots, require_email_verification,
-		  allow_multiple_durations, duration_options, location_options, destination_calendar_id
+		  allow_multiple_durations, duration_options, location_options, destination_calendar_id, schedule_id
 		FROM event_types WHERE id = ?`, newID, newSlug, srcID); err != nil {
 		h.logger.ErrorContext(r.Context(), "duplicate event type: copy row", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")

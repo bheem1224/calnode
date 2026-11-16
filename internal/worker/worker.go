@@ -138,6 +138,7 @@ func (w *Worker) Poll(ctx context.Context) {
 		w.logger.Error("worker: purge oauth auth codes", "error", err)
 	}
 	w.sweepExpiredSingleUseLinks(ctx, now)
+	w.sweepScheduledTimezones(ctx, now)
 	// Webhook deliveries are a log: the UI shows the 50 most recent and nothing reads
 	// them back for state. Nothing purged them, so on a busy instance they accumulated
 	// for its entire life, inside the SQLite file Litestream replicates offsite.
@@ -520,5 +521,18 @@ func (w *Worker) sweepExpiredSingleUseLinks(ctx context.Context, now string) {
 		if err := w.svc.EnqueueSingleUse(ctx, "single_use_link.expired", p); err != nil {
 			w.logger.Error("worker: enqueue single_use_link.expired", "error", err, "token_id", p.ID)
 		}
+	}
+}
+
+func (w *Worker) sweepScheduledTimezones(ctx context.Context, now string) {
+	if _, err := w.db.ExecContext(ctx, `
+		UPDATE users
+		SET iana_timezone = scheduled_timezone,
+		    scheduled_timezone = '',
+		    timezone_effective_at = ''
+		WHERE scheduled_timezone != ''
+		  AND timezone_effective_at != ''
+		  AND timezone_effective_at <= ?`, now); err != nil {
+		w.logger.Error("worker: apply scheduled timezones", "error", err)
 	}
 }

@@ -503,16 +503,41 @@ func (h *Handler) loadHostSchedule(ctx context.Context, userID, eventTypeID stri
 		`SELECT iana_timezone FROM users WHERE id = ?`, userID).Scan(&hostTZName); err != nil {
 		return nil, nil, nil, err
 	}
+
+	var schedID string
+	if eventTypeID != "" {
+		_ = h.db.QueryRowContext(ctx,
+			`SELECT COALESCE(schedule_id, '') FROM event_types WHERE id = ?`, eventTypeID).Scan(&schedID)
+	}
+	if schedID != "" {
+		var schedTZ string
+		if err := h.db.QueryRowContext(ctx,
+			`SELECT timezone FROM availability_schedules WHERE id = ? AND user_id = ?`, schedID, userID).Scan(&schedTZ); err == nil && schedTZ != "" {
+			hostTZName = schedTZ
+		}
+	}
+
 	hostLoc, err := time.LoadLocation(hostTZName)
 	if err != nil {
 		hostLoc = time.UTC
 	}
 
-	ruleRows, err := h.db.QueryContext(ctx, `
-		SELECT day_of_week, start_time, end_time
-		FROM availability_rules
-		WHERE user_id = ? AND (event_type_id = ? OR event_type_id IS NULL)
-		ORDER BY day_of_week, start_time`, userID, eventTypeID)
+	var ruleRows *sql.Rows
+	if schedID != "" {
+		ruleRows, err = h.db.QueryContext(ctx, `
+			SELECT day_of_week, start_time, end_time
+			FROM availability_rules
+			WHERE user_id = ? AND schedule_id = ?
+			ORDER BY day_of_week, start_time`, userID, schedID)
+	} else {
+		ruleRows, err = h.db.QueryContext(ctx, `
+			SELECT day_of_week, start_time, end_time
+			FROM availability_rules
+			WHERE user_id = ?
+			  AND (schedule_id IS NULL OR schedule_id = COALESCE((SELECT id FROM availability_schedules WHERE user_id = ? AND is_default = 1 LIMIT 1), ''))
+			  AND (event_type_id = ? OR event_type_id IS NULL)
+			ORDER BY day_of_week, start_time`, userID, userID, eventTypeID)
+	}
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -555,6 +580,12 @@ func (h *Handler) loadHostSchedule(ctx context.Context, userID, eventTypeID stri
 	ovRows.Close() // #nosec G104 -- rows already fully consumed above; nothing actionable on close error
 	if err := ovRows.Err(); err != nil {
 		return nil, nil, nil, err
+	}
+
+	if oooDates, err := h.loadUserOOODates(ctx, userID); err == nil {
+		for _, d := range oooDates {
+			overrides = append(overrides, slots.AvailabilityOverride{Date: d, IsAvailable: false})
+		}
 	}
 
 	return hostLoc, rules, overrides, nil

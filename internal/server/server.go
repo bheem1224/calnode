@@ -532,6 +532,13 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("PATCH /v1/availability-overrides/{id}", h.RequireAuth(h.UpdateAvailabilityOverride))
 	mux.HandleFunc("DELETE /v1/availability-overrides/{id}", h.RequireAuth(h.DeleteAvailabilityOverride))
 	mux.HandleFunc("DELETE /v1/availability-overrides/group/{groupId}", h.RequireAuth(h.DeleteAvailabilityOverrideGroup))
+	mux.HandleFunc("GET /v1/availability-schedules", h.RequireAuth(h.ListAvailabilitySchedules))
+	mux.HandleFunc("POST /v1/availability-schedules", h.RequireAuth(h.CreateAvailabilitySchedule))
+	mux.HandleFunc("PATCH /v1/availability-schedules/{id}", h.RequireAuth(h.PatchAvailabilitySchedule))
+	mux.HandleFunc("DELETE /v1/availability-schedules/{id}", h.RequireAuth(h.DeleteAvailabilitySchedule))
+	mux.HandleFunc("GET /v1/ooo", h.RequireAuth(h.ListOOOEntries))
+	mux.HandleFunc("POST /v1/ooo", h.RequireAuth(h.CreateOOOEntry))
+	mux.HandleFunc("DELETE /v1/ooo/{id}", h.RequireAuth(h.DeleteOOOEntry))
 
 	// Slots — public, rate-limited per IP. Browsed more than booked (so a higher cap
 	// than booking), but each call fans out Google free/busy per host, so leaving it
@@ -546,6 +553,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	// unthrottled is a CPU + API-quota abuse vector on an openly-public page.
 	slotsRL := RateLimit(60, time.Minute)
 	mux.HandleFunc("GET /v1/event-types/{slug}/slots", cors(slotsRL(h.GetSlots)))
+	mux.HandleFunc("GET /v1/public/group/{handles}/slots", cors(slotsRL(h.GetDynamicGroupSlots)))
 
 	// Conversational booking assistant (optional AI; public, anonymous → tighter limit).
 	assistantRL := RateLimit(15, time.Minute)
@@ -566,6 +574,8 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	// a non-simple request, so the OPTIONS preflight is handled too.
 	mux.HandleFunc("POST /v1/bookings", cors(bookingRL(h.CreateBooking)))
 	mux.HandleFunc("OPTIONS /v1/bookings", cors(func(http.ResponseWriter, *http.Request) {}))
+	mux.HandleFunc("POST /v1/public/group/{handles}/bookings", cors(bookingRL(h.CreateDynamicGroupBooking)))
+	mux.HandleFunc("OPTIONS /v1/public/group/{handles}/bookings", cors(func(http.ResponseWriter, *http.Request) {}))
 	mux.HandleFunc("POST /v1/book/{slug}/verify-email/send", cors(bookingRL(h.SendVerificationCode)))
 	mux.HandleFunc("OPTIONS /v1/book/{slug}/verify-email/send", cors(func(http.ResponseWriter, *http.Request) {}))
 	mux.HandleFunc("POST /v1/book/{slug}/verify-email/check", cors(bookingRL(h.CheckVerificationCode)))
@@ -584,7 +594,13 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("GET /booking.css", h.BookingCSS)
 	mux.HandleFunc("GET /book/{slug}", h.BookPage)
 	mux.HandleFunc("GET /t/{token}", h.SingleUseBookPage)
-	mux.HandleFunc("GET /u/{handle}", h.PersonPage)
+	mux.HandleFunc("GET /u/{handle}", func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.PathValue("handle"), "+") {
+			h.DynamicGroupBookPage(w, r)
+			return
+		}
+		h.PersonPage(w, r)
+	})
 	mux.HandleFunc("GET /team/{slug}", h.TeamPage)
 
 	// Built-in LiveKit video room (public): the page, its vendored assets, and the token

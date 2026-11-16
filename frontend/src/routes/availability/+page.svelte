@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, type AvailabilityRule, type AvailabilityOverride } from '$lib/api';
+	import { api, type AvailabilityRule, type AvailabilityOverride, type AvailabilitySchedule, type OOOEntry } from '$lib/api';
 	import { prefs, fmtDate, weekDays } from '$lib/prefs';
 	import { t, tr, localeTag } from '$lib/i18n';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
@@ -46,6 +46,52 @@
 	let rulesLoading = $state(true);
 	let rulesError = $state('');
 
+	let schedules = $state<AvailabilitySchedule[]>([]);
+	let selectedScheduleId = $state('');
+	let newScheduleName = $state('');
+	let creatingSchedule = $state(false);
+
+	async function loadSchedules() {
+		try {
+			const res = await api.get<{ items: AvailabilitySchedule[] }>('/v1/availability-schedules');
+			schedules = res.items ?? [];
+		} catch {
+			schedules = [];
+		}
+	}
+
+	async function createSchedule() {
+		const name = newScheduleName.trim();
+		if (!name) return;
+		creatingSchedule = true;
+		try {
+			const created = await api.post<AvailabilitySchedule>('/v1/availability-schedules', { name });
+			schedules = [...schedules, created];
+			newScheduleName = '';
+			selectedScheduleId = created.id;
+			await loadRules();
+			toast.success('Schedule created');
+		} catch (e: any) {
+			toast.error(e.message || 'Failed to create schedule');
+		} finally {
+			creatingSchedule = false;
+		}
+	}
+
+	async function deleteSchedule(id: string) {
+		try {
+			await api.del(`/v1/availability-schedules/${id}`);
+			schedules = schedules.filter((s) => s.id !== id);
+			if (selectedScheduleId === id) {
+				selectedScheduleId = '';
+				await loadRules();
+			}
+			toast.success('Schedule deleted');
+		} catch (e: any) {
+			toast.error(e.message || 'Failed to delete schedule');
+		}
+	}
+
 	let orderedDays = $derived([...days].sort((a, b) => {
 		const ws = $prefs.week_start ?? 1;
 		return ((a.day_of_week - ws + 7) % 7) - ((b.day_of_week - ws + 7) % 7);
@@ -55,7 +101,10 @@
 		rulesError = '';
 		rulesLoading = true;
 		try {
-			const res = await api.get<{ items: AvailabilityRule[] }>('/v1/availability-rules');
+			const url = selectedScheduleId
+				? `/v1/availability-rules?schedule_id=${encodeURIComponent(selectedScheduleId)}`
+				: '/v1/availability-rules';
+			const res = await api.get<{ items: AvailabilityRule[] }>(url);
 			for (const day of days) { day.blocks = []; day.error = ''; }
 			for (const r of (res.items ?? [])) {
 				const day = days[r.day_of_week];
@@ -78,11 +127,15 @@
 		// the UI (the "saving…" stuck-until-refresh bug).
 		const block = day.blocks[day.blocks.length - 1];
 		try {
-			const r = await api.post<AvailabilityRule>('/v1/availability-rules', {
+			const payload: Record<string, any> = {
 				day_of_week: day.day_of_week,
 				start_time: '09:00',
 				end_time: '17:00'
-			});
+			};
+			if (selectedScheduleId) {
+				payload.schedule_id = selectedScheduleId;
+			}
+			const r = await api.post<AvailabilityRule>('/v1/availability-rules', payload);
 			block.id = r.id;
 		} catch (e: any) {
 			const idx = day.blocks.indexOf(block);
@@ -518,6 +571,68 @@
 			ovSavingModal = false;
 		}
 	}
+
+	// ── Out-of-Office & Holidays ─────────────────────────────────────────────────
+	let oooEntries = $state<OOOEntry[]>([]);
+	let oooDates = $state<string[]>([]);
+	let oooDatePick = $state('');
+	let oooReason = $state<OOOEntry['reason']>('ooo');
+	let oooPublicNote = $state('');
+	let oooSaving = $state(false);
+
+	async function loadOOO() {
+		try {
+			const res = await api.get<{ items: OOOEntry[] }>('/v1/ooo');
+			oooEntries = res.items ?? [];
+		} catch {
+			oooEntries = [];
+		}
+	}
+
+	function addOOODate() {
+		const d = oooDatePick.trim();
+		if (!d || oooDates.includes(d)) return;
+		oooDates = [...oooDates, d].sort();
+		oooDatePick = '';
+	}
+
+	async function saveOOO() {
+		if (oooDates.length === 0) {
+			toast.error('Select at least one date');
+			return;
+		}
+		oooSaving = true;
+		try {
+			await api.post('/v1/ooo', {
+				dates: oooDates,
+				reason: oooReason,
+				public_note: oooPublicNote.trim()
+			});
+			oooDates = [];
+			oooPublicNote = '';
+			await loadOOO();
+			toast.success('Out-of-office saved');
+		} catch (e: any) {
+			toast.error(e.message || 'Failed to save out-of-office');
+		} finally {
+			oooSaving = false;
+		}
+	}
+
+	async function deleteOOO(id: string) {
+		try {
+			await api.del(`/v1/ooo/${id}`);
+			oooEntries = oooEntries.filter((e) => e.id !== id);
+			toast.success('Out-of-office removed');
+		} catch (e: any) {
+			toast.error(e.message || 'Failed to remove out-of-office');
+		}
+	}
+
+	onMount(() => {
+		loadSchedules();
+		loadOOO();
+	});
 </script>
 
 <ConfirmDialog
@@ -547,7 +662,45 @@
 
 <!-- Weekly Hours -->
 <div class="mb-8">
-	<h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">{$t('availability.weeklyHours')}</h2>
+	<div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+		<h2 class="text-sm font-semibold uppercase tracking-wider text-muted-foreground">{$t('availability.weeklyHours')}</h2>
+		<div class="flex flex-wrap items-center gap-2">
+			<Select.Root
+				type="single"
+				value={selectedScheduleId}
+				onValueChange={(v) => {
+					selectedScheduleId = v ?? '';
+					loadRules();
+				}}
+			>
+				<Select.Trigger class="h-8 w-48 text-xs">
+					{selectedScheduleId
+						? (schedules.find((s) => s.id === selectedScheduleId)?.name ?? 'Schedule')
+						: 'Default schedule'}
+				</Select.Trigger>
+				<Select.Content>
+					<Select.Item value="" label="Default schedule">Default schedule</Select.Item>
+					{#each schedules as s}
+						<Select.Item value={s.id} label={s.name}>{s.name}</Select.Item>
+					{/each}
+				</Select.Content>
+			</Select.Root>
+			{#if selectedScheduleId}
+				<Button type="button" variant="ghost" size="sm" class="h-8 text-xs text-destructive" onclick={() => deleteSchedule(selectedScheduleId)}>
+					Delete schedule
+				</Button>
+			{/if}
+			<input
+				type="text"
+				bind:value={newScheduleName}
+				placeholder="New schedule name..."
+				class="h-8 rounded-md border bg-background px-2.5 text-xs"
+			/>
+			<Button type="button" variant="outline" size="sm" class="h-8 text-xs" disabled={creatingSchedule || !newScheduleName.trim()} onclick={createSchedule}>
+				+ Add schedule
+			</Button>
+		</div>
+	</div>
 
 	{#if rulesError}<p class="mb-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{rulesError}</p>{/if}
 
@@ -788,6 +941,75 @@
 			</table>
 		{:else}
 			<p class="px-4 py-4 text-sm text-muted-foreground">{$t('availability.overrides.empty')}</p>
+		{/if}
+	</div>
+</div>
+
+<!-- Out-of-Office & Holidays -->
+<div class="mb-8">
+	<h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Out-of-Office & Holidays</h2>
+	<div class="rounded-lg border bg-card p-4 space-y-4">
+		<div class="flex flex-wrap items-end gap-3">
+			<div class="space-y-1">
+				<span class="text-xs font-medium text-muted-foreground">Pick dates off (holidays / OOO)</span>
+				<div class="flex items-center gap-2">
+					<input type="date" bind:value={oooDatePick} class="h-9 rounded-md border bg-background px-2.5 text-sm" />
+					<Button type="button" variant="outline" size="sm" onclick={addOOODate} disabled={!oooDatePick}>+ Add date</Button>
+				</div>
+			</div>
+			<div class="space-y-1">
+				<span class="text-xs font-medium text-muted-foreground">Reason</span>
+				<Select.Root type="single" bind:value={oooReason}>
+					<Select.Trigger class="h-9 w-40 text-sm">
+						{oooReason === 'ooo' ? 'Out of office' : oooReason.charAt(0).toUpperCase() + oooReason.slice(1)}
+					</Select.Trigger>
+					<Select.Content>
+						<Select.Item value="ooo" label="Out of office">Out of office</Select.Item>
+						<Select.Item value="holiday" label="Holiday">Holiday</Select.Item>
+						<Select.Item value="vacation" label="Vacation">Vacation</Select.Item>
+						<Select.Item value="sick" label="Sick">Sick</Select.Item>
+						<Select.Item value="travel" label="Travel">Travel</Select.Item>
+						<Select.Item value="other" label="Other">Other</Select.Item>
+					</Select.Content>
+				</Select.Root>
+			</div>
+			<div class="min-w-[200px] flex-1 space-y-1">
+				<span class="text-xs font-medium text-muted-foreground">Public note (optional)</span>
+				<input type="text" bind:value={oooPublicNote} placeholder="e.g. Back Monday — reach out to..." class="h-9 w-full rounded-md border bg-background px-3 text-sm" />
+			</div>
+			<Button type="button" size="sm" disabled={oooSaving || oooDates.length === 0} onclick={saveOOO}>
+				{oooSaving ? 'Saving...' : 'Save OOO'}
+			</Button>
+		</div>
+
+		{#if oooDates.length > 0}
+			<div class="flex flex-wrap gap-1.5">
+				{#each oooDates as d}
+					<span class="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs font-medium">
+						{d}
+						<button type="button" class="text-muted-foreground hover:text-foreground" onclick={() => { oooDates = oooDates.filter((x) => x !== d); }}>×</button>
+					</span>
+				{/each}
+			</div>
+		{/if}
+
+		{#if oooEntries.length > 0}
+			<div class="divide-y border-t pt-2">
+				{#each oooEntries as entry}
+					<div class="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+						<div>
+							<span class="font-medium capitalize">{entry.reason}</span>
+							<span class="ml-2 text-xs text-muted-foreground">{entry.dates.join(', ')}</span>
+							{#if entry.public_note}
+								<p class="text-xs text-muted-foreground">{entry.public_note}</p>
+							{/if}
+						</div>
+						<Button type="button" variant="ghost" size="sm" class="text-xs text-destructive" onclick={() => deleteOOO(entry.id)}>
+							{$t('common.remove')}
+						</Button>
+					</div>
+				{/each}
+			</div>
 		{/if}
 	</div>
 </div>
