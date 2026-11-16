@@ -748,6 +748,8 @@
 		},
 		"fieldsCount": "{count} champs",
 		"scopeAll": "Tous les types d'événements",
+		"eventScopedSubtitle": "Webhooks limités à {name}. Les webhooks globaux sont gérés sur la page Webhooks.",
+		"eventScopedEmpty": "Aucun webhook n'est encore associé à ce type d'événement.",
 		"tooltip": {
 			"deliveries": "Envois récents",
 			"hideDeliveries": "Masquer les envois",

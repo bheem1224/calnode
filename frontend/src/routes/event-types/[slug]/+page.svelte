@@ -28,6 +28,7 @@
   import QuestionsPanel from "$lib/components/event-types/QuestionsPanel.svelte";
   import EmbedPanel from "$lib/components/event-types/EmbedPanel.svelte";
   import BookingPreviewCard from "$lib/components/event-types/BookingPreviewCard.svelte";
+  import WebhooksManager from "$lib/components/WebhooksManager.svelte";
   import { ConfirmDialog } from "$lib/components/ui/confirm-dialog";
   import { t, tr, localeTag } from "$lib/i18n";
   import LinkedText from "$lib/i18n/linked-text.svelte";
@@ -88,6 +89,7 @@
       label: $t("eventTypeEditor.tabs.notifications"),
     },
     { id: "questions" as const, label: "Booking form" },
+    { id: "webhooks" as const, label: $t("webhooks.title") },
     { id: "embed" as const, label: $t("eventTypeEditor.tabs.embed") },
   ]);
   let activeTab = $state<(typeof TABS)[number]["id"]>("general");
@@ -2841,6 +2843,10 @@
           allowPhoneCall={allowPhoneCall && isOnlineMeeting(form.location_type)}
           onQuestionsChange={(items) => (previewQuestions = items)}
         />
+      {/if}
+
+      {#if activeTab === "webhooks" && et}
+        <WebhooksManager eventTypeId={et.id} eventTypeName={et.name} />
       {/if}
 
       {#if activeTab === "embed"}
