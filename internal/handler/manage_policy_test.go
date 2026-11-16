@@ -112,8 +112,8 @@ func TestManagePolicies_cancelAndReschedule(t *testing.T) {
 	patchReq3.SetPathValue("slug", "policy-et")
 	h.RequireAuth(h.PatchEventType)(patchRec3, patchReq3)
 
-	pastStart := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
-	pastEnd := time.Now().UTC().Add(-90 * time.Minute).Format(time.RFC3339)
+	pastStart := "2026-05-31T09:00:00Z"
+	pastEnd := "2026-05-31T09:30:00Z"
 	if _, err := db.Exec(`UPDATE bookings SET start_at = ?, end_at = ? WHERE id = ?`, pastStart, pastEnd, bk.ID); err != nil {
 		t.Fatalf("move booking to past: %v", err)
 	}
