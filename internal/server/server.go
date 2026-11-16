@@ -449,6 +449,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("PATCH /v1/users/{id}/custom-role", h.RequireAuth(h.SetUserCustomRole))
 	mux.HandleFunc("GET /v1/roles", h.RequireAuth(h.ListRoles))
 	mux.HandleFunc("POST /v1/roles", h.RequireAuth(h.CreateRole))
+	mux.HandleFunc("PATCH /v1/roles/{id}", h.RequireAuth(h.UpdateRole))
 	mux.HandleFunc("DELETE /v1/roles/{id}", h.RequireAuth(h.DeleteRole))
 	mux.HandleFunc("POST /v1/admin/impersonate", h.RequireAuth(h.StartImpersonation))
 	mux.HandleFunc("POST /v1/admin/impersonate/stop", h.RequireAuth(h.StopImpersonation))

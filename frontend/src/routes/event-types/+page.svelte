@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, type EventType, type SingleUseLink, type CreateSingleUseLinkPayload } from '$lib/api';
+	import { api, type EventType, type Team, type SingleUseLink, type CreateSingleUseLinkPayload } from '$lib/api';
 	import { currentUser } from '$lib/stores';
 	import { t, tr } from '$lib/i18n';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
@@ -15,6 +15,7 @@
 	import { toast } from 'svelte-sonner';
 
 	let items: EventType[] = $state([]);
+	let teams: Team[] = $state([]);
 	let loading = $state(true);
 
 	let creating = $state(false);
@@ -27,12 +28,21 @@
 	// Admins can switch to every event type on the instance (?scope=all), the same way
 	// the bookings page offers "All bookings". Their default list stays their own.
 	const isAdmin = $derived($currentUser?.is_admin ?? false);
-	let scope = $state<'mine' | 'all'>('mine');
+	let scope = $state<'mine' | 'all' | string>('mine');
 
 	let filter = $state<'active' | 'archived'>('active');
-	const visible = $derived(items.filter((et) => (filter === 'archived' ? !!et.archived : !et.archived)));
-	const archivedCount = $derived(items.filter((et) => et.archived).length);
-	const activeCount = $derived(items.length - archivedCount);
+	const scopedItems = $derived.by(() => {
+		if (scope === 'all') return items;
+		if (scope === 'mine') return items.filter((et) => !et.team_id);
+		return items.filter((et) => et.team_id === scope);
+	});
+	const activeTeam = $derived(teams.find((t) => t.id === scope));
+	const canCreateInScope = $derived(
+		scope === 'mine' || scope === 'all' || isAdmin || activeTeam?.my_role === 'owner'
+	);
+	const visible = $derived(scopedItems.filter((et) => (filter === 'archived' ? !!et.archived : !et.archived)));
+	const archivedCount = $derived(scopedItems.filter((et) => et.archived).length);
+	const activeCount = $derived(scopedItems.length - archivedCount);
 	const filterEmptyWord = $derived(
 		(filter === 'archived'
 			? $t('eventTypes.filter.archived', { count: archivedCount })
@@ -42,8 +52,12 @@
 
 	async function load() {
 		try {
-			const res = await api.get<{ items: EventType[] }>(scope === 'all' && isAdmin ? '/v1/event-types?scope=all' : '/v1/event-types');
+			const [res, teamsRes] = await Promise.all([
+				api.get<{ items: EventType[] }>(scope === 'all' && isAdmin ? '/v1/event-types?scope=all' : '/v1/event-types'),
+				api.get<{ items: Team[] }>('/v1/teams').catch(() => ({ items: [] as Team[] })),
+			]);
 			items = res.items;
+			teams = teamsRes.items ?? [];
 		} catch (e: any) {
 			toast.error(e.message || tr('eventTypes.toast.errors.load'));
 		} finally {
@@ -53,10 +67,13 @@
 
 	onMount(load);
 
-	async function setScope(s: 'mine' | 'all') {
+	async function setScope(s: 'mine' | 'all' | string) {
 		if (scope === s) return;
+		const wasAll = scope === 'all';
 		scope = s;
-		await load();
+		if (s === 'all' || wasAll) {
+			await load();
+		}
 	}
 
 	function ownerLabel(et: EventType) {
@@ -68,12 +85,17 @@
 		creating = true;
 		try {
 			const suffix = Math.random().toString(36).slice(2, 6);
-			const created = await api.post<EventType>('/v1/event-types', {
+			const payload: Record<string, unknown> = {
 				slug: `new-meeting-${suffix}`,
-				name: 'New Meeting',
+				name: activeTeam ? `${activeTeam.name} Meeting` : 'New Meeting',
 				duration_minutes: 30,
-				is_active: true
-			});
+				is_active: true,
+			};
+			if (scope !== 'mine' && scope !== 'all') {
+				payload.team_id = scope;
+				payload.routing_mode = 'collective';
+			}
+			const created = await api.post<EventType>('/v1/event-types', payload);
 			window.location.href = `/admin/event-types/${created.slug}`;
 		} catch (e: any) {
 			toast.error(e.message || tr('eventTypes.toast.errors.create'));
@@ -250,27 +272,37 @@
 		</p>
 	</div>
 	<div class="flex flex-wrap items-center gap-2">
-		{#if isAdmin}
-			<div class="inline-flex rounded-md border p-0.5">
+		{#if teams.length > 0 || isAdmin}
+			<div class="inline-flex flex-wrap rounded-md border p-0.5">
 				<button
 					class="rounded px-3 py-1 text-sm font-medium transition-colors {scope === 'mine' ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}"
 					onclick={() => setScope('mine')}
 				>{$t('eventTypes.scope.mine')}</button>
-				<button
-					class="rounded px-3 py-1 text-sm font-medium transition-colors {scope === 'all' ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}"
-					onclick={() => setScope('all')}
-				>{$t('eventTypes.scope.all')}</button>
+				{#each teams as tm (tm.id)}
+					<button
+						class="rounded px-3 py-1 text-sm font-medium transition-colors {scope === tm.id ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}"
+						onclick={() => setScope(tm.id)}
+					>{tm.name}</button>
+				{/each}
+				{#if isAdmin}
+					<button
+						class="rounded px-3 py-1 text-sm font-medium transition-colors {scope === 'all' ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}"
+						onclick={() => setScope('all')}
+					>{$t('eventTypes.scope.all')}</button>
+				{/if}
 			</div>
 		{/if}
-		<Button onclick={createDirect} disabled={creating}>
-			{creating ? 'Creating...' : '+ New event type'}
-		</Button>
+		{#if canCreateInScope}
+			<Button onclick={createDirect} disabled={creating}>
+				{creating ? 'Creating...' : activeTeam ? `+ New ${activeTeam.name} event type` : '+ New event type'}
+			</Button>
+		{/if}
 	</div>
 </div>
 
 {#if loading}
 	<p class="py-8 text-sm text-muted-foreground">{$t('common.loading')}</p>
-{:else if items.length === 0}
+{:else if scopedItems.length === 0}
 	<div class="rounded-lg border border-dashed bg-card p-12 text-center">
 		<p class="text-sm font-medium">{$t('eventTypes.empty.title')}</p>
 		<p class="mt-1 text-sm text-muted-foreground">{$t('eventTypes.empty.description')}</p>
@@ -292,6 +324,12 @@
 					<div class="flex flex-wrap items-center gap-2">
 						<span class="font-semibold text-foreground">{et.name}</span>
 						<span class="text-xs text-muted-foreground">/book/{et.slug}</span>
+						{#if et.team_name && scope === 'all'}
+							<Badge variant="outline" class="text-[10px]">{et.team_name}</Badge>
+						{/if}
+						{#if et.team_id}
+							<Badge variant="secondary" class="text-[10px]">{et.routing_mode === 'round_robin' ? 'Round-robin' : 'Collective'}</Badge>
+						{/if}
 						{#if et.owned === false && scope === 'mine'}
 							<Badge variant="secondary" class="text-[10px]">{$t('eventTypes.badge.youHost')}</Badge>
 						{/if}

@@ -11,6 +11,10 @@
     hostAvatar = "",
     mode = "calendar",
     allowPhoneCall = false,
+    allowMultipleDurations = false,
+    durationOptions = [],
+    calendarEventTitle = "",
+    redirectUrl = "",
     questions = [],
   }: {
     name?: string;
@@ -20,10 +24,21 @@
     locationValue?: string;
     hostName?: string;
     hostAvatar?: string;
-    mode?: "calendar" | "form";
+    mode?: "calendar" | "form" | "confirmation";
     allowPhoneCall?: boolean;
+    allowMultipleDurations?: boolean;
+    durationOptions?: number[];
+    calendarEventTitle?: string;
+    redirectUrl?: string;
     questions?: Question[];
   } = $props();
+
+  let previewDuration = $state<number | null>(null);
+  const activeDuration = $derived(
+    allowMultipleDurations && durationOptions.length > 0
+      ? (previewDuration && durationOptions.includes(previewDuration) ? previewDuration : durationOptions[0])
+      : duration || 30
+  );
 
   let selectedDay = $state(18);
   const days = Array.from({ length: 30 }, (_, i) => i + 1);
@@ -92,11 +107,25 @@
       <div
         class="mt-2.5 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground"
       >
-        <span
-          class="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 font-medium text-foreground"
-        >
-          {duration || 30}m
-        </span>
+        {#if allowMultipleDurations && durationOptions.length > 1}
+          {#each durationOptions as d}
+            <button
+              type="button"
+              onclick={() => (previewDuration = d)}
+              class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-medium transition-colors {activeDuration === d
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted text-foreground hover:bg-muted/80'}"
+            >
+              {d}m
+            </button>
+          {/each}
+        {:else}
+          <span
+            class="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 font-medium text-foreground"
+          >
+            {activeDuration}m
+          </span>
+        {/if}
         <span
           class="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5"
         >
@@ -105,7 +134,44 @@
       </div>
     </div>
 
-    {#if mode === "form"}
+    {#if mode === "confirmation"}
+      <div class="rounded-lg border bg-background/60 p-4 space-y-3">
+        <div class="flex flex-col items-center text-center space-y-1.5">
+          <div class="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-500 text-base font-bold">
+            ✓
+          </div>
+          <p class="text-sm font-semibold text-foreground">This meeting is scheduled</p>
+          <p class="text-[11px] text-muted-foreground">
+            A calendar invitation has been sent to your email address.
+          </p>
+        </div>
+        <div class="border-t pt-3 space-y-2 text-[11px]">
+          <div class="flex justify-between gap-2">
+            <span class="text-muted-foreground">What</span>
+            <span class="font-medium text-foreground text-right truncate">
+              {calendarEventTitle?.trim() || `${name || "Meeting"} between ${hostName} and Jane Doe`}
+            </span>
+          </div>
+          <div class="flex justify-between gap-2">
+            <span class="text-muted-foreground">When</span>
+            <span class="font-medium text-foreground">Fri, Nov {selectedDay} · 10:00 AM ({activeDuration}m)</span>
+          </div>
+          <div class="flex justify-between gap-2">
+            <span class="text-muted-foreground">Where</span>
+            <span class="font-medium text-foreground">{locationLabel}</span>
+          </div>
+          {#if redirectUrl?.trim()}
+            <div class="rounded bg-muted/60 px-2 py-1.5 text-[10px] text-muted-foreground truncate">
+              Redirects to: <span class="font-mono text-foreground">{redirectUrl}</span>
+            </div>
+          {/if}
+        </div>
+        <div class="flex justify-center gap-2 border-t pt-2.5 text-[10px] text-muted-foreground">
+          <span class="rounded border px-2 py-0.5">Reschedule</span>
+          <span class="rounded border px-2 py-0.5">Cancel</span>
+        </div>
+      </div>
+    {:else if mode === "form"}
       <div class="rounded-lg border bg-background/60 p-3 space-y-2.5">
         <div
           class="flex items-center justify-between border-b pb-2 text-[11px]"

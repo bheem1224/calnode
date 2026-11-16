@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { page } from "$app/stores";
-  import { goto } from "$app/navigation";
+  import { goto, beforeNavigate } from "$app/navigation";
   import { base } from "$app/paths";
   import {
     api,
@@ -32,6 +32,8 @@
   import BookingPreviewCard from "$lib/components/event-types/BookingPreviewCard.svelte";
   import WebhooksManager from "$lib/components/WebhooksManager.svelte";
   import { ConfirmDialog } from "$lib/components/ui/confirm-dialog";
+  import * as Dialog from "$lib/components/ui/dialog";
+  import * as Popover from "$lib/components/ui/popover";
   import { DateRangePicker } from "$lib/components/ui/date-range-picker";
   import { t, tr, localeTag } from "$lib/i18n";
   import LinkedText from "$lib/i18n/linked-text.svelte";
@@ -93,14 +95,22 @@
       label: $t("eventTypeEditor.tabs.notifications"),
     },
     { id: "questions" as const, label: "Booking form" },
+    { id: "confirmation" as const, label: "Confirmation" },
     { id: "webhooks" as const, label: $t("webhooks.title") },
     { id: "embed" as const, label: $t("eventTypeEditor.tabs.embed") },
   ]);
   let activeTab = $state<(typeof TABS)[number]["id"]>("general");
+  let sidebarCollapsed = $state(false);
+  let durationMenuOpen = $state(false);
+  const DURATION_PRESETS = [5, 10, 15, 20, 25, 30, 45, 60, 90, 120];
   let previewQuestions = $state<Question[]>([]);
   let etLoading = $state(true);
   let etError = $state("");
   let etSaving = $state(false);
+  let savedSnapshot = $state("");
+  let unsavedOpen = $state(false);
+  let pendingNavHref = $state("");
+  let allowNav = $state(false);
 
   // Connected calendar (the owner's) — drives the meeting-link auto-generation hint.
   // Only fetched when the viewer owns the event type: the status endpoints describe the
@@ -166,6 +176,7 @@
     location_options: [] as LocationOption[],
     destination_calendar_id: "",
     schedule_id: "",
+    team_id: "",
     price_cents: 0,
     currency: "usd",
   });
@@ -597,6 +608,37 @@
     { value: 168, label: $t("eventTypeEditor.reminders.option.168h") },
   ]);
   let reminders = $state<number[]>([]);
+
+  const currentSnapshot = $derived(
+    JSON.stringify({ form, routingMode, rrStrategy, reminders })
+  );
+  const isDirty = $derived(
+    savedSnapshot !== "" && currentSnapshot !== savedSnapshot
+  );
+
+  beforeNavigate(({ cancel, to }) => {
+    if (allowNav || !isDirty || !to) return;
+    cancel();
+    pendingNavHref = to.url.href;
+    unsavedOpen = true;
+  });
+
+  async function saveAndExit() {
+    await saveET();
+    if (!isDirty && pendingNavHref) {
+      allowNav = true;
+      unsavedOpen = false;
+      window.location.href = pendingNavHref;
+    }
+  }
+
+  function discardAndExit() {
+    allowNav = true;
+    unsavedOpen = false;
+    if (pendingNavHref) {
+      window.location.href = pendingNavHref;
+    }
+  }
   let msg_confirmation = $state("");
   let msg_cancellation = $state("");
   let msg_reschedule = $state("");
@@ -700,16 +742,18 @@
         duration_options:
           et.duration_options && et.duration_options.length > 0
             ? [...et.duration_options]
-            : [15, 30, 45, 60],
+            : [et.duration_minutes || 30],
         location_options: (et.location_options ?? []).map((o) => ({
           type: o.type,
           value: o.value ?? "",
         })),
         destination_calendar_id: et.destination_calendar_id ?? "",
         schedule_id: et.schedule_id ?? "",
+        team_id: et.team_id ?? "",
         price_cents: et.price_cents ?? 0,
         currency: et.currency ?? "usd",
       };
+      loadTeams();
       priceMajor = ((et.price_cents ?? 0) / 100).toFixed(2);
       paidEnabled = (et.price_cents ?? 0) > 0;
       freqEnabled = !!(
@@ -742,6 +786,7 @@
           ? et.rr_strategy
           : "even"
       ) as Strategy;
+      savedSnapshot = JSON.stringify({ form, routingMode, rrStrategy, reminders });
       msg_confirmation = et.msg_confirmation ?? "";
       msg_cancellation = et.msg_cancellation ?? "";
       msg_reschedule = et.msg_reschedule ?? "";
@@ -864,6 +909,7 @@
         location_options: form.location_options,
         destination_calendar_id: form.destination_calendar_id,
         schedule_id: form.schedule_id,
+        team_id: form.team_id,
         price_cents: Math.max(0, Math.round(Number(priceMajor) * 100)) || 0,
         currency: form.currency.trim().toLowerCase() || "usd",
         routing_mode: routingMode,
@@ -917,11 +963,14 @@
         });
       }
       toast.success(tr("eventTypeEditor.toast.saved"));
+      savedSnapshot = JSON.stringify({ form, routingMode, rrStrategy, reminders });
       // The URL carries the slug, so a rename has to move the page too or a reload
       // lands on a 404. replaceState: the old address no longer resolves, and
       // leaving it in history is a back button that breaks.
       if (effSlug !== slug) {
+        allowNav = true;
         await goto(`${base}/event-types/${effSlug}`, { replaceState: true });
+        allowNav = false;
         return;
       }
       await loadET();
@@ -1292,28 +1341,47 @@
   {/if}
 
   <div
-    class="flex flex-col gap-6 pb-16 lg:grid lg:grid-cols-[200px_minmax(460px,1fr)] lg:items-start xl:grid-cols-[200px_minmax(460px,1fr)_360px]"
+    class="flex flex-col gap-6 pb-16 lg:grid lg:items-start {sidebarCollapsed
+      ? 'lg:grid-cols-[48px_minmax(340px,460px)] xl:grid-cols-[48px_minmax(340px,460px)_1fr]'
+      : 'lg:grid-cols-[176px_minmax(340px,460px)] xl:grid-cols-[176px_minmax(340px,460px)_1fr]'}"
   >
     <!-- Sub-Navigation Rail (Left) -->
     <nav
       class="flex shrink-0 gap-1 overflow-x-auto pb-2 lg:flex-col lg:overflow-visible lg:pb-0"
       aria-label="Event type sections"
     >
-      <p
-        class="hidden px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70 lg:block"
-      >
-        Setup
-      </p>
+      <div class="hidden items-center justify-between px-2 pb-1 pt-1 lg:flex">
+        {#if !sidebarCollapsed}
+          <p class="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+            Setup
+          </p>
+        {/if}
+        <button
+          type="button"
+          onclick={() => (sidebarCollapsed = !sidebarCollapsed)}
+          class="rounded p-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+          title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          {sidebarCollapsed ? "»" : "«"}
+        </button>
+      </div>
       {#each TABS as tab}
         <button
           type="button"
           onclick={() => (activeTab = tab.id)}
+          title={tab.label}
           class="shrink-0 rounded-md px-3 py-2 text-left text-sm font-medium transition-colors {activeTab ===
           tab.id
             ? 'bg-secondary text-secondary-foreground'
-            : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}"
+            : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'} {sidebarCollapsed ? 'lg:px-2 lg:text-center' : ''}"
         >
-          {tab.label}
+          {#if sidebarCollapsed}
+            <span class="hidden lg:inline">{tab.label.slice(0, 2)}</span>
+            <span class="lg:hidden">{tab.label}</span>
+          {:else}
+            {tab.label}
+          {/if}
         </button>
       {/each}
     </nav>
@@ -1396,7 +1464,6 @@
                 </div>
               </div>
               {#if form.allow_multiple_durations}
-                {@const remainingDurations = [15, 30, 45, 60, 90, 120].filter((d) => !form.duration_options.includes(d))}
                 <div class="sm:col-span-2 space-y-1.5 min-w-0">
                   <Label>{$t("eventTypeEditor.general.availableDurations")}</Label>
                   <div class="flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border bg-background px-2.5 py-1.5">
@@ -1419,29 +1486,37 @@
                         {/if}
                       </span>
                     {/each}
-                    {#if remainingDurations.length > 0}
-                      <Select.Root
-                        type="single"
-                        value=""
-                        onValueChange={(v) => {
-                          if (v) {
-                            const val = Number(v);
-                            if (!form.duration_options.includes(val)) {
-                              form.duration_options = [...form.duration_options, val].sort((a, b) => a - b);
-                            }
-                          }
-                        }}
-                      >
-                        <Select.Trigger class="h-6 w-auto border-0 bg-transparent px-1.5 text-xs text-muted-foreground shadow-none focus:ring-0">
-                          <span>+ {$t("eventTypeEditor.general.addDurationPlaceholder")}</span>
-                        </Select.Trigger>
-                        <Select.Content>
-                          {#each remainingDurations as d}
-                            <Select.Item value={String(d)} label="{d} mins">{d} mins</Select.Item>
-                          {/each}
-                        </Select.Content>
-                      </Select.Root>
-                    {/if}
+                    <Popover.Root bind:open={durationMenuOpen}>
+                      <Popover.Trigger class="inline-flex h-6 items-center gap-1 rounded px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">
+                        + Select durations
+                      </Popover.Trigger>
+                      <Popover.Content align="start" class="w-44 p-1">
+                        {#each DURATION_PRESETS as d}
+                          {@const selected = form.duration_options.includes(d)}
+                          <button
+                            type="button"
+                            onclick={() => {
+                              if (selected) {
+                                if (form.duration_options.length <= 1) return;
+                                const next = form.duration_options.filter((x) => x !== d);
+                                form.duration_options = next;
+                                if (!next.includes(form.duration_minutes)) {
+                                  form.duration_minutes = next[0];
+                                }
+                              } else {
+                                form.duration_options = [...form.duration_options, d].sort((a, b) => a - b);
+                              }
+                            }}
+                            class="flex w-full items-center justify-between rounded-sm px-2.5 py-1.5 text-left text-xs hover:bg-accent {selected ? 'font-medium text-foreground' : 'text-muted-foreground'}"
+                          >
+                            <span>{d} mins</span>
+                            {#if selected}
+                              <span class="text-primary">✓</span>
+                            {/if}
+                          </button>
+                        {/each}
+                      </Popover.Content>
+                    </Popover.Root>
                   </div>
                 </div>
                 <div class="space-y-1.5 min-w-0">
@@ -1539,8 +1614,8 @@
                   checked={form.allow_multiple_durations}
                   onCheckedChange={(checked) => {
                     form.allow_multiple_durations = checked;
-                    if (checked && !form.duration_options.includes(form.duration_minutes)) {
-                      form.duration_options = [...form.duration_options, form.duration_minutes].sort((a, b) => a - b);
+                    if (checked) {
+                      form.duration_options = [form.duration_minutes || 30];
                     }
                   }}
                 />
@@ -1978,46 +2053,6 @@
                   {$t("eventTypeEditor.invite.onlineNoneWarning")}
                 </p>
               {/if}
-            </div>
-          </div>
-
-          <div class="mt-6 rounded-lg border bg-card p-6 space-y-4">
-            <h3 class="text-sm font-semibold">{$t("eventTypeEditor.overrides.title")}</h3>
-            <div class="space-y-1.5">
-              <div class="flex items-center gap-1.5">
-                <Label for="et-cal-title">{$t("eventTypeEditor.overrides.calendarTitle")}</Label>
-                {@render infoTip($t("eventTypeEditor.overrides.calendarTitleHint"))}
-              </div>
-              <Input
-                id="et-cal-title"
-                bind:value={form.calendar_event_title}
-                placeholder={$t("eventTypeEditor.overrides.calendarTitlePlaceholder")}
-                maxlength={200}
-              />
-            </div>
-            <div class="space-y-1.5">
-              <div class="flex items-center gap-1.5">
-                <Label for="et-redirect-url">{$t("eventTypeEditor.overrides.redirectUrl")}</Label>
-                {@render infoTip($t("eventTypeEditor.overrides.redirectUrlHint"))}
-              </div>
-              <Input
-                id="et-redirect-url"
-                type="url"
-                bind:value={form.redirect_url}
-                placeholder={$t("eventTypeEditor.overrides.redirectUrlPlaceholder")}
-              />
-            </div>
-            <div class="space-y-1.5">
-              <div class="flex items-center gap-1.5">
-                <Label for="et-reply-to">{$t("eventTypeEditor.overrides.replyTo")}</Label>
-                {@render infoTip($t("eventTypeEditor.overrides.replyToHint"))}
-              </div>
-              <Input
-                id="et-reply-to"
-                type="email"
-                bind:value={form.reply_to}
-                placeholder={$t("eventTypeEditor.overrides.replyToPlaceholder")}
-              />
             </div>
           </div>
         </div>
@@ -2691,7 +2726,32 @@
           >
             {$t("eventTypeEditor.tabs.hosts")}
           </h2>
-          <div class="rounded-lg border bg-card p-6">
+          <div class="rounded-lg border bg-card p-6 space-y-5">
+            {#if teams.length > 0}
+              <div class="space-y-1.5">
+                <Label for="et-team-assign">Team assignment</Label>
+                <select
+                  id="et-team-assign"
+                  value={form.team_id}
+                  onchange={(e) => {
+                    const v = (e.currentTarget as HTMLSelectElement).value;
+                    form.team_id = v;
+                    if (v) {
+                      setScope("people");
+                    }
+                  }}
+                  class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <option value="">Personal (no team)</option>
+                  {#each teams.filter((tm) => $currentUser?.is_admin || tm.my_role === "owner") as tm (tm.id)}
+                    <option value={tm.id}>{tm.name}</option>
+                  {/each}
+                </select>
+                <p class="text-xs text-muted-foreground">
+                  Team event types appear on the team's booking page and must use Collective or Round-robin scheduling.
+                </p>
+              </div>
+            {/if}
             <div>
               <!-- Q1 — Hosting -->
               <div class="space-y-1.5">
@@ -2699,8 +2759,9 @@
                 <div class="inline-flex rounded-lg border bg-muted/40 p-0.5">
                   <button
                     type="button"
+                    disabled={!!form.team_id}
                     onclick={() => setScope("me")}
-                    class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors {hostScope ===
+                    class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-40 {hostScope ===
                     'me'
                       ? 'bg-background shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'}"
@@ -3364,6 +3425,53 @@
         />
       {/if}
 
+      {#if activeTab === "confirmation"}
+        <div class="mb-8">
+          <h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            Confirmation
+          </h2>
+          <div class="rounded-lg border bg-card p-6 space-y-4">
+            <h3 class="text-sm font-semibold">{$t("eventTypeEditor.overrides.title")}</h3>
+            <div class="space-y-1.5">
+              <div class="flex items-center gap-1.5">
+                <Label for="et-cal-title">{$t("eventTypeEditor.overrides.calendarTitle")}</Label>
+                {@render infoTip($t("eventTypeEditor.overrides.calendarTitleHint"))}
+              </div>
+              <Input
+                id="et-cal-title"
+                bind:value={form.calendar_event_title}
+                placeholder={$t("eventTypeEditor.overrides.calendarTitlePlaceholder")}
+                maxlength={200}
+              />
+            </div>
+            <div class="space-y-1.5">
+              <div class="flex items-center gap-1.5">
+                <Label for="et-redirect-url">{$t("eventTypeEditor.overrides.redirectUrl")}</Label>
+                {@render infoTip($t("eventTypeEditor.overrides.redirectUrlHint"))}
+              </div>
+              <Input
+                id="et-redirect-url"
+                type="url"
+                bind:value={form.redirect_url}
+                placeholder={$t("eventTypeEditor.overrides.redirectUrlPlaceholder")}
+              />
+            </div>
+            <div class="space-y-1.5">
+              <div class="flex items-center gap-1.5">
+                <Label for="et-reply-to">{$t("eventTypeEditor.overrides.replyTo")}</Label>
+                {@render infoTip($t("eventTypeEditor.overrides.replyToHint"))}
+              </div>
+              <Input
+                id="et-reply-to"
+                type="email"
+                bind:value={form.reply_to}
+                placeholder={$t("eventTypeEditor.overrides.replyToPlaceholder")}
+              />
+            </div>
+          </div>
+        </div>
+      {/if}
+
       {#if activeTab === "webhooks" && et}
         <WebhooksManager eventTypeId={et.id} eventTypeName={et.name} />
       {/if}
@@ -3374,7 +3482,7 @@
     </div>
 
     <!-- Live Interactive Booking Preview (Right, hidden on mobile/tablet < 1280px) -->
-    <aside class="hidden w-[360px] shrink-0 xl:block">
+    <aside class="hidden w-full min-w-[380px] max-w-[520px] xl:block">
       <BookingPreviewCard
         name={form.name}
         description={form.description}
@@ -3383,12 +3491,38 @@
         locationValue={form.location_value}
         hostName={$currentUser?.name ?? "Host"}
         hostAvatar={$currentUser?.avatar_url ?? ""}
-        mode={activeTab === "questions" ? "form" : "calendar"}
+        mode={activeTab === "questions" ? "form" : activeTab === "confirmation" ? "confirmation" : "calendar"}
         allowPhoneCall={allowPhoneCall && isOnlineMeeting(form.location_type)}
+        allowMultipleDurations={form.allow_multiple_durations}
+        durationOptions={form.duration_options}
+        calendarEventTitle={form.calendar_event_title}
+        redirectUrl={form.redirect_url}
         questions={previewQuestions}
       />
     </aside>
   </div>
+
+  <Dialog.Root bind:open={unsavedOpen}>
+    <Dialog.Content class="max-w-md">
+      <Dialog.Header>
+        <Dialog.Title>Unsaved changes</Dialog.Title>
+        <Dialog.Description>
+          You have unsaved changes to this event type. What would you like to do before leaving?
+        </Dialog.Description>
+      </Dialog.Header>
+      <Dialog.Footer class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <Button variant="ghost" onclick={() => { unsavedOpen = false; pendingNavHref = ""; }}>
+          Cancel
+        </Button>
+        <Button variant="outline" class="text-destructive hover:text-destructive" onclick={discardAndExit}>
+          Discard and exit
+        </Button>
+        <Button onclick={saveAndExit} disabled={etSaving}>
+          {etSaving ? "Saving..." : "Save and exit"}
+        </Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
 
   <ConfirmDialog
     bind:open={confirmNoneOpen}

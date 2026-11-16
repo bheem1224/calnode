@@ -76,6 +76,8 @@ type eventTypeJSON struct {
 	LocationOptions          []LocationOption `json:"location_options,omitempty"`
 	DestinationCalendarID    string           `json:"destination_calendar_id,omitempty"`
 	ScheduleID               *string          `json:"schedule_id,omitempty"`
+	TeamID                   *string          `json:"team_id"`
+	TeamName                 string           `json:"team_name,omitempty"`
 	IsActive                 bool             `json:"is_active"`
 	// ShowTakenSlots renders already-booked times greyed out on the booking page
 	// instead of omitting them. Off by default: the slots endpoint is public, so this
@@ -147,7 +149,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	var subjConf, subjCancel, subjResched, subjRemind sql.NullString
 	var maxPerDay, maxPerWeek, maxPerMonth, maxPerYear, maxDurDay, maxDurWeek sql.NullInt64
 	var futureRangeStart, futureRangeEnd, calEventTitle, redirectURL, replyTo sql.NullString
-	var durOptionsRaw, locOptionsRaw, schedID sql.NullString
+	var durOptionsRaw, locOptionsRaw, schedID, teamID sql.NullString
 	var isActive, isPublic, showTaken int
 	var disableCancel, disableResched, allowReschedPast, showFirstSlotOnly int
 	var hideNotesCal, hideCalDetails, reqConfirm, unconfirmedBlocks, reqEmailVerify, allowMultiDur int
@@ -170,7 +172,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 		&calEventTitle, &redirectURL, &replyTo,
 		&hideNotesCal, &hideCalDetails, &reqConfirm, &et.ConfirmMode,
 		&et.ConfirmNoticeMinutes, &unconfirmedBlocks, &reqEmailVerify,
-		&allowMultiDur, &durOptionsRaw, &locOptionsRaw, &et.DestinationCalendarID, &schedID,
+		&allowMultiDur, &durOptionsRaw, &locOptionsRaw, &et.DestinationCalendarID, &schedID, &teamID,
 	}
 	dests = append(dests, trailing...)
 	err := s.Scan(dests...)
@@ -185,6 +187,9 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	}
 	if schedID.Valid {
 		et.ScheduleID = &schedID.String
+	}
+	if teamID.Valid && teamID.String != "" {
+		et.TeamID = &teamID.String
 	}
 	if locVal.Valid {
 		et.LocationValue = &locVal.String
@@ -319,7 +324,7 @@ const etColumns = `id, slug, name, description,
 	calendar_event_title, redirect_url, reply_to,
 	hide_notes_in_calendar, hide_calendar_event_details, requires_confirmation,
 	confirm_mode, confirm_notice_minutes, unconfirmed_blocks_slots, require_email_verification,
-	allow_multiple_durations, duration_options, location_options, destination_calendar_id, schedule_id`
+	allow_multiple_durations, duration_options, location_options, destination_calendar_id, schedule_id, team_id`
 
 // selectETCols fetches a single event type without the caller-relative columns.
 const selectETCols = "SELECT " + etColumns + " FROM event_types"
@@ -329,37 +334,42 @@ const selectETCols = "SELECT " + etColumns + " FROM event_types"
 const etOwnerColumns = `, user_id,
 	(SELECT name FROM users WHERE id = event_types.user_id) AS owner_name,
 	(SELECT email FROM users WHERE id = event_types.user_id) AS owner_email,
-	(archived_at IS NOT NULL) AS archived`
+	(archived_at IS NOT NULL) AS archived,
+	COALESCE((SELECT name FROM teams WHERE id = event_types.team_id), '') AS team_name,
+	COALESCE((SELECT role FROM team_members WHERE team_id = event_types.team_id AND user_id = ?), '') AS caller_team_role`
 
-// listEventTypesQuery returns every event type the user owns OR is an assigned
-// host on (the owner is also seeded into event_type_hosts, so ownership is keyed on
-// event_types.user_id, not host membership). The first parameter widens it to every
-// event type on the instance; ListEventTypes sets it only for an admin asking for
-// ?scope=all.
+// listEventTypesQuery returns every event type the user owns, is an assigned host on,
+// or belongs to via team membership. The first parameter after user.ID widens it to
+// every event type on the instance for ?scope=all.
 const listEventTypesQuery = "SELECT " + etColumns + etOwnerColumns + `
 FROM event_types
 WHERE ? = 1
    OR user_id = ?
    OR id IN (SELECT event_type_id FROM event_type_hosts WHERE user_id = ?)
+   OR team_id IN (SELECT team_id FROM team_members WHERE user_id = ?)
 ORDER BY created_at`
 
-// getEventTypeQuery fetches one event type by slug if the user owns it, hosts it, or
-// is an admin (the first parameter), with the owner's id, name and email.
+// getEventTypeQuery fetches one event type by slug if the user owns it, hosts it,
+// belongs to its team, or is an admin.
 const getEventTypeQuery = "SELECT " + etColumns + etOwnerColumns + `
 FROM event_types
-WHERE slug = ? AND (? = 1 OR user_id = ? OR id IN (SELECT event_type_id FROM event_type_hosts WHERE user_id = ?))`
+WHERE slug = ? AND (? = 1 OR user_id = ? OR id IN (SELECT event_type_id FROM event_type_hosts WHERE user_id = ?) OR team_id IN (SELECT team_id FROM team_members WHERE user_id = ?))`
 
 // scanEventTypeWithOwner scans a row of listEventTypesQuery or getEventTypeQuery and
 // fills the fields that describe the event type relative to the caller.
 func scanEventTypeWithOwner(s rowScanner, user AuthUser) (*eventTypeJSON, error) {
-	var ownerID, ownerName, ownerEmail string
+	var ownerID, ownerName, ownerEmail, teamName, callerTeamRole string
 	var archived int
-	et, err := scanEventTypeRow(s, &ownerID, &ownerName, &ownerEmail, &archived)
+	et, err := scanEventTypeRow(s, &ownerID, &ownerName, &ownerEmail, &archived, &teamName, &callerTeamRole)
 	if et == nil || err != nil {
 		return et, err
 	}
 	et.Archived = archived != 0
+	et.TeamName = teamName
 	et.setOwnership(user, ownerID)
+	if callerTeamRole == "owner" {
+		et.CanEdit = true
+	}
 	if !et.Owned {
 		et.OwnerName, et.OwnerEmail = ownerName, ownerEmail
 	}
@@ -427,6 +437,7 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 		AllowPhoneCall      *bool   `json:"allow_phone_call"`
 		ShowTakenSlots      *bool   `json:"show_taken_slots"`
 		InviteDelivery      *string `json:"invite_delivery"`
+		TeamID              *string `json:"team_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -488,6 +499,36 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 	if req.RoutingMode != nil {
 		routingMode = *req.RoutingMode
 	}
+	var teamIDArg any
+	if req.TeamID != nil && strings.TrimSpace(*req.TeamID) != "" {
+		tid := strings.TrimSpace(*req.TeamID)
+		var teamExists int
+		if err := h.db.QueryRowContext(r.Context(), `SELECT 1 FROM teams WHERE id = ?`, tid).Scan(&teamExists); err == sql.ErrNoRows {
+			h.writeError(w, http.StatusBadRequest, "team not found")
+			return
+		} else if err != nil {
+			h.logger.ErrorContext(r.Context(), "create event type: team lookup", "error", err)
+			h.writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		allowed, err := h.canManageTeam(r.Context(), user, tid)
+		if err != nil {
+			h.logger.ErrorContext(r.Context(), "create event type: team auth", "error", err)
+			h.writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if !allowed {
+			h.writeError(w, http.StatusForbidden, "admin or team head access required")
+			return
+		}
+		if req.RoutingMode == nil {
+			routingMode = "collective"
+		} else if routingMode == "fixed" {
+			h.writeError(w, http.StatusBadRequest, "team event types must use collective or round_robin routing")
+			return
+		}
+		teamIDArg = tid
+	}
 	bufBefore, bufAfter, minNotice, maxFuture := 0, 0, 0, 60
 	if req.BufferBeforeMinutes != nil {
 		bufBefore = *req.BufferBeforeMinutes
@@ -536,14 +577,14 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 
 	_, err = tx.ExecContext(r.Context(), `
 		INSERT INTO event_types
-		  (id, user_id, slug, name, description, duration_minutes,
+		  (id, user_id, team_id, slug, name, description, duration_minutes,
 		   slot_interval_minutes, location_type, location_value, allow_phone_call,
 		   routing_mode, buffer_before_minutes, buffer_after_minutes,
 		   min_notice_minutes, max_future_days, max_active_bookings, show_taken_slots, invite_delivery,
 		   msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, display_order,
 		   max_per_day, max_per_week)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, user.ID, req.Slug, req.Name, req.Description,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, user.ID, teamIDArg, req.Slug, req.Name, req.Description,
 		req.DurationMinutes, slotInterval, locType, req.LocationValue, req.AllowPhoneCall != nil && *req.AllowPhoneCall,
 		routingMode, bufBefore, bufAfter, minNotice, maxFuture, maxActive, showTaken, inviteDelivery,
 		defaultMsgConfirmation, defaultMsgCancellation, defaultMsgReschedule, defaultMsgReminder, req.DisplayOrder,
@@ -599,7 +640,7 @@ func (h *Handler) ListEventTypes(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 	all := r.URL.Query().Get("scope") == "all" && user.IsAdmin
 
-	rows, err := h.db.QueryContext(r.Context(), listEventTypesQuery, boolArg(all), user.ID, user.ID)
+	rows, err := h.db.QueryContext(r.Context(), listEventTypesQuery, user.ID, boolArg(all), user.ID, user.ID, user.ID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list event types", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -630,7 +671,7 @@ func (h *Handler) GetEventType(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 	slug := r.PathValue("slug")
 
-	row := h.db.QueryRowContext(r.Context(), getEventTypeQuery, slug, boolArg(user.IsAdmin), user.ID, user.ID)
+	row := h.db.QueryRowContext(r.Context(), getEventTypeQuery, user.ID, slug, boolArg(user.IsAdmin), user.ID, user.ID, user.ID)
 	et, err := scanEventTypeWithOwner(row, user)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "get event type", "error", err)
@@ -701,6 +742,7 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		LocationOptions          []LocationOption `json:"location_options"`
 		DestinationCalendarID    *string          `json:"destination_calendar_id"`
 		ScheduleID               *string          `json:"schedule_id"`
+		TeamID                   *string          `json:"team_id"`
 		IsActive                 *bool            `json:"is_active"`
 		IsPublic                 *bool            `json:"is_public"`
 		AllowPhoneCall           *bool            `json:"allow_phone_call"`
@@ -1153,11 +1195,12 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 	// Look up the event type ID, owner + current location (needed for reminder upsert,
 	// to verify the caller may edit it, and to validate the effective online-meeting
 	// location below).
-	var etID, ownerID, curLocType, curLocVal, curInviteDelivery string
+	var etID, ownerID, curLocType, curLocVal, curInviteDelivery, curRoutingMode string
+	var curTeamID sql.NullString
 	err := h.db.QueryRowContext(r.Context(),
-		`SELECT id, user_id, location_type, COALESCE(location_value, ''), invite_delivery FROM event_types WHERE slug = ?`, slug).
-		Scan(&etID, &ownerID, &curLocType, &curLocVal, &curInviteDelivery)
-	if err == sql.ErrNoRows || (err == nil && !canManageEventType(user, ownerID)) {
+		`SELECT id, user_id, location_type, COALESCE(location_value, ''), invite_delivery, routing_mode, team_id FROM event_types WHERE slug = ?`, slug).
+		Scan(&etID, &ownerID, &curLocType, &curLocVal, &curInviteDelivery, &curRoutingMode, &curTeamID)
+	if err == sql.ErrNoRows {
 		h.writeError(w, http.StatusNotFound, "event type not found")
 		return
 	}
@@ -1165,6 +1208,58 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(r.Context(), "patch event type: lookup id", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	canEdit := canManageEventType(user, ownerID)
+	if !canEdit && curTeamID.Valid && curTeamID.String != "" {
+		if ok, err := h.canManageTeam(r.Context(), user, curTeamID.String); err == nil && ok {
+			canEdit = true
+		}
+	}
+	if !canEdit {
+		h.writeError(w, http.StatusNotFound, "event type not found")
+		return
+	}
+
+	effTeamID := curTeamID.String
+	if req.TeamID != nil {
+		tid := strings.TrimSpace(*req.TeamID)
+		if tid == "" {
+			set("team_id", nil)
+			effTeamID = ""
+		} else {
+			var teamExists int
+			if err := h.db.QueryRowContext(r.Context(), `SELECT 1 FROM teams WHERE id = ?`, tid).Scan(&teamExists); err == sql.ErrNoRows {
+				h.writeError(w, http.StatusBadRequest, "team not found")
+				return
+			} else if err != nil {
+				h.logger.ErrorContext(r.Context(), "patch event type: team lookup", "error", err)
+				h.writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			allowed, err := h.canManageTeam(r.Context(), user, tid)
+			if err != nil {
+				h.logger.ErrorContext(r.Context(), "patch event type: team auth", "error", err)
+				h.writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			if !allowed {
+				h.writeError(w, http.StatusForbidden, "admin or team head access required")
+				return
+			}
+			set("team_id", tid)
+			effTeamID = tid
+		}
+	}
+	effRouting := curRoutingMode
+	if req.RoutingMode != nil {
+		effRouting = *req.RoutingMode
+	}
+	if effTeamID != "" && effRouting == "fixed" {
+		if req.RoutingMode != nil {
+			h.writeError(w, http.StatusBadRequest, "team event types must use collective or round_robin routing")
+			return
+		}
+		set("routing_mode", "collective")
 	}
 
 	// Validate the location only when this patch actually CHANGES it, comparing what

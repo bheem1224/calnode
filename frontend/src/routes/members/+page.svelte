@@ -86,29 +86,52 @@
 		}
 	}
 
-	async function createCustomRole() {
+	let editingRoleId = $state('');
+
+	function startEditRole(r: RBACRole) {
+		editingRoleId = r.id;
+		newRoleName = r.name;
+		newRoleCanImp = r.can_impersonate;
+		newRoleIsImpersonatable = r.is_impersonatable;
+		newRoleManageUsers = r.can_manage_users;
+		newRoleManageSettings = r.can_manage_settings;
+		newRoleManageTeams = r.can_manage_teams;
+	}
+
+	function cancelEditRole() {
+		editingRoleId = '';
+		newRoleName = '';
+		newRoleCanImp = false;
+		newRoleIsImpersonatable = true;
+		newRoleManageUsers = false;
+		newRoleManageSettings = false;
+		newRoleManageTeams = false;
+	}
+
+	async function saveCustomRole() {
 		const name = newRoleName.trim();
 		if (!name) return;
 		creatingRole = true;
 		try {
-			await api.post('/v1/roles', {
+			const payload = {
 				name,
 				can_impersonate: newRoleCanImp,
 				is_impersonatable: newRoleIsImpersonatable,
 				can_manage_users: newRoleManageUsers,
 				can_manage_settings: newRoleManageSettings,
 				can_manage_teams: newRoleManageTeams
-			});
-			newRoleName = '';
-			newRoleCanImp = false;
-			newRoleIsImpersonatable = true;
-			newRoleManageUsers = false;
-			newRoleManageSettings = false;
-			newRoleManageTeams = false;
+			};
+			if (editingRoleId) {
+				await api.patch(`/v1/roles/${editingRoleId}`, payload);
+				toast.success('Custom role updated');
+			} else {
+				await api.post('/v1/roles', payload);
+				toast.success('Custom role created');
+			}
+			cancelEditRole();
 			await load();
-			toast.success('Custom role created');
 		} catch (e: any) {
-			toast.error(e.message || 'Failed to create role');
+			toast.error(e.message || 'Failed to save role');
 		} finally {
 			creatingRole = false;
 		}
@@ -706,9 +729,12 @@
 					<label class="flex items-center gap-1.5 text-xs">
 						<input type="checkbox" bind:checked={newRoleManageTeams} /> Manage teams
 					</label>
-					<Button size="sm" class="h-8 text-xs" disabled={creatingRole || !newRoleName.trim()} onclick={createCustomRole}>
-						{creatingRole ? 'Creating...' : '+ Create role'}
+					<Button size="sm" class="h-8 text-xs" disabled={creatingRole || !newRoleName.trim()} onclick={saveCustomRole}>
+						{creatingRole ? 'Saving...' : (editingRoleId ? 'Save role' : '+ Create role')}
 					</Button>
+					{#if editingRoleId}
+						<Button size="sm" variant="ghost" class="h-8 text-xs" onclick={cancelEditRole}>Cancel</Button>
+					{/if}
 				</div>
 				{#if roles.length > 0}
 					<div class="divide-y border-t pt-2">
@@ -724,9 +750,14 @@
 									{#if r.can_manage_teams}<Badge variant="outline">Teams</Badge>{/if}
 								</div>
 								{#if !r.is_system}
-									<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive" onclick={() => deleteCustomRole(r.id)}>
-										Delete
-									</Button>
+									<div class="flex items-center gap-1">
+										<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={() => startEditRole(r)}>
+											Edit
+										</Button>
+										<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive" onclick={() => deleteCustomRole(r.id)}>
+											Delete
+										</Button>
+									</div>
 								{/if}
 							</div>
 						{/each}

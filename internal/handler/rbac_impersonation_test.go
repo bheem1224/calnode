@@ -14,13 +14,20 @@ import (
 func TestRBAC_SystemRolesAndMemberCannotImpersonate(t *testing.T) {
 	h, database, apiKey, _ := setupWorkspaceWithDB(t)
 
-	// Built-in admin/member roles exist and cannot be deleted.
+	// Built-in admin/member roles exist and cannot be deleted or edited.
 	delReq := authReq(http.MethodDelete, "/v1/roles/role_admin", "", apiKey)
 	delReq.SetPathValue("id", "role_admin")
 	delRec := httptest.NewRecorder()
 	h.RequireAuth(h.DeleteRole)(delRec, delReq)
 	if delRec.Code != http.StatusForbidden {
 		t.Fatalf("delete built-in role: got %d, want 403 — %s", delRec.Code, delRec.Body.String())
+	}
+	updSysReq := authReq(http.MethodPatch, "/v1/roles/role_admin", `{"name":"Hacked"}`, apiKey)
+	updSysReq.SetPathValue("id", "role_admin")
+	updSysRec := httptest.NewRecorder()
+	h.RequireAuth(h.UpdateRole)(updSysRec, updSysReq)
+	if updSysRec.Code != http.StatusForbidden {
+		t.Fatalf("edit built-in role: got %d, want 403 — %s", updSysRec.Code, updSysRec.Body.String())
 	}
 
 	// Seed two members; member1 tries to impersonate member2 -> 403.
@@ -72,6 +79,15 @@ func TestRBAC_AdminImpersonatesMember_And_ProtectedCustomRoleBlocked(t *testing.
 	h.RequireAuth(h.SetUserCustomRole)(aRec, aReq)
 	if aRec.Code != http.StatusOK {
 		t.Fatalf("SetUserCustomRole: got %d — %s", aRec.Code, aRec.Body.String())
+	}
+
+	// Custom role CAN be edited.
+	uReq := authReq(http.MethodPatch, "/v1/roles/"+roleResp.ID, `{"name":"Executive VIP","can_impersonate":false,"is_impersonatable":false,"can_manage_teams":true}`, apiKey)
+	uReq.SetPathValue("id", roleResp.ID)
+	uRec := httptest.NewRecorder()
+	h.RequireAuth(h.UpdateRole)(uRec, uReq)
+	if uRec.Code != http.StatusOK {
+		t.Fatalf("UpdateRole: got %d — %s", uRec.Code, uRec.Body.String())
 	}
 
 	// 2. Owner/admin session cannot impersonate VIP (is_impersonatable = false) -> 403.

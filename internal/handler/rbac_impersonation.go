@@ -123,6 +123,74 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// UpdateRole handles PATCH /v1/roles/{id} (admin/owner only; system roles protected).
+func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+	id := r.PathValue("id")
+	var isSys int
+	err := h.db.QueryRowContext(r.Context(), `SELECT is_system FROM roles WHERE id = ?`, id).Scan(&isSys)
+	if err == sql.ErrNoRows {
+		h.writeError(w, http.StatusNotFound, "role not found")
+		return
+	}
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if isSys != 0 {
+		h.writeError(w, http.StatusForbidden, "cannot edit built-in system role")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+	var req struct {
+		Name              string `json:"name"`
+		CanImpersonate    bool   `json:"can_impersonate"`
+		IsImpersonatable  bool   `json:"is_impersonatable"`
+		CanManageUsers    bool   `json:"can_manage_users"`
+		CanManageSettings bool   `json:"can_manage_settings"`
+		CanManageTeams    bool   `json:"can_manage_teams"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		h.writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	if _, err := h.db.ExecContext(r.Context(), `
+		UPDATE roles
+		SET name = ?, allow_impersonation = ?, is_impersonatable = ?,
+		    can_manage_users = ?, can_manage_settings = ?, can_manage_teams = ?
+		WHERE id = ?`,
+		req.Name, boolInt(req.CanImpersonate), boolInt(req.IsImpersonatable),
+		boolInt(req.CanManageUsers), boolInt(req.CanManageSettings), boolInt(req.CanManageTeams), id); err != nil {
+		if db.IsUniqueViolation(err) {
+			h.writeError(w, http.StatusConflict, "role name already exists")
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "update role", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, roleJSON{
+		ID:                id,
+		Name:              req.Name,
+		IsSystem:          false,
+		CanImpersonate:    req.CanImpersonate,
+		IsImpersonatable:  req.IsImpersonatable,
+		CanManageUsers:    req.CanManageUsers,
+		CanManageSettings: req.CanManageSettings,
+		CanManageTeams:    req.CanManageTeams,
+	})
+}
+
 // DeleteRole handles DELETE /v1/roles/{id} (admin/owner only; system roles protected).
 func (h *Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.requireAdmin(w, r); !ok {

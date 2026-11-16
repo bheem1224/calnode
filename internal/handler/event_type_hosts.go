@@ -63,15 +63,26 @@ func canManageEventType(user AuthUser, ownerID string) bool {
 // Meet, Teams or Zoom link is minted by the primary host's account, and the primary
 // host need not be the owner.
 func (h *Handler) eventTypeForEditor(w http.ResponseWriter, r *http.Request, slug string, user AuthUser) (id, ownerID string) {
+	var teamID sql.NullString
 	err := h.db.QueryRowContext(r.Context(),
-		`SELECT id, user_id FROM event_types WHERE slug = ?`, slug).Scan(&id, &ownerID)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && !canManageEventType(user, ownerID)) {
+		`SELECT id, user_id, team_id FROM event_types WHERE slug = ?`, slug).Scan(&id, &ownerID, &teamID)
+	if errors.Is(err, sql.ErrNoRows) {
 		h.writeError(w, http.StatusNotFound, "event type not found")
 		return "", ""
 	}
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "event type: resolve for editor", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return "", ""
+	}
+	canEdit := canManageEventType(user, ownerID)
+	if !canEdit && teamID.Valid && teamID.String != "" {
+		if ok, err := h.canManageTeam(r.Context(), user, teamID.String); err == nil && ok {
+			canEdit = true
+		}
+	}
+	if !canEdit {
+		h.writeError(w, http.StatusNotFound, "event type not found")
 		return "", ""
 	}
 	return id, ownerID

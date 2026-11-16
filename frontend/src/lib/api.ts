@@ -123,6 +123,8 @@ export type EventType = {
 	/** Owner identity, returned when the viewer is not the owner. */
 	owner_name?: string;
 	owner_email?: string;
+	team_id?: string | null;
+	team_name?: string;
 };
 
 export type EventTypeHost = {
@@ -358,6 +360,7 @@ export type Team = {
 	slug: string;
 	created_at: string;
 	member_count: number;
+	my_role?: 'owner' | 'member' | '';
 	members?: TeamMemberRef[];
 };
 
@@ -366,6 +369,7 @@ export type TeamMemberRef = {
 	name: string;
 	email: string;
 	avatar_url?: string;
+	role?: 'owner' | 'member';
 	routing_priority: number;
 	archived: boolean;
 };

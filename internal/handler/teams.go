@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -38,6 +39,7 @@ type teamMemberJSON struct {
 	Name            string `json:"name"`
 	Email           string `json:"email"`
 	AvatarURL       string `json:"avatar_url,omitempty"`
+	Role            string `json:"role"`
 	RoutingPriority int    `json:"routing_priority"`
 	Archived        bool   `json:"archived"`
 }
@@ -48,7 +50,30 @@ type teamJSON struct {
 	Slug        string           `json:"slug"`
 	CreatedAt   string           `json:"created_at"`
 	MemberCount int              `json:"member_count"`
+	MyRole      string           `json:"my_role,omitempty"`
 	Members     []teamMemberJSON `json:"members,omitempty"`
+}
+
+func (h *Handler) userTeamRole(ctx context.Context, userID, teamID string) (string, error) {
+	var role string
+	err := h.db.QueryRowContext(ctx,
+		`SELECT role FROM team_members WHERE team_id = ? AND user_id = ?`,
+		teamID, userID).Scan(&role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return role, err
+}
+
+func (h *Handler) canManageTeam(ctx context.Context, user AuthUser, teamID string) (bool, error) {
+	if user.IsAdmin {
+		return true, nil
+	}
+	role, err := h.userTeamRole(ctx, user.ID, teamID)
+	if err != nil {
+		return false, err
+	}
+	return role == "owner", nil
 }
 
 // CreateTeam handles POST /v1/teams (admin). Body: {name, slug?}.
@@ -98,18 +123,31 @@ func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusCreated, teamJSON{ID: id, Name: req.Name, Slug: slug, CreatedAt: now, MemberCount: 0})
 }
 
-// ListTeams handles GET /v1/teams (admin) — teams with member counts.
+// ListTeams handles GET /v1/teams — returns all teams for admins, or teams the caller belongs to.
 func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
-	admin, ok := userFromContext(r.Context())
-	if !ok || !admin.IsAdmin {
-		h.writeError(w, http.StatusForbidden, "admin access required")
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		h.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	rows, err := h.db.QueryContext(r.Context(), `
-		SELECT t.id, t.name, t.slug, t.created_at, COUNT(tm.user_id)
-		FROM teams t LEFT JOIN team_members tm ON tm.team_id = t.id
-		GROUP BY t.id, t.name, t.slug, t.created_at
-		ORDER BY t.name ASC`)
+	var rows *sql.Rows
+	var err error
+	if user.IsAdmin {
+		rows, err = h.db.QueryContext(r.Context(), `
+			SELECT t.id, t.name, t.slug, t.created_at, COUNT(tm.user_id),
+			       COALESCE((SELECT role FROM team_members WHERE team_id = t.id AND user_id = ?), '')
+			FROM teams t LEFT JOIN team_members tm ON tm.team_id = t.id
+			GROUP BY t.id, t.name, t.slug, t.created_at
+			ORDER BY t.name ASC`, user.ID)
+	} else {
+		rows, err = h.db.QueryContext(r.Context(), `
+			SELECT t.id, t.name, t.slug, t.created_at, COUNT(tm.user_id), my.role
+			FROM teams t
+			JOIN team_members my ON my.team_id = t.id AND my.user_id = ?
+			LEFT JOIN team_members tm ON tm.team_id = t.id
+			GROUP BY t.id, t.name, t.slug, t.created_at, my.role
+			ORDER BY t.name ASC`, user.ID)
+	}
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list teams", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -120,7 +158,7 @@ func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
 	out := []teamJSON{}
 	for rows.Next() {
 		var t teamJSON
-		if err := rows.Scan(&t.ID, &t.Name, &t.Slug, &t.CreatedAt, &t.MemberCount); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Slug, &t.CreatedAt, &t.MemberCount, &t.MyRole); err != nil {
 			continue
 		}
 		out = append(out, t)
@@ -128,17 +166,27 @@ func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
-// GetTeam handles GET /v1/teams/{id} (admin) — team + its members.
+// GetTeam handles GET /v1/teams/{id} (admin or team member) — team + its members.
 func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
-	admin, ok := userFromContext(r.Context())
-	if !ok || !admin.IsAdmin {
-		h.writeError(w, http.StatusForbidden, "admin access required")
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		h.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	id := r.PathValue("id")
+	myRole, err := h.userTeamRole(r.Context(), user.ID, id)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "get team: role lookup", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !user.IsAdmin && myRole == "" {
+		h.writeError(w, http.StatusForbidden, "team access required")
+		return
+	}
 
 	var t teamJSON
-	err := h.db.QueryRowContext(r.Context(),
+	err = h.db.QueryRowContext(r.Context(),
 		`SELECT id, name, slug, created_at FROM teams WHERE id = ?`, id).
 		Scan(&t.ID, &t.Name, &t.Slug, &t.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -150,9 +198,10 @@ func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	t.MyRole = myRole
 
 	rows, err := h.db.QueryContext(r.Context(), `
-		SELECT u.id, u.name, u.email, COALESCE(u.avatar_url,''), tm.routing_priority, u.archived_at
+		SELECT u.id, u.name, u.email, COALESCE(u.avatar_url,''), tm.role, tm.routing_priority, u.archived_at
 		FROM team_members tm JOIN users u ON u.id = tm.user_id
 		WHERE tm.team_id = ?
 		ORDER BY tm.routing_priority ASC, u.name ASC`, id)
@@ -167,7 +216,7 @@ func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var m teamMemberJSON
 		var archivedAt sql.NullString
-		if err := rows.Scan(&m.ID, &m.Name, &m.Email, &m.AvatarURL, &m.RoutingPriority, &archivedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.Name, &m.Email, &m.AvatarURL, &m.Role, &m.RoutingPriority, &archivedAt); err != nil {
 			continue
 		}
 		m.Archived = archivedAt.Valid
@@ -177,14 +226,24 @@ func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, t)
 }
 
-// PatchTeam handles PATCH /v1/teams/{id} (admin). Body: {name?, slug?}.
+// PatchTeam handles PATCH /v1/teams/{id} (admin or team head). Body: {name?, slug?}.
 func (h *Handler) PatchTeam(w http.ResponseWriter, r *http.Request) {
-	admin, ok := userFromContext(r.Context())
-	if !ok || !admin.IsAdmin {
-		h.writeError(w, http.StatusForbidden, "admin access required")
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		h.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	id := r.PathValue("id")
+	allowed, err := h.canManageTeam(r.Context(), user, id)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "patch team: auth lookup", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !allowed {
+		h.writeError(w, http.StatusForbidden, "admin or team head access required")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var req struct {
 		Name *string `json:"name"`
@@ -260,23 +319,42 @@ func (h *Handler) DeleteTeam(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// AddTeamMember handles POST /v1/teams/{id}/members (admin).
-// Body: {user_id, routing_priority?}. The user must be an existing, active member.
+// AddTeamMember handles POST /v1/teams/{id}/members (admin or team head).
+// Body: {user_id, routing_priority?, role?}. The user must be an existing, active member.
 func (h *Handler) AddTeamMember(w http.ResponseWriter, r *http.Request) {
-	admin, ok := userFromContext(r.Context())
-	if !ok || !admin.IsAdmin {
-		h.writeError(w, http.StatusForbidden, "admin access required")
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		h.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	teamID := r.PathValue("id")
+	allowed, err := h.canManageTeam(r.Context(), user, teamID)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "add team member: auth lookup", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !allowed {
+		h.writeError(w, http.StatusForbidden, "admin or team head access required")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var req struct {
 		UserID          string `json:"user_id"`
 		RoutingPriority int    `json:"routing_priority"`
+		Role            string `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" {
 		h.writeError(w, http.StatusBadRequest, "user_id is required")
 		return
+	}
+	role := "member"
+	if req.Role != "" {
+		if req.Role != "owner" && req.Role != "member" {
+			h.writeError(w, http.StatusBadRequest, "role must be 'owner' or 'member'")
+			return
+		}
+		role = req.Role
 	}
 
 	var teamExists int
@@ -305,8 +383,8 @@ func (h *Handler) AddTeamMember(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := h.db.ExecContext(r.Context(), `
 		INSERT INTO team_members (id, team_id, user_id, role, routing_priority)
-		VALUES (?, ?, ?, 'member', ?)`,
-		uid.New(), teamID, req.UserID, req.RoutingPriority); err != nil {
+		VALUES (?, ?, ?, ?, ?)`,
+		uid.New(), teamID, req.UserID, role, req.RoutingPriority); err != nil {
 		if db.IsUniqueViolation(err) {
 			h.writeError(w, http.StatusConflict, "that user is already in this team")
 			return
@@ -318,27 +396,56 @@ func (h *Handler) AddTeamMember(w http.ResponseWriter, r *http.Request) {
 	h.GetTeam(w, r)
 }
 
-// UpdateTeamMember handles PATCH /v1/teams/{id}/members/{userId} (admin).
-// Body: {routing_priority}.
+// UpdateTeamMember handles PATCH /v1/teams/{id}/members/{userId} (admin or team head).
+// Body: {routing_priority?, role?}.
 func (h *Handler) UpdateTeamMember(w http.ResponseWriter, r *http.Request) {
-	admin, ok := userFromContext(r.Context())
-	if !ok || !admin.IsAdmin {
-		h.writeError(w, http.StatusForbidden, "admin access required")
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		h.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	teamID := r.PathValue("id")
+	allowed, err := h.canManageTeam(r.Context(), user, teamID)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "update team member: auth lookup", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !allowed {
+		h.writeError(w, http.StatusForbidden, "admin or team head access required")
+		return
+	}
 	userID := r.PathValue("userId")
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
 	var req struct {
-		RoutingPriority *int `json:"routing_priority"`
+		RoutingPriority *int    `json:"routing_priority"`
+		Role            *string `json:"role"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.RoutingPriority == nil {
-		h.writeError(w, http.StatusBadRequest, "routing_priority is required")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	var sets []string
+	var args []any
+	if req.RoutingPriority != nil {
+		sets = append(sets, "routing_priority = ?")
+		args = append(args, *req.RoutingPriority)
+	}
+	if req.Role != nil {
+		if *req.Role != "owner" && *req.Role != "member" {
+			h.writeError(w, http.StatusBadRequest, "role must be 'owner' or 'member'")
+			return
+		}
+		sets = append(sets, "role = ?")
+		args = append(args, *req.Role)
+	}
+	if len(sets) == 0 {
+		h.writeError(w, http.StatusBadRequest, "routing_priority or role is required")
+		return
+	}
+	args = append(args, teamID, userID)
 	res, err := h.db.ExecContext(r.Context(),
-		`UPDATE team_members SET routing_priority = ? WHERE team_id = ? AND user_id = ?`,
-		*req.RoutingPriority, teamID, userID)
+		"UPDATE team_members SET "+strings.Join(sets, ", ")+" WHERE team_id = ? AND user_id = ?", args...) // #nosec G202 -- sets is built from hardcoded literals only
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "update team member", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -351,14 +458,24 @@ func (h *Handler) UpdateTeamMember(w http.ResponseWriter, r *http.Request) {
 	h.GetTeam(w, r)
 }
 
-// RemoveTeamMember handles DELETE /v1/teams/{id}/members/{userId} (admin).
+// RemoveTeamMember handles DELETE /v1/teams/{id}/members/{userId} (admin or team head).
 func (h *Handler) RemoveTeamMember(w http.ResponseWriter, r *http.Request) {
-	admin, ok := userFromContext(r.Context())
-	if !ok || !admin.IsAdmin {
-		h.writeError(w, http.StatusForbidden, "admin access required")
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		h.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	teamID := r.PathValue("id")
+	allowed, err := h.canManageTeam(r.Context(), user, teamID)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "remove team member: auth lookup", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !allowed {
+		h.writeError(w, http.StatusForbidden, "admin or team head access required")
+		return
+	}
 	userID := r.PathValue("userId")
 	res, err := h.db.ExecContext(r.Context(),
 		`DELETE FROM team_members WHERE team_id = ? AND user_id = ?`, teamID, userID)

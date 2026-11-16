@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api, type Team, type TeamMember } from '$lib/api';
+	import { currentUser } from '$lib/stores';
 	import { Button } from '$lib/components/ui/button';
 	import { ConfirmDialog } from '$lib/components/ui/confirm-dialog';
 	import { Input } from '$lib/components/ui/input';
@@ -28,6 +29,30 @@
 	let renamingId = $state<string | null>(null);
 	let renameValue = $state('');
 
+	// Dynamic Group Link (/u/alice+bob) builder
+	let groupHandles = $state<string[]>([]);
+	const groupLinkPath = $derived(groupHandles.length > 0 ? `/u/${groupHandles.join('+')}` : '');
+
+	function toggleGroupUser(u: TeamMember) {
+		const h = (u.handle || u.email.split('@')[0] || '').trim();
+		if (!h) return;
+		if (groupHandles.includes(h)) {
+			groupHandles = groupHandles.filter((x) => x !== h);
+		} else {
+			groupHandles = [...groupHandles, h];
+		}
+	}
+
+	function canManage(team: Team): boolean {
+		return Boolean($currentUser?.is_admin || team.my_role === 'owner');
+	}
+
+	function copyTeamUrl(slug: string) {
+		const url = `${window.location.origin}/team/${slug}`;
+		navigator.clipboard?.writeText(url);
+		toast.success(`Copied ${url}`);
+	}
+
 	// Confirm dialog
 	let confirmOpen = $state(false);
 	let confirmTitle = $state('');
@@ -41,7 +66,7 @@
 		try {
 			const [teamsRes, usersRes] = await Promise.all([
 				api.get<{ items: Team[] }>('/v1/teams'),
-				api.get<TeamMember[]>('/v1/users')
+				api.get<TeamMember[]>('/v1/users').catch(() => [] as TeamMember[])
 			]);
 			teams = teamsRes.items;
 			users = usersRes;
@@ -124,6 +149,17 @@
 		}
 	}
 
+	async function saveRole(teamId: string, userId: string, role: 'owner' | 'member') {
+		try {
+			await api.patch(`/v1/teams/${teamId}/members/${userId}`, { role });
+			await refreshTeam(teamId);
+			toast.success('Role updated');
+		} catch (e: any) {
+			toast.error(e.message || tr('common.failed'));
+			await refreshTeam(teamId);
+		}
+	}
+
 	function startRename(team: Team) { renamingId = team.id; renameValue = team.name; }
 	function cancelRename() { renamingId = null; renameValue = ''; }
 	async function saveRename(team: Team) {
@@ -164,7 +200,9 @@
 		<h1 class="text-2xl font-semibold tracking-tight">{$t('teams.title')}</h1>
 		<p class="mt-1 text-sm text-muted-foreground">{$t('teams.subtitle')}</p>
 	</div>
-	<Button onclick={() => { showCreate = !showCreate; }}>{showCreate ? $t('common.cancel') : $t('teams.newTeam')}</Button>
+	{#if $currentUser?.is_admin}
+		<Button onclick={() => { showCreate = !showCreate; }}>{showCreate ? $t('common.cancel') : $t('teams.newTeam')}</Button>
+	{/if}
 </div>
 
 {#if showCreate}
@@ -192,33 +230,47 @@
 {:else}
 	<div class="space-y-3">
 		{#each teams as team (team.id)}
-			<div class="rounded-lg border bg-card">
-				<div class="flex items-center justify-between gap-3 p-4">
+			<div class="rounded-xl border bg-card transition-colors hover:border-foreground/20">
+				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+				<div
+					class="flex cursor-pointer items-center justify-between gap-3 p-4"
+					onclick={() => { if (renamingId !== team.id) toggleExpand(team); }}
+				>
 					<div class="min-w-0">
 						{#if renamingId === team.id}
-							<div class="flex items-center gap-2">
+							<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+							<div class="flex items-center gap-2" onclick={(e) => e.stopPropagation()}>
 								<Input bind:value={renameValue} class="h-8 w-56" onkeydown={(e) => e.key === 'Enter' && saveRename(team)} />
 								<Button size="sm" class="h-8" onclick={() => saveRename(team)}>{$t('common.save')}</Button>
 								<Button size="sm" variant="ghost" class="h-8" onclick={cancelRename}>{$t('common.cancel')}</Button>
 							</div>
 						{:else}
-							<div class="flex items-center gap-2">
+							<div class="flex flex-wrap items-center gap-2">
 								<p class="font-medium">{team.name}</p>
 								<Badge variant="outline" class="font-mono text-xs">
-									<a href={`/team/${team.slug}`} target="_blank" rel="noopener noreferrer" class="hover:underline">
-										{team.slug}
+									<a href={`/team/${team.slug}`} target="_blank" rel="noopener noreferrer" class="hover:underline" onclick={(e) => e.stopPropagation()}>
+										/team/{team.slug}
 									</a>
 								</Badge>
+								{#if team.my_role === 'owner'}
+									<Badge variant="secondary" class="text-[11px]">Team Head</Badge>
+								{/if}
 							</div>
 							<p class="mt-0.5 text-xs text-muted-foreground">{$t('teams.memberCount', { count: team.member_count })}</p>
 						{/if}
 					</div>
-					<div class="flex shrink-0 items-center gap-1">
+					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+					<div class="flex shrink-0 items-center gap-1" onclick={(e) => e.stopPropagation()}>
+						<Button size="sm" variant="ghost" class="h-8 text-xs" onclick={() => copyTeamUrl(team.slug)}>Copy link</Button>
 						<Button size="sm" variant="outline" class="h-8 text-xs" onclick={() => toggleExpand(team)}>
 							{expanded[team.id] ? $t('teams.close') : $t('teams.manage')}
 						</Button>
-						<Button size="sm" variant="ghost" class="h-8 text-xs" onclick={() => startRename(team)}>{$t('teams.rename')}</Button>
-						<Button size="sm" variant="ghost" class="h-8 text-xs text-destructive hover:text-destructive" onclick={() => deleteTeam(team)}>{$t('common.delete')}</Button>
+						{#if canManage(team)}
+							<Button size="sm" variant="ghost" class="h-8 text-xs" onclick={() => startRename(team)}>{$t('teams.rename')}</Button>
+						{/if}
+						{#if $currentUser?.is_admin}
+							<Button size="sm" variant="ghost" class="h-8 text-xs text-destructive hover:text-destructive" onclick={() => deleteTeam(team)}>{$t('common.delete')}</Button>
+						{/if}
 					</div>
 				</div>
 
@@ -232,6 +284,7 @@
 								<thead>
 									<tr class="border-b">
 										<th class="pb-2 text-left text-xs font-medium text-muted-foreground">{$t('teams.members.column')}</th>
+										<th class="pb-2 text-left text-xs font-medium text-muted-foreground">Role</th>
 										<th class="pb-2 text-left text-xs font-medium text-muted-foreground">{$t('teams.members.routingPriority')}</th>
 										<th class="pb-2"></th>
 									</tr>
@@ -247,15 +300,32 @@
 												</div>
 											</td>
 											<td class="py-2">
+												{#if canManage(team)}
+													<select
+														value={m.role ?? 'member'}
+														onchange={(e) => saveRole(team.id, m.id, (e.currentTarget as HTMLSelectElement).value as 'owner' | 'member')}
+														class="h-7 rounded-md border border-border bg-background px-2 text-xs"
+													>
+														<option value="member">Member</option>
+														<option value="owner">Team Head</option>
+													</select>
+												{:else}
+													<span class="text-xs text-muted-foreground">{m.role === 'owner' ? 'Team Head' : 'Member'}</span>
+												{/if}
+											</td>
+											<td class="py-2">
 												<Input
 													type="number"
 													value={m.routing_priority}
+													disabled={!canManage(team)}
 													class="h-7 w-20 text-xs"
 													onchange={(e) => savePriority(team.id, m.id, +(e.currentTarget as HTMLInputElement).value)}
 												/>
 											</td>
 											<td class="py-2 text-right">
-												<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:text-destructive" onclick={() => removeMember(team.id, m.id)}>{$t('teams.members.remove')}</Button>
+												{#if canManage(team)}
+													<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:text-destructive" onclick={() => removeMember(team.id, m.id)}>{$t('teams.members.remove')}</Button>
+												{/if}
 											</td>
 										</tr>
 									{/each}
@@ -263,37 +333,78 @@
 							</table>
 						{/if}
 
-						<!-- Add a member -->
-						<div class="flex items-center gap-2">
-							<Select.Root
-								type="single"
-								value={addChoice[team.id] ?? ''}
-								onValueChange={(v) => { addChoice = { ...addChoice, [team.id]: v ?? '' }; }}
-								disabled={membersNotIn(team).length === 0}
-							>
-								<Select.Trigger class="w-fit min-w-48">
-									{#if addChoice[team.id]}
-										{@const u = users.find((x) => x.id === addChoice[team.id])}
-										{u ? `${u.name} (${u.email})` : $t('teams.addMember')}
-									{:else}
-										{$t('teams.addMember')}
-									{/if}
-								</Select.Trigger>
-								<Select.Content>
-									{#each membersNotIn(team) as u}
-										<Select.Item value={u.id} label={`${u.name} (${u.email})`}>{u.name} ({u.email})</Select.Item>
-									{/each}
-								</Select.Content>
-							</Select.Root>
-							<Button size="sm" variant="outline" class="h-8" disabled={!addChoice[team.id]} onclick={() => addMember(team.id)}>{$t('teams.add')}</Button>
-							{#if membersNotIn(team).length === 0}
-								<span class="text-xs text-muted-foreground">{$t('teams.allMembersInTeam')}</span>
-							{/if}
-						</div>
+						{#if canManage(team) && users.length > 0}
+							<!-- Add a member -->
+							<div class="flex items-center gap-2">
+								<Select.Root
+									type="single"
+									value={addChoice[team.id] ?? ''}
+									onValueChange={(v) => { addChoice = { ...addChoice, [team.id]: v ?? '' }; }}
+									disabled={membersNotIn(team).length === 0}
+								>
+									<Select.Trigger class="w-fit min-w-48">
+										{#if addChoice[team.id]}
+											{@const u = users.find((x) => x.id === addChoice[team.id])}
+											{u ? `${u.name} (${u.email})` : $t('teams.addMember')}
+										{:else}
+											{$t('teams.addMember')}
+										{/if}
+									</Select.Trigger>
+									<Select.Content>
+										{#each membersNotIn(team) as u}
+											<Select.Item value={u.id} label={`${u.name} (${u.email})`}>{u.name} ({u.email})</Select.Item>
+										{/each}
+									</Select.Content>
+								</Select.Root>
+								<Button size="sm" variant="outline" class="h-8" disabled={!addChoice[team.id]} onclick={() => addMember(team.id)}>{$t('teams.add')}</Button>
+								{#if membersNotIn(team).length === 0}
+									<span class="text-xs text-muted-foreground">{$t('teams.allMembersInTeam')}</span>
+								{/if}
+							</div>
+						{/if}
 						<p class="mt-2 text-xs text-muted-foreground">{$t('teams.routingHint')}</p>
 					</div>
 				{/if}
 			</div>
 		{/each}
+	</div>
+{/if}
+
+{#if users.length > 1}
+	<div class="mt-8 rounded-xl border bg-card p-5">
+		<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+			<div>
+				<h2 class="text-sm font-semibold">Dynamic Group Link Builder</h2>
+				<p class="text-xs text-muted-foreground">Combine 2 or more team members into an instant collective booking link (<code class="font-mono">/u/alice+bob</code>).</p>
+			</div>
+			{#if groupHandles.length >= 2}
+				<div class="flex items-center gap-2">
+					<code class="rounded-md bg-muted px-2.5 py-1 text-xs font-mono">{groupLinkPath}</code>
+					<Button size="sm" variant="outline" class="h-8 text-xs" onclick={() => {
+						const url = `${window.location.origin}${groupLinkPath}`;
+						navigator.clipboard?.writeText(url);
+						toast.success(`Copied ${url}`);
+					}}>Copy</Button>
+					<a href={groupLinkPath} target="_blank" rel="noopener noreferrer">
+						<Button size="sm" class="h-8 text-xs">Open</Button>
+					</a>
+				</div>
+			{/if}
+		</div>
+		<div class="mt-3 flex flex-wrap gap-2">
+			{#each users.filter((u) => !u.archived) as u (u.id)}
+				{@const h = (u.handle || u.email.split('@')[0] || '').trim()}
+				{@const selected = groupHandles.includes(h)}
+				<button
+					type="button"
+					onclick={() => toggleGroupUser(u)}
+					class="rounded-full border px-3 py-1 text-xs transition-colors {selected
+						? 'border-foreground bg-foreground text-background'
+						: 'border-border bg-background text-foreground hover:bg-accent'}"
+				>
+					{selected ? '✓ ' : ''}{u.name}
+				</button>
+			{/each}
+		</div>
 	</div>
 {/if}
