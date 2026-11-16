@@ -1089,6 +1089,7 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		OrganizerEmail:    req.Email,
 		OrganizerTimezone: req.Timezone,
 		OrganizerLocale:   i18n.Resolve("", req.Language).Code,
+		SingleUseToken:    singleUseToken,
 	})
 }
 
@@ -1104,6 +1105,7 @@ type bookingConfirmationInput struct {
 	// OrganizerLocale is the attendee's resolved locale code (e.g. "es") — same value
 	// stored on booking_attendees.locale, threaded into the confirmation email.
 	OrganizerLocale string
+	SingleUseToken  string
 }
 
 // hostPrefsOrDefault loads a host's notification prefs, defaulting to allOnPrefs and
@@ -1476,6 +1478,25 @@ func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConf
 			AmountPaidCurrency: b.AmountPaidCurrency,
 		}); err != nil {
 			h.logger.Error("enqueue booking.created webhook", "error", err, "booking_id", b.ID)
+		}
+		if in.SingleUseToken != "" {
+			var sup webhook.SingleUsePayload
+			sup.Token = in.SingleUseToken
+			sup.EventTypeID = b.EventTypeID
+			sup.EventTypeSlug = in.EventTypeSlug
+			sup.EventTypeName = in.EventTypeName
+			sup.HostID = b.HostID
+			sup.BookingID = b.ID
+			var expAt, usedAt sql.NullString
+			if err := h.db.QueryRowContext(context.WithoutCancel(ctx),
+				`SELECT id, created_by_user_id, expires_at, used_at FROM single_use_tokens WHERE token = ?`,
+				in.SingleUseToken).Scan(&sup.ID, &sup.HostID, &expAt, &usedAt); err == nil {
+				sup.ExpiresAt = expAt.String
+				sup.UsedAt = usedAt.String
+				if err := h.webhookSvc.EnqueueSingleUse(context.WithoutCancel(ctx), "single_use_link.booked", sup); err != nil {
+					h.logger.Error("enqueue single_use_link.booked webhook", "error", err, "booking_id", b.ID)
+				}
+			}
 		}
 	}
 

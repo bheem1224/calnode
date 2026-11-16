@@ -383,3 +383,90 @@ func TestDecryptSecret_roundTrip(t *testing.T) {
 		t.Error("decrypted secret does not match the plain secret shown at creation")
 	}
 }
+
+func TestEnqueue_perLinkWebhookScoping(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+
+	if _, err := e.db.ExecContext(ctx, `
+		INSERT INTO event_types (id, user_id, name, slug, duration_minutes, location_type)
+		VALUES ('et-1', ?, 'ET One', 'et-1', 30, 'in_person'),
+		       ('et-2', ?, 'ET Two', 'et-2', 30, 'in_person')`,
+		testUserID, testUserID); err != nil {
+		t.Fatalf("seed event_types: %v", err)
+	}
+
+	globalWH, _, err := e.svc.Create(ctx, testUserID, "https://example.com/global", []string{"booking.created"})
+	if err != nil {
+		t.Fatalf("create global: %v", err)
+	}
+	scopedWH, _, err := e.svc.Create(ctx, testUserID, "https://example.com/scoped", []string{"booking.created"})
+	if err != nil {
+		t.Fatalf("create scoped: %v", err)
+	}
+	et1 := "et-1"
+	if err := e.svc.SetEventTypeID(ctx, testUserID, scopedWH.ID, &et1); err != nil {
+		t.Fatalf("SetEventTypeID: %v", err)
+	}
+
+	if err := e.svc.Enqueue(ctx, "booking.created", webhook.BookingPayload{
+		HostID:        testUserID,
+		EventTypeSlug: "et-2",
+		Status:        "confirmed",
+	}); err != nil {
+		t.Fatalf("enqueue et-2: %v", err)
+	}
+	if err := e.svc.Enqueue(ctx, "booking.created", webhook.BookingPayload{
+		HostID:        testUserID,
+		EventTypeSlug: "et-1",
+		Status:        "confirmed",
+	}); err != nil {
+		t.Fatalf("enqueue et-1: %v", err)
+	}
+
+	globalDeliveries, _ := e.svc.ListDeliveries(ctx, testUserID, globalWH.ID)
+	scopedDeliveries, _ := e.svc.ListDeliveries(ctx, testUserID, scopedWH.ID)
+	if len(globalDeliveries) != 2 {
+		t.Errorf("global deliveries = %d; want 2", len(globalDeliveries))
+	}
+	if len(scopedDeliveries) != 1 {
+		t.Errorf("scoped deliveries = %d; want 1", len(scopedDeliveries))
+	}
+}
+
+func TestEnqueueSingleUse_bookedAndExpired(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+
+	if _, err := e.db.ExecContext(ctx, `
+		INSERT INTO event_types (id, user_id, name, slug, duration_minutes, location_type)
+		VALUES ('et-su', ?, 'SU Event', 'et-su', 30, 'in_person')`,
+		testUserID); err != nil {
+		t.Fatalf("seed event_type: %v", err)
+	}
+	wh, _, err := e.svc.Create(ctx, testUserID, "https://example.com/su",
+		[]string{"single_use_link.booked", "single_use_link.expired"})
+	if err != nil {
+		t.Fatalf("create webhook: %v", err)
+	}
+	etSU := "et-su"
+	if err := e.svc.SetEventTypeID(ctx, testUserID, wh.ID, &etSU); err != nil {
+		t.Fatalf("SetEventTypeID: %v", err)
+	}
+
+	if err := e.svc.EnqueueSingleUse(ctx, "single_use_link.booked", webhook.SingleUsePayload{
+		ID:            "tok-1",
+		Token:         "abc123",
+		EventTypeID:   "et-su",
+		EventTypeSlug: "et-su",
+		EventTypeName: "SU Event",
+		HostID:        testUserID,
+	}); err != nil {
+		t.Fatalf("EnqueueSingleUse booked: %v", err)
+	}
+
+	deliveries, _ := e.svc.ListDeliveries(ctx, testUserID, wh.ID)
+	if len(deliveries) != 1 || deliveries[0].Event != "single_use_link.booked" {
+		t.Fatalf("unexpected deliveries: %+v", deliveries)
+	}
+}

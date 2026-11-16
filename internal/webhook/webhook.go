@@ -23,13 +23,14 @@ import (
 var ErrNotFound = errors.New("webhook: not found")
 
 type Webhook struct {
-	ID        string
-	UserID    string
-	URL       string
-	Events    []string
-	Fields    []string // payload field keys; nil means the default set
-	IsActive  bool
-	CreatedAt time.Time
+	ID          string
+	UserID      string
+	URL         string
+	Events      []string
+	Fields      []string // payload field keys; nil means the default set
+	EventTypeID *string  // nil = global (all event types); non-nil = scoped to one event type
+	IsActive    bool
+	CreatedAt   time.Time
 }
 
 // Payload field keys (the JSON keys in a delivery's "data" object).
@@ -229,10 +230,28 @@ func (s *Service) Update(ctx context.Context, userID, id string, events, fields 
 	return nil
 }
 
+// SetEventTypeID scopes an existing webhook to a single event type (or nil/"" for global).
+func (s *Service) SetEventTypeID(ctx context.Context, userID, id string, eventTypeID *string) error {
+	var val any
+	if eventTypeID != nil && *eventTypeID != "" {
+		val = *eventTypeID
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE webhooks SET event_type_id = ? WHERE id = ? AND user_id = ?`,
+		val, id, userID)
+	if err != nil {
+		return fmt.Errorf("webhook: set event_type_id: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // List returns all webhooks for a user, most recent first.
 func (s *Service) List(ctx context.Context, userID string) ([]Webhook, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, url, events, fields, is_active, created_at
+		SELECT id, url, events, fields, is_active, created_at, event_type_id
 		FROM webhooks WHERE user_id = ? ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("webhook: list: %w", err)
@@ -243,14 +262,18 @@ func (s *Service) List(ctx context.Context, userID string) ([]Webhook, error) {
 	for rows.Next() {
 		var wh Webhook
 		var eventsJSON string
-		var fieldsJSON sql.NullString
+		var fieldsJSON, eventTypeID sql.NullString
 		var isActive int
 		var createdAt string
-		if err := rows.Scan(&wh.ID, &wh.URL, &eventsJSON, &fieldsJSON, &isActive, &createdAt); err != nil {
+		if err := rows.Scan(&wh.ID, &wh.URL, &eventsJSON, &fieldsJSON, &isActive, &createdAt, &eventTypeID); err != nil {
 			return nil, fmt.Errorf("webhook: scan: %w", err)
 		}
 		wh.UserID = userID
 		wh.IsActive = isActive == 1
+		if eventTypeID.Valid && eventTypeID.String != "" {
+			et := eventTypeID.String
+			wh.EventTypeID = &et
+		}
 		_ = json.Unmarshal([]byte(eventsJSON), &wh.Events)
 		if fieldsJSON.Valid && fieldsJSON.String != "" {
 			_ = json.Unmarshal([]byte(fieldsJSON.String), &wh.Fields)
@@ -377,9 +400,18 @@ func buildData(bd enrichedBooking, fields []string) map[string]any {
 // and creates a webhook_deliveries + jobs row pair for each. Failures are
 // soft-errors (caller logs; a booking is already committed).
 func (s *Service) Enqueue(ctx context.Context, event string, p BookingPayload) error {
+	var eventTypeID string
+	if p.EventTypeSlug != "" {
+		_ = s.db.QueryRowContext(ctx, `SELECT id FROM event_types WHERE slug = ?`, p.EventTypeSlug).Scan(&eventTypeID)
+	}
+	if eventTypeID == "" && p.ID != "" {
+		_ = s.db.QueryRowContext(ctx, `SELECT event_type_id FROM bookings WHERE id = ?`, p.ID).Scan(&eventTypeID)
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, events, fields FROM webhooks
-		WHERE user_id = ? AND is_active = 1`, p.HostID)
+		WHERE user_id = ? AND is_active = 1
+		  AND (event_type_id IS NULL OR (? != '' AND event_type_id = ?))`,
+		p.HostID, eventTypeID, eventTypeID)
 	if err != nil {
 		return fmt.Errorf("webhook: list for enqueue: %w", err)
 	}
@@ -469,6 +501,98 @@ func (s *Service) Enqueue(ctx context.Context, event string, p BookingPayload) e
 			VALUES (?, 'webhook.deliver', ?, ?)`,
 			jobID, string(jobPayload), now); err != nil {
 			return fmt.Errorf("webhook: insert job: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// SingleUsePayload is the "data" object inside single_use_link.* webhook deliveries.
+type SingleUsePayload struct {
+	ID            string `json:"id"`
+	Token         string `json:"token"`
+	EventTypeID   string `json:"event_type_id"`
+	EventTypeSlug string `json:"event_type_slug"`
+	EventTypeName string `json:"event_type_name"`
+	HostID        string `json:"host_id"`
+	BookingID     string `json:"booking_id,omitempty"`
+	ExpiresAt     string `json:"expires_at,omitempty"`
+	UsedAt        string `json:"used_at,omitempty"`
+}
+
+// EnqueueSingleUse finds all active webhooks for p.HostID (global or scoped to
+// p.EventTypeID) subscribed to event ("single_use_link.booked" or
+// "single_use_link.expired") and enqueues delivery jobs.
+func (s *Service) EnqueueSingleUse(ctx context.Context, event string, p SingleUsePayload) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, events FROM webhooks
+		WHERE user_id = ? AND is_active = 1
+		  AND (event_type_id IS NULL OR (? != '' AND event_type_id = ?))`,
+		p.HostID, p.EventTypeID, p.EventTypeID)
+	if err != nil {
+		return fmt.Errorf("webhook: list single-use for enqueue: %w", err)
+	}
+
+	var matching []string
+	for rows.Next() {
+		var id, eventsJSON string
+		if err := rows.Scan(&id, &eventsJSON); err != nil {
+			rows.Close() // #nosec G104 -- already returning scan error
+			return fmt.Errorf("webhook: scan single-use: %w", err)
+		}
+		var events []string
+		_ = json.Unmarshal([]byte(eventsJSON), &events)
+		for _, e := range events {
+			if e == event {
+				matching = append(matching, id)
+				break
+			}
+		}
+	}
+	rows.Close() // #nosec G104 -- rows already consumed
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(matching) == 0 {
+		return nil
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	envelope := map[string]any{
+		"event":      event,
+		"created_at": now,
+		"data":       p,
+	}
+	payloadBytes, err := json.Marshal(envelope)
+	if err != nil {
+		return fmt.Errorf("webhook: marshal single-use payload: %w", err)
+	}
+
+	var bookingIDArg any
+	if p.BookingID != "" {
+		bookingIDArg = p.BookingID
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("webhook: begin single-use tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	for _, whID := range matching {
+		deliveryID := uid.New()
+		jobID := uid.New()
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO webhook_deliveries (id, webhook_id, booking_id, event, payload, status)
+			VALUES (?, ?, ?, ?, ?, 'pending')`,
+			deliveryID, whID, bookingIDArg, event, string(payloadBytes)); err != nil {
+			return fmt.Errorf("webhook: insert single-use delivery: %w", err)
+		}
+		jobPayload, _ := json.Marshal(map[string]string{"webhook_delivery_id": deliveryID})
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO jobs (id, type, payload, run_at)
+			VALUES (?, 'webhook.deliver', ?, ?)`,
+			jobID, string(jobPayload), now); err != nil {
+			return fmt.Errorf("webhook: insert single-use job: %w", err)
 		}
 	}
 	return tx.Commit()

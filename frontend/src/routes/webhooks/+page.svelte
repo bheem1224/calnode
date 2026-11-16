@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, type Webhook, type WebhookDelivery } from '$lib/api';
+	import { api, type EventType, type Webhook, type WebhookDelivery } from '$lib/api';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { ConfirmDialog } from '$lib/components/ui/confirm-dialog';
 	import { Input } from '$lib/components/ui/input';
@@ -11,6 +11,7 @@
 	import { t, tr, localeTag } from '$lib/i18n';
 
 	let items: Webhook[] = $state([]);
+	let eventTypes: EventType[] = $state([]);
 	let loading = $state(true);
 	let error = $state('');
 	let showCreate = $state(false);
@@ -22,7 +23,9 @@
 		'booking.rsvp',
 		'recording.completed',
 		'transcript.ready',
-		'notes.ready'
+		'notes.ready',
+		'single_use_link.booked',
+		'single_use_link.expired'
 	];
 
 	// Payload field catalog (keys must match the backend's webhook field keys).
@@ -76,8 +79,8 @@
 		'answers'
 	];
 
-	let form = $state<{ url: string; events: string[]; fields: string[] }>({
-		url: '', events: ['booking.created', 'booking.cancelled'], fields: [...allFieldKeys]
+	let form = $state<{ url: string; events: string[]; fields: string[]; event_type_id: string }>({
+		url: '', events: ['booking.created', 'booking.cancelled'], fields: [...allFieldKeys], event_type_id: ''
 	});
 
 	// Delivery log (lazy-loaded per webhook).
@@ -91,13 +94,23 @@
 
 	async function load() {
 		try {
-			const res = await api.get<{ items: Webhook[] }>('/v1/webhooks');
+			const [res, etRes] = await Promise.all([
+				api.get<{ items: Webhook[] }>('/v1/webhooks'),
+				api.get<{ items: EventType[] }>('/v1/event-types').catch(() => ({ items: [] as EventType[] }))
+			]);
 			items = res.items;
+			eventTypes = etRes.items ?? [];
 		} catch (e: any) {
 			error = e.message;
 		} finally {
 			loading = false;
 		}
+	}
+
+	function scopeLabel(etID: string | null | undefined): string {
+		if (!etID) return $t('webhooks.scopeAll');
+		const found = eventTypes.find((et) => et.id === etID);
+		return found ? found.name : etID;
 	}
 
 	onMount(load);
@@ -109,8 +122,13 @@
 		if (form.events.length === 0) { createError = tr('webhooks.validation.events'); return; }
 		creating = true;
 		try {
-			await api.post('/v1/webhooks', { url: form.url, events: form.events, fields: form.fields });
-			form = { url: '', events: ['booking.created', 'booking.cancelled'], fields: [...allFieldKeys] };
+			await api.post('/v1/webhooks', {
+				url: form.url,
+				events: form.events,
+				fields: form.fields,
+				event_type_id: form.event_type_id || null
+			});
+			form = { url: '', events: ['booking.created', 'booking.cancelled'], fields: [...allFieldKeys], event_type_id: '' };
 			showCreate = false;
 			await load();
 		} catch (e: any) {
@@ -204,6 +222,20 @@
 			/>
 		</div>
 
+		<div class="mb-4 space-y-1.5">
+			<Label for="wh-scope">{$t('webhooks.new.scopeLabel')}</Label>
+			<select
+				id="wh-scope"
+				bind:value={form.event_type_id}
+				class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+			>
+				<option value="">{$t('webhooks.new.scopeAll')}</option>
+				{#each eventTypes as et}
+					<option value={et.id}>{et.name} (/{et.slug})</option>
+				{/each}
+			</select>
+		</div>
+
 		<div class="mb-4 space-y-2">
 			<p class="text-sm font-medium">{$t('webhooks.new.eventsTitle')}</p>
 			{#each allEvents as ev}
@@ -257,6 +289,7 @@
 			<thead>
 				<tr class="border-b">
 					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('webhooks.table.url')}</th>
+					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('webhooks.table.scope')}</th>
 					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('webhooks.table.events')}</th>
 					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('webhooks.table.fields')}</th>
 					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('webhooks.table.status')}</th>
@@ -269,6 +302,7 @@
 					{#each items as wh}
 						<tr class="transition-colors hover:bg-muted/30">
 							<td class="max-w-xs overflow-hidden text-ellipsis whitespace-nowrap px-4 py-3 font-mono text-xs">{wh.url}</td>
+							<td class="px-4 py-3 text-xs text-muted-foreground">{scopeLabel(wh.event_type_id)}</td>
 							<td class="px-4 py-3 text-xs text-muted-foreground">{(wh.events ?? []).join(', ')}</td>
 							<td class="px-4 py-3 text-xs text-muted-foreground">{$t('webhooks.fieldsCount', { count: (wh.fields ?? []).length })}</td>
 							<td class="px-4 py-3">
@@ -296,7 +330,7 @@
 						</tr>
 						{#if openDeliveries === wh.id}
 							<tr class="bg-muted/20">
-								<td colspan="6" class="px-4 py-3">
+								<td colspan="7" class="px-4 py-3">
 									{#if deliveriesLoading}
 										<p class="text-xs text-muted-foreground">{$t('webhooks.deliveries.loading')}</p>
 									{:else if deliveries.length === 0}

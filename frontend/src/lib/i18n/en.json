@@ -725,6 +725,8 @@
 			"title": "New webhook",
 			"urlLabel": "Endpoint URL",
 			"urlPlaceholder": "https://your-server.com/hooks/calnode",
+			"scopeLabel": "Event type scope",
+			"scopeAll": "All event types (global)",
 			"eventsTitle": "Events to send",
 			"fieldsTitle": "Data to send — untick anything you don't want delivered",
 			"fieldsPii": "· personal data",
@@ -738,12 +740,14 @@
 		},
 		"table": {
 			"url": "URL",
+			"scope": "Scope",
 			"events": "Events",
 			"fields": "Fields",
 			"status": "Status",
 			"created": "Created"
 		},
 		"fieldsCount": "{count} fields",
+		"scopeAll": "All event types",
 		"tooltip": {
 			"deliveries": "Recent deliveries",
 			"hideDeliveries": "Hide deliveries",

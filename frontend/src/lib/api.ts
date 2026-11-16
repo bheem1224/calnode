@@ -161,6 +161,7 @@ export type Webhook = {
 	url: string;
 	events: string[];
 	fields?: string[];
+	event_type_id?: string | null;
 	is_active: boolean;
 	created_at: string;
 };

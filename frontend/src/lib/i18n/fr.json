@@ -725,6 +725,8 @@
 			"title": "Nouveau webhook",
 			"urlLabel": "URL du point de terminaison",
 			"urlPlaceholder": "https://votre-serveur.com/hooks/calnode",
+			"scopeLabel": "Portée du type d'événement",
+			"scopeAll": "Tous les types d'événements (global)",
 			"eventsTitle": "Événements à envoyer",
 			"fieldsTitle": "Données à envoyer — décochez ce que vous ne voulez pas transmettre",
 			"fieldsPii": "· données personnelles",
@@ -738,12 +740,14 @@
 		},
 		"table": {
 			"url": "URL",
+			"scope": "Portée",
 			"events": "Événements",
 			"fields": "Champs",
 			"status": "Statut",
 			"created": "Créé"
 		},
 		"fieldsCount": "{count} champs",
+		"scopeAll": "Tous les types d'événements",
 		"tooltip": {
 			"deliveries": "Envois récents",
 			"hideDeliveries": "Masquer les envois",

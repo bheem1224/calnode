@@ -17,6 +17,26 @@ import (
 var validWebhookEvents = []string{
 	"booking.created", "booking.cancelled", "booking.rescheduled", "booking.rsvp",
 	"recording.completed", "transcript.ready", "notes.ready",
+	"single_use_link.booked", "single_use_link.expired",
+}
+
+func (h *Handler) validateWebhookEventType(ctx context.Context, userID string, isAdmin bool, eventTypeID *string) (bool, error) {
+	if eventTypeID == nil || *eventTypeID == "" {
+		return true, nil
+	}
+	adminInt := 0
+	if isAdmin {
+		adminInt = 1
+	}
+	var id string
+	err := h.db.QueryRowContext(ctx, `
+		SELECT id FROM event_types
+		WHERE id = ? AND (? = 1 OR user_id = ? OR id IN (SELECT event_type_id FROM event_type_hosts WHERE user_id = ?))`,
+		*eventTypeID, adminInt, userID, userID).Scan(&id)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
@@ -24,9 +44,10 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 
 	var req struct {
-		URL    string   `json:"url"`
-		Events []string `json:"events"`
-		Fields []string `json:"fields"` // optional payload field selection; nil = default set
+		URL         string   `json:"url"`
+		Events      []string `json:"events"`
+		Fields      []string `json:"fields"` // optional payload field selection; nil = default set
+		EventTypeID *string  `json:"event_type_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -55,12 +76,28 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if ok, err := h.validateWebhookEventType(r.Context(), user.ID, user.IsAdmin, req.EventTypeID); !ok {
+		if err != nil && err.Error() != "sql: no rows in result set" {
+			h.logger.ErrorContext(r.Context(), "create webhook: validate event_type_id", "error", err)
+			h.writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		h.writeError(w, http.StatusNotFound, "event type not found")
+		return
+	}
 
 	wh, secret, err := h.webhookSvc.Create(r.Context(), user.ID, req.URL, req.Events)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "create webhook", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	if req.EventTypeID != nil && *req.EventTypeID != "" {
+		if err := h.webhookSvc.SetEventTypeID(r.Context(), user.ID, wh.ID, req.EventTypeID); err != nil {
+			h.logger.ErrorContext(r.Context(), "create webhook: set event_type_id", "error", err)
+		} else {
+			wh.EventTypeID = req.EventTypeID
+		}
 	}
 	// Apply the field selection (if any) as a follow-up update so Create keeps its
 	// stable signature; unknown keys are filtered out.
@@ -73,13 +110,14 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusCreated, map[string]any{
-		"id":         wh.ID,
-		"url":        wh.URL,
-		"events":     wh.Events,
-		"fields":     wh.Fields,
-		"secret":     secret,
-		"is_active":  wh.IsActive,
-		"created_at": wh.CreatedAt.UTC().Format(time.RFC3339),
+		"id":            wh.ID,
+		"url":           wh.URL,
+		"events":        wh.Events,
+		"fields":        wh.Fields,
+		"event_type_id": wh.EventTypeID,
+		"secret":        secret,
+		"is_active":     wh.IsActive,
+		"created_at":    wh.CreatedAt.UTC().Format(time.RFC3339),
 	})
 }
 
@@ -91,12 +129,24 @@ func (h *Handler) PatchWebhook(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 
 	var req struct {
-		Events *[]string `json:"events"`
-		Fields *[]string `json:"fields"`
+		Events      *[]string `json:"events"`
+		Fields      *[]string `json:"fields"`
+		EventTypeID *string   `json:"event_type_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
+	}
+	if req.EventTypeID != nil && *req.EventTypeID != "" {
+		if ok, err := h.validateWebhookEventType(r.Context(), user.ID, user.IsAdmin, req.EventTypeID); !ok {
+			if err != nil && err.Error() != "sql: no rows in result set" {
+				h.logger.ErrorContext(r.Context(), "update webhook: validate event_type_id", "error", err)
+				h.writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			h.writeError(w, http.StatusNotFound, "event type not found")
+			return
+		}
 	}
 	if req.Events != nil {
 		if len(*req.Events) == 0 {
@@ -119,6 +169,17 @@ func (h *Handler) PatchWebhook(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	if req.EventTypeID != nil {
+		if err := h.webhookSvc.SetEventTypeID(r.Context(), user.ID, id, req.EventTypeID); err != nil {
+			if errors.Is(err, webhook.ErrNotFound) {
+				h.writeError(w, http.StatusNotFound, "webhook not found")
+				return
+			}
+			h.logger.ErrorContext(r.Context(), "update webhook: set event_type_id", "error", err)
+			h.writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -135,12 +196,13 @@ func (h *Handler) ListWebhooks(w http.ResponseWriter, r *http.Request) {
 	items := make([]map[string]any, len(webhooks))
 	for i, wh := range webhooks {
 		items[i] = map[string]any{
-			"id":         wh.ID,
-			"url":        wh.URL,
-			"events":     wh.Events,
-			"fields":     wh.Fields,
-			"is_active":  wh.IsActive,
-			"created_at": wh.CreatedAt.UTC().Format(time.RFC3339),
+			"id":            wh.ID,
+			"url":           wh.URL,
+			"events":        wh.Events,
+			"fields":        wh.Fields,
+			"event_type_id": wh.EventTypeID,
+			"is_active":     wh.IsActive,
+			"created_at":    wh.CreatedAt.UTC().Format(time.RFC3339),
 		}
 	}
 	h.writeJSON(w, http.StatusOK, map[string]any{"items": items})

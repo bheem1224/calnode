@@ -460,3 +460,48 @@ func TestWorker_skipsJobForDeletedWebhook(t *testing.T) {
 		t.Errorf("job status = %q; want done (skipped silently)", jobStatus)
 	}
 }
+
+func TestWorker_sweepsExpiredSingleUseLinksOnce(t *testing.T) {
+	database, svc := setup(t)
+	ctx := context.Background()
+
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO users (id, email, name, iana_timezone, is_admin, is_owner, email_login)
+		VALUES ('host-su', 'hostsu@example.com', 'Host SU', 'UTC', 1, 1, 1)`); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO event_types (id, user_id, name, slug, duration_minutes, location_type)
+		VALUES ('et-su-w', 'host-su', 'SU Worker', 'et-su-w', 30, 'in_person')`); err != nil {
+		t.Fatalf("seed event_type: %v", err)
+	}
+	wh, _, err := svc.Create(ctx, "host-su", "https://example.com/su-exp", []string{"single_use_link.expired"})
+	if err != nil {
+		t.Fatalf("create webhook: %v", err)
+	}
+	past := time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339)
+	future := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO single_use_tokens (id, token, event_type_id, created_by_user_id, expires_at, used_at, created_at)
+		VALUES ('su-exp', 'tok-exp', 'et-su-w', 'host-su', ?, NULL, ?),
+		       ('su-used', 'tok-used', 'et-su-w', 'host-su', ?, ?, ?),
+		       ('su-future', 'tok-future', 'et-su-w', 'host-su', ?, NULL, ?)`,
+		past, past, past, past, past, future, past); err != nil {
+		t.Fatalf("seed tokens: %v", err)
+	}
+
+	w := newWorker(t, database, svc)
+	w.Poll(ctx)
+	w.Poll(ctx) // second poll must not re-enqueue
+
+	deliveries, err := svc.ListDeliveries(ctx, "host-su", wh.ID)
+	if err != nil {
+		t.Fatalf("ListDeliveries: %v", err)
+	}
+	if len(deliveries) != 1 {
+		t.Fatalf("deliveries = %d; want 1", len(deliveries))
+	}
+	if deliveries[0].Event != "single_use_link.expired" {
+		t.Errorf("event = %q; want single_use_link.expired", deliveries[0].Event)
+	}
+}

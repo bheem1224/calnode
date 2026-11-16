@@ -137,6 +137,7 @@ func (w *Worker) Poll(ctx context.Context) {
 		`DELETE FROM oauth_auth_codes WHERE expires_at < ?`, now); err != nil {
 		w.logger.Error("worker: purge oauth auth codes", "error", err)
 	}
+	w.sweepExpiredSingleUseLinks(ctx, now)
 	// Webhook deliveries are a log: the UI shows the 50 most recent and nothing reads
 	// them back for state. Nothing purged them, so on a busy instance they accumulated
 	// for its entire life, inside the SQLite file Litestream replicates offsite.
@@ -470,5 +471,54 @@ func (w *Worker) markDeliveryFailed(ctx context.Context, jobPayload string) {
 		`UPDATE webhook_deliveries SET status = 'failed' WHERE id = ? AND status != 'success'`,
 		p.WebhookDeliveryID); err != nil {
 		w.logger.Error("worker: mark webhook delivery failed", "error", err, "delivery_id", p.WebhookDeliveryID)
+	}
+}
+
+func (w *Worker) sweepExpiredSingleUseLinks(ctx context.Context, now string) {
+	if w.svc == nil {
+		return
+	}
+	rows, err := w.db.QueryContext(ctx, `
+		SELECT s.id, s.token, s.event_type_id, et.slug, et.name, s.created_by_user_id, COALESCE(s.expires_at, '')
+		FROM single_use_tokens s
+		JOIN event_types et ON et.id = s.event_type_id
+		WHERE s.used_at IS NULL
+		  AND s.expired_notified_at IS NULL
+		  AND s.expires_at IS NOT NULL
+		  AND datetime(s.expires_at) <= datetime(?)
+		LIMIT 50`, now)
+	if err != nil {
+		w.logger.Error("worker: query expired single-use links", "error", err)
+		return
+	}
+	var expired []webhook.SingleUsePayload
+	for rows.Next() {
+		var p webhook.SingleUsePayload
+		if err := rows.Scan(&p.ID, &p.Token, &p.EventTypeID, &p.EventTypeSlug, &p.EventTypeName, &p.HostID, &p.ExpiresAt); err != nil {
+			rows.Close() // #nosec G104 -- already returning on scan error
+			w.logger.Error("worker: scan expired single-use link", "error", err)
+			return
+		}
+		expired = append(expired, p)
+	}
+	rows.Close() // #nosec G104 -- rows consumed before follow-up writes (MaxOpenConns(1))
+	if err := rows.Err(); err != nil {
+		w.logger.Error("worker: iterate expired single-use links", "error", err)
+		return
+	}
+	for _, p := range expired {
+		res, err := w.db.ExecContext(ctx, `
+			UPDATE single_use_tokens SET expired_notified_at = ?
+			WHERE id = ? AND used_at IS NULL AND expired_notified_at IS NULL`, now, p.ID)
+		if err != nil {
+			w.logger.Error("worker: mark expired single-use link", "error", err, "token_id", p.ID)
+			continue
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			continue
+		}
+		if err := w.svc.EnqueueSingleUse(ctx, "single_use_link.expired", p); err != nil {
+			w.logger.Error("worker: enqueue single_use_link.expired", "error", err, "token_id", p.ID)
+		}
 	}
 }
