@@ -1714,6 +1714,9 @@
 			"multiOptionsHint": "Offer multiple locations so bookers can choose where to meet.",
 			"addOption": "Add location",
 			"optionValuePlaceholder": "Address, phone number, or link (optional)",
+			"addToCalendar": "Add to calendar",
+			"addToCalendarDefault": "Default connected calendar",
+			"addToCalendarHint": "Choose which connected calendar receives new bookings for this event type.",
 			"types": {
 				"zoom": "Zoom",
 				"teams": "Microsoft Teams",

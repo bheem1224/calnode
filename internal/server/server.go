@@ -245,6 +245,7 @@ func BuildHandler(ctx context.Context, cfg *config.Config, db *sql.DB, logger *s
 	if msTenant == "" {
 		msTenant = strings.TrimSpace(cfg.MicrosoftTenant)
 	}
+	var msCalClientID, msCalClientSecret, msCalTenant string
 	if dbMS, err := handler.LoadMicrosoftSettingsFromDB(db, encKey); err == nil && dbMS != nil {
 		if dbMS.ClientID != "" {
 			msClientID = dbMS.ClientID
@@ -258,6 +259,11 @@ func BuildHandler(ctx context.Context, cfg *config.Config, db *sql.DB, logger *s
 		if len(dbMS.AllowedSignupDomains) > 0 {
 			h.SetAllowedSignupDomains(dbMS.AllowedSignupDomains)
 		}
+		if dbMS.AllowPersonalCalendars && dbMS.CalClientID != "" && dbMS.CalClientSecret != "" {
+			msCalClientID = dbMS.CalClientID
+			msCalClientSecret = dbMS.CalClientSecret
+			msCalTenant = "common"
+		}
 	}
 
 	if msClientID != "" && msClientSecret != "" {
@@ -268,12 +274,15 @@ func BuildHandler(ctx context.Context, cfg *config.Config, db *sql.DB, logger *s
 		h.SetMicrosoftAuth(msClientID, msClientSecret, msTenant, msAuthRedirect, cfg.CookieSecure)
 		logger.Info("Microsoft OAuth login configured", "redirect_url", msAuthRedirect, "tenant", msTenant)
 
-		mc, err := microsoft.New(db, msClientID, msClientSecret, msTenant, calRedirect, cfg.EncryptionKey)
+		if msCalClientID == "" || msCalClientSecret == "" {
+			msCalClientID, msCalClientSecret, msCalTenant = msClientID, msClientSecret, msTenant
+		}
+		mc, err := microsoft.New(db, msCalClientID, msCalClientSecret, msCalTenant, calRedirect, cfg.EncryptionKey)
 		if err != nil {
 			logger.Error("microsoft: init failed", "error", err)
 		} else {
 			calSvc.Register(mc)
-			logger.Info("Microsoft 365 calendar configured", "tenant", msTenant)
+			logger.Info("Microsoft 365 calendar configured", "tenant", msCalTenant)
 		}
 	}
 
@@ -614,6 +623,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("GET /v1/calendar/callback", h.CalendarCallback)
 	mux.HandleFunc("POST /v1/calendar/caldav/connect", h.RequireAuth(h.ConnectCalDAV))
 	mux.HandleFunc("GET /v1/calendar/status", h.RequireAuth(h.CalendarStatus))
+	mux.HandleFunc("GET /v1/calendar/calendars", h.RequireAuth(h.ListConnectedCalendars))
 	mux.HandleFunc("POST /v1/calendar/connections/{id}/destination", h.RequireAuth(h.SetCalendarDestination))
 	mux.HandleFunc("GET /v1/calendar/connections/{id}/calendars", h.RequireAuth(h.GetConnectionCalendars))
 	mux.HandleFunc("PUT /v1/calendar/connections/{id}/calendars", h.RequireAuth(h.PutConnectionCalendars))

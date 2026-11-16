@@ -1714,6 +1714,9 @@
 			"multiOptionsHint": "Proposez plusieurs lieux afin que le participant puisse choisir.",
 			"addOption": "Ajouter un lieu",
 			"optionValuePlaceholder": "Adresse, numéro ou lien (facultatif)",
+			"addToCalendar": "Ajouter au calendrier",
+			"addToCalendarDefault": "Calendrier connecté par défaut",
+			"addToCalendarHint": "Choisissez quel calendrier connecté reçoit les nouvelles réservations pour ce type d'événement.",
 			"types": {
 				"zoom": "Zoom",
 				"teams": "Microsoft Teams",

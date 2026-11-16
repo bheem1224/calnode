@@ -17,14 +17,15 @@ import (
 // CreateEventParams holds the data needed to create a calendar event. Provider-
 // agnostic: AddMeet requests the provider's online-meeting (Google Meet / Teams).
 type CreateEventParams struct {
-	Summary        string
-	Description    string
-	Location       string // optional; e.g. the meeting link on secondary hosts' events
-	Start, End     time.Time
-	OrganizerName  string
-	OrganizerEmail string
-	AddMeet        bool
-	Private        bool
+	Summary               string
+	Description           string
+	Location              string // optional; e.g. the meeting link on secondary hosts' events
+	Start, End            time.Time
+	OrganizerName         string
+	OrganizerEmail        string
+	AddMeet               bool
+	Private               bool
+	DestinationCalendarID string
 }
 
 // CalendarInfo is one calendar the provider exposes for a connected account.
@@ -408,7 +409,19 @@ func (s *Service) FreeBusy(ctx context.Context, userID string, from, to time.Tim
 // alongside the event id: the provider stamp is what routes later updates and cancels
 // after a destination move (issue #58).
 func (s *Service) CreateEvent(ctx context.Context, userID string, p CreateEventParams) (string, string, string, string, error) {
-	if pr := s.providerForDestination(ctx, userID); pr != nil {
+	var pr Provider
+	if p.DestinationCalendarID != "" {
+		var provName string
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT provider FROM connection_calendars WHERE user_id = ? AND calendar_id = ? LIMIT 1`,
+			userID, p.DestinationCalendarID).Scan(&provName); err == nil && provName != "" {
+			pr = s.providers[provName]
+		}
+	}
+	if pr == nil {
+		pr = s.providerForDestination(ctx, userID)
+	}
+	if pr != nil {
 		eventID, joinURL, calendarID, err := pr.CreateEvent(ctx, userID, p)
 		if err != nil {
 			return "", "", "", "", err

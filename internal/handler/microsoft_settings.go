@@ -14,10 +14,13 @@ import (
 
 // MicrosoftOAuthConfig holds decrypted Microsoft OAuth settings loaded from the DB.
 type MicrosoftOAuthConfig struct {
-	ClientID             string
-	ClientSecret         string
-	TenantID             string
-	AllowedSignupDomains []string
+	ClientID               string
+	ClientSecret           string
+	TenantID               string
+	AllowedSignupDomains   []string
+	AllowPersonalCalendars bool
+	CalClientID            string
+	CalClientSecret        string
 }
 
 func parseDomainsCSV(raw string) []string {
@@ -38,10 +41,13 @@ func parseDomainsCSV(raw string) []string {
 // Returns nil (not an error) when microsoft_client_id is empty.
 func LoadMicrosoftSettingsFromDB(db *sql.DB, encKey [32]byte) (*MicrosoftOAuthConfig, error) {
 	var clientID, secretEnc, tenantID, domainsCSV string
+	var allowPersonal int
+	var calClientID, calSecretEnc string
 	err := db.QueryRow(`
-		SELECT microsoft_client_id, microsoft_client_secret_enc, microsoft_tenant_id, microsoft_allowed_signup_domains
+		SELECT microsoft_client_id, microsoft_client_secret_enc, microsoft_tenant_id, microsoft_allowed_signup_domains,
+		       microsoft_allow_personal_calendars, microsoft_cal_client_id, microsoft_cal_client_secret_enc
 		FROM server_settings WHERE id = 1`).
-		Scan(&clientID, &secretEnc, &tenantID, &domainsCSV)
+		Scan(&clientID, &secretEnc, &tenantID, &domainsCSV, &allowPersonal, &calClientID, &calSecretEnc)
 	if err == sql.ErrNoRows || clientID == "" {
 		return nil, nil
 	}
@@ -55,11 +61,21 @@ func LoadMicrosoftSettingsFromDB(db *sql.DB, encKey [32]byte) (*MicrosoftOAuthCo
 			return nil, fmt.Errorf("decrypt microsoft client secret: %w", err)
 		}
 	}
+	var calClientSecret string
+	if calSecretEnc != "" {
+		calClientSecret, err = secret.Decrypt(encKey, calSecretEnc)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt microsoft calendar client secret: %w", err)
+		}
+	}
 	return &MicrosoftOAuthConfig{
-		ClientID:             strings.TrimSpace(clientID),
-		ClientSecret:         clientSecret,
-		TenantID:             strings.TrimSpace(tenantID),
-		AllowedSignupDomains: parseDomainsCSV(domainsCSV),
+		ClientID:               strings.TrimSpace(clientID),
+		ClientSecret:           clientSecret,
+		TenantID:               strings.TrimSpace(tenantID),
+		AllowedSignupDomains:   parseDomainsCSV(domainsCSV),
+		AllowPersonalCalendars: allowPersonal != 0,
+		CalClientID:            strings.TrimSpace(calClientID),
+		CalClientSecret:        calClientSecret,
 	}, nil
 }
 
@@ -69,22 +85,28 @@ func (h *Handler) GetMicrosoftSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var clientID, secretEnc, tenantID, domainsCSV string
+	var allowPersonal int
+	var calClientID, calSecretEnc string
 	err := h.db.QueryRowContext(r.Context(), `
-		SELECT microsoft_client_id, microsoft_client_secret_enc, microsoft_tenant_id, microsoft_allowed_signup_domains
+		SELECT microsoft_client_id, microsoft_client_secret_enc, microsoft_tenant_id, microsoft_allowed_signup_domains,
+		       microsoft_allow_personal_calendars, microsoft_cal_client_id, microsoft_cal_client_secret_enc
 		FROM server_settings WHERE id = 1`).
-		Scan(&clientID, &secretEnc, &tenantID, &domainsCSV)
+		Scan(&clientID, &secretEnc, &tenantID, &domainsCSV, &allowPersonal, &calClientID, &calSecretEnc)
 	if err != nil && err != sql.ErrNoRows {
 		h.logger.ErrorContext(r.Context(), "microsoft settings: query", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	h.writeJSON(w, http.StatusOK, map[string]any{
-		"client_id":              clientID,
-		"client_secret_set":      secretEnc != "",
-		"tenant_id":              tenantID,
-		"allowed_signup_domains": domainsCSV,
-		"configured":             clientID != "" && secretEnc != "",
-		"base_url":               h.baseURL,
+		"client_id":                clientID,
+		"client_secret_set":        secretEnc != "",
+		"tenant_id":                tenantID,
+		"allowed_signup_domains":   domainsCSV,
+		"allow_personal_calendars": allowPersonal != 0,
+		"cal_client_id":            calClientID,
+		"cal_client_secret_set":    calSecretEnc != "",
+		"configured":               clientID != "" && secretEnc != "",
+		"base_url":                 h.baseURL,
 	})
 }
 
@@ -99,10 +121,13 @@ func (h *Handler) PutMicrosoftSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 	var req struct {
-		ClientID             string `json:"client_id"`
-		ClientSecret         string `json:"client_secret"`
-		TenantID             string `json:"tenant_id"`
-		AllowedSignupDomains string `json:"allowed_signup_domains"`
+		ClientID               string `json:"client_id"`
+		ClientSecret           string `json:"client_secret"`
+		TenantID               string `json:"tenant_id"`
+		AllowedSignupDomains   string `json:"allowed_signup_domains"`
+		AllowPersonalCalendars bool   `json:"allow_personal_calendars"`
+		CalClientID            string `json:"cal_client_id"`
+		CalClientSecret        string `json:"cal_client_secret"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -112,6 +137,11 @@ func (h *Handler) PutMicrosoftSettings(w http.ResponseWriter, r *http.Request) {
 	req.ClientID = strings.TrimSpace(req.ClientID)
 	req.TenantID = strings.TrimSpace(req.TenantID)
 	req.AllowedSignupDomains = strings.TrimSpace(req.AllowedSignupDomains)
+	req.CalClientID = strings.TrimSpace(req.CalClientID)
+	allowPersonalInt := 0
+	if req.AllowPersonalCalendars {
+		allowPersonalInt = 1
+	}
 
 	if req.ClientID == "" {
 		if _, err := h.db.ExecContext(r.Context(), `
@@ -120,6 +150,9 @@ func (h *Handler) PutMicrosoftSettings(w http.ResponseWriter, r *http.Request) {
 			  microsoft_client_secret_enc = '',
 			  microsoft_tenant_id = '',
 			  microsoft_allowed_signup_domains = ?,
+			  microsoft_allow_personal_calendars = 0,
+			  microsoft_cal_client_id = '',
+			  microsoft_cal_client_secret_enc = '',
 			  updated_at = datetime('now')
 			WHERE id = 1`, req.AllowedSignupDomains); err != nil {
 			h.logger.ErrorContext(r.Context(), "microsoft settings: clear", "error", err)
@@ -132,8 +165,9 @@ func (h *Handler) PutMicrosoftSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var existingEnc string
-	_ = h.db.QueryRowContext(r.Context(), `SELECT microsoft_client_secret_enc FROM server_settings WHERE id = 1`).Scan(&existingEnc)
+	var existingEnc, existingCalEnc string
+	_ = h.db.QueryRowContext(r.Context(), `SELECT microsoft_client_secret_enc, microsoft_cal_client_secret_enc FROM server_settings WHERE id = 1`).
+		Scan(&existingEnc, &existingCalEnc)
 
 	secretEnc := existingEnc
 	clientSecret := ""
@@ -156,15 +190,40 @@ func (h *Handler) PutMicrosoftSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	calSecretEnc := existingCalEnc
+	calClientSecret := ""
+	if req.CalClientSecret != "" {
+		var err error
+		calSecretEnc, err = secret.Encrypt(h.encKey, req.CalClientSecret)
+		if err != nil {
+			h.logger.ErrorContext(r.Context(), "microsoft settings: encrypt calendar secret", "error", err)
+			h.writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		calClientSecret = req.CalClientSecret
+	} else if existingCalEnc != "" {
+		var err error
+		calClientSecret, err = secret.Decrypt(h.encKey, existingCalEnc)
+		if err != nil {
+			h.logger.ErrorContext(r.Context(), "microsoft settings: decrypt calendar secret", "error", err)
+			h.writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
 	if _, err := h.db.ExecContext(r.Context(), `
 		UPDATE server_settings SET
 		  microsoft_client_id = ?,
 		  microsoft_client_secret_enc = ?,
 		  microsoft_tenant_id = ?,
 		  microsoft_allowed_signup_domains = ?,
+		  microsoft_allow_personal_calendars = ?,
+		  microsoft_cal_client_id = ?,
+		  microsoft_cal_client_secret_enc = ?,
 		  updated_at = datetime('now')
 		WHERE id = 1`,
-		req.ClientID, secretEnc, req.TenantID, req.AllowedSignupDomains); err != nil {
+		req.ClientID, secretEnc, req.TenantID, req.AllowedSignupDomains,
+		allowPersonalInt, req.CalClientID, calSecretEnc); err != nil {
 		h.logger.ErrorContext(r.Context(), "microsoft settings: save", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -181,7 +240,11 @@ func (h *Handler) PutMicrosoftSettings(w http.ResponseWriter, r *http.Request) {
 		calRedirect := strings.TrimRight(h.baseURL, "/") + "/v1/calendar/microsoft/callback"
 		h.SetMicrosoftAuth(req.ClientID, clientSecret, tenant, authRedirect, h.secureCookie)
 		encKeyHex := hex.EncodeToString(h.encKey[:])
-		if mc, err := microsoft.New(h.db, req.ClientID, clientSecret, tenant, calRedirect, encKeyHex); err == nil {
+		calID, calSecret, calTenant := req.ClientID, clientSecret, tenant
+		if req.AllowPersonalCalendars && req.CalClientID != "" && calClientSecret != "" {
+			calID, calSecret, calTenant = req.CalClientID, calClientSecret, "common"
+		}
+		if mc, err := microsoft.New(h.db, calID, calSecret, calTenant, calRedirect, encKeyHex); err == nil {
 			if h.cal != nil {
 				h.cal.Register(mc)
 			}

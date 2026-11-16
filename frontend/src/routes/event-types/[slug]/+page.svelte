@@ -162,6 +162,7 @@
     allow_multiple_durations: false,
     duration_options: [15, 30, 45, 60] as number[],
     location_options: [] as LocationOption[],
+    destination_calendar_id: "",
     price_cents: 0,
     currency: "usd",
   });
@@ -625,13 +626,27 @@
   let testSent = $state<Partial<Record<MsgKey, boolean>>>({});
   let testError = $state<Partial<Record<MsgKey, string>>>({});
 
+  type ConnectedCalendarItem = {
+    calendar_id: string;
+    name: string;
+    provider: string;
+    account_email: string;
+    is_destination: boolean;
+  };
+  let connectedCalendars = $state<ConnectedCalendarItem[]>([]);
+
   let allowPhoneCall = $state(false);
   const slug = $page.params.slug;
 
   async function loadET() {
     etError = "";
     try {
-      et = await api.get<EventType>(`/v1/event-types/${slug}`);
+      const [etRes, calRes] = await Promise.all([
+        api.get<EventType>(`/v1/event-types/${slug}`),
+        api.get<{ items: ConnectedCalendarItem[] }>("/v1/calendar/calendars").catch(() => ({ items: [] })),
+      ]);
+      et = etRes;
+      connectedCalendars = calRes.items ?? [];
       allowPhoneCall = et.allow_phone_call;
       form = {
         display_order: et.display_order,
@@ -684,6 +699,7 @@
           type: o.type,
           value: o.value ?? "",
         })),
+        destination_calendar_id: et.destination_calendar_id ?? "",
         price_cents: et.price_cents ?? 0,
         currency: et.currency ?? "usd",
       };
@@ -839,6 +855,7 @@
           ? form.duration_options
           : [],
         location_options: form.location_options,
+        destination_calendar_id: form.destination_calendar_id,
         price_cents: Math.max(0, Math.round(Number(priceMajor) * 100)) || 0,
         currency: form.currency.trim().toLowerCase() || "usd",
         routing_mode: routingMode,
@@ -1743,6 +1760,48 @@
                     {/each}
                   </div>
                 {/if}
+              </div>
+
+              <div class="mt-4 space-y-1.5 border-t pt-4">
+                <Label>{$t("eventTypeEditor.location.addToCalendar")}</Label>
+                <Select.Root
+                  type="single"
+                  value={form.destination_calendar_id}
+                  onValueChange={(v) => {
+                    form.destination_calendar_id = v ?? "";
+                  }}
+                >
+                  <Select.Trigger class="w-full">
+                    {(() => {
+                      if (!form.destination_calendar_id) {
+                        return $t("eventTypeEditor.location.addToCalendarDefault");
+                      }
+                      const match = connectedCalendars.find(
+                        (c) => c.calendar_id === form.destination_calendar_id
+                      );
+                      return match
+                        ? `${match.name || match.calendar_id}${match.account_email ? ` (${match.account_email})` : ""}`
+                        : form.destination_calendar_id;
+                    })()}
+                  </Select.Trigger>
+                  <Select.Content>
+                    <Select.Item
+                      value=""
+                      label={$t("eventTypeEditor.location.addToCalendarDefault")}
+                    >
+                      {$t("eventTypeEditor.location.addToCalendarDefault")}
+                    </Select.Item>
+                    {#each connectedCalendars as cal}
+                      {@const calLabel = `${cal.name || cal.calendar_id}${cal.account_email ? ` (${cal.account_email})` : ""}`}
+                      <Select.Item value={cal.calendar_id} label={calLabel}>
+                        {calLabel}
+                      </Select.Item>
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
+                <p class="text-xs text-muted-foreground">
+                  {$t("eventTypeEditor.location.addToCalendarHint")}
+                </p>
               </div>
 
               <p

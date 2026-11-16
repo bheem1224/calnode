@@ -4,6 +4,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
+	import { Switch } from '$lib/components/ui/switch';
 	import { toast } from 'svelte-sonner';
 
 	type MicrosoftSettings = {
@@ -11,6 +12,9 @@
 		client_secret_set: boolean;
 		tenant_id: string;
 		allowed_signup_domains: string;
+		allow_personal_calendars: boolean;
+		cal_client_id: string;
+		cal_client_secret_set: boolean;
 		configured: boolean;
 		base_url: string;
 	};
@@ -22,6 +26,10 @@
 	let clientSecretSet = $state(false);
 	let tenantId = $state('');
 	let allowedDomains = $state('');
+	let allowPersonalCalendars = $state(false);
+	let calClientId = $state('');
+	let calClientSecret = $state('');
+	let calClientSecretSet = $state(false);
 	let baseUrl = $state('');
 	let configured = $state(false);
 
@@ -39,6 +47,9 @@
 			clientSecretSet = !!res.client_secret_set;
 			tenantId = res.tenant_id ?? '';
 			allowedDomains = res.allowed_signup_domains ?? '';
+			allowPersonalCalendars = !!res.allow_personal_calendars;
+			calClientId = res.cal_client_id ?? '';
+			calClientSecretSet = !!res.cal_client_secret_set;
 			baseUrl = res.base_url ?? '';
 			configured = !!res.configured;
 		} catch (e: any) {
@@ -56,13 +67,20 @@
 				client_id: clientId.trim(),
 				client_secret: clientSecret,
 				tenant_id: tenantId.trim(),
-				allowed_signup_domains: allowedDomains.trim()
+				allowed_signup_domains: allowedDomains.trim(),
+				allow_personal_calendars: allowPersonalCalendars,
+				cal_client_id: calClientId.trim(),
+				cal_client_secret: calClientSecret
 			});
 			clientId = res.client_id ?? '';
 			clientSecret = '';
 			clientSecretSet = !!res.client_secret_set;
 			tenantId = res.tenant_id ?? '';
 			allowedDomains = res.allowed_signup_domains ?? '';
+			allowPersonalCalendars = !!res.allow_personal_calendars;
+			calClientId = res.cal_client_id ?? '';
+			calClientSecret = '';
+			calClientSecretSet = !!res.cal_client_secret_set;
 			configured = !!res.configured;
 			toast.success('Microsoft OAuth settings saved');
 		} catch (err: any) {
@@ -134,6 +152,41 @@
 					<p class="text-xs text-muted-foreground">
 						Comma-separated list of email domains allowed to auto-provision accounts on Microsoft SSO login.
 					</p>
+				</div>
+
+				<div class="space-y-3 rounded-md border p-4">
+					<div class="flex items-center justify-between gap-4">
+						<div class="space-y-0.5">
+							<Label for="ms-personal-cal">Allow Personal & External Microsoft Calendars</Label>
+							<p class="text-xs text-muted-foreground">
+								Keep SSO pinned to your Tenant ID while allowing users to connect personal or external Microsoft calendars via a multi-tenant (<code class="rounded bg-muted px-1 py-0.5">common</code>) app registration.
+							</p>
+						</div>
+						<Switch id="ms-personal-cal" bind:checked={allowPersonalCalendars} />
+					</div>
+
+					{#if allowPersonalCalendars}
+						<div class="space-y-3 border-t pt-3">
+							<div class="space-y-1.5">
+								<Label for="ms-cal-client-id">Calendar OAuth Client ID</Label>
+								<Input
+									id="ms-cal-client-id"
+									bind:value={calClientId}
+									placeholder="00000000-0000-0000-0000-000000000000"
+								/>
+							</div>
+
+							<div class="space-y-1.5">
+								<Label for="ms-cal-client-secret">Calendar OAuth Client Secret</Label>
+								<Input
+									id="ms-cal-client-secret"
+									type="password"
+									bind:value={calClientSecret}
+									placeholder={calClientSecretSet ? '•••••••• (leave blank to keep existing)' : 'Enter calendar OAuth client secret'}
+								/>
+							</div>
+						</div>
+					{/if}
 				</div>
 
 				<div class="space-y-2 rounded-md border bg-muted/40 p-3">

@@ -83,6 +83,9 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 	if err != nil || hc == nil {
 		return "", "", "", err
 	}
+	if p.DestinationCalendarID != "" {
+		calID = p.DestinationCalendarID
+	}
 
 	attendees := []calEventAttendee{}
 	if p.OrganizerEmail != "" {

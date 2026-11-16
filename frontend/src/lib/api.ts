@@ -86,6 +86,7 @@ export type EventType = {
 	allow_multiple_durations?: boolean;
 	duration_options?: number[];
 	location_options?: LocationOption[];
+	destination_calendar_id?: string;
 	price_cents: number; // 0 = free
 	currency: string;    // ISO 4217, lowercase (e.g. "usd")
 	created_at: string;

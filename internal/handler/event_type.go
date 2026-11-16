@@ -74,6 +74,7 @@ type eventTypeJSON struct {
 	AllowMultipleDurations   bool             `json:"allow_multiple_durations"`
 	DurationOptions          []int            `json:"duration_options,omitempty"`
 	LocationOptions          []LocationOption `json:"location_options,omitempty"`
+	DestinationCalendarID    string           `json:"destination_calendar_id,omitempty"`
 	IsActive                 bool             `json:"is_active"`
 	// ShowTakenSlots renders already-booked times greyed out on the booking page
 	// instead of omitting them. Off by default: the slots endpoint is public, so this
@@ -168,7 +169,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 		&calEventTitle, &redirectURL, &replyTo,
 		&hideNotesCal, &hideCalDetails, &reqConfirm, &et.ConfirmMode,
 		&et.ConfirmNoticeMinutes, &unconfirmedBlocks, &reqEmailVerify,
-		&allowMultiDur, &durOptionsRaw, &locOptionsRaw,
+		&allowMultiDur, &durOptionsRaw, &locOptionsRaw, &et.DestinationCalendarID,
 	}
 	dests = append(dests, trailing...)
 	err := s.Scan(dests...)
@@ -314,7 +315,7 @@ const etColumns = `id, slug, name, description,
 	calendar_event_title, redirect_url, reply_to,
 	hide_notes_in_calendar, hide_calendar_event_details, requires_confirmation,
 	confirm_mode, confirm_notice_minutes, unconfirmed_blocks_slots, require_email_verification,
-	allow_multiple_durations, duration_options, location_options`
+	allow_multiple_durations, duration_options, location_options, destination_calendar_id`
 
 // selectETCols fetches a single event type without the caller-relative columns.
 const selectETCols = "SELECT " + etColumns + " FROM event_types"
@@ -694,6 +695,7 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		AllowMultipleDurations   *bool            `json:"allow_multiple_durations"`
 		DurationOptions          []int            `json:"duration_options"`
 		LocationOptions          []LocationOption `json:"location_options"`
+		DestinationCalendarID    *string          `json:"destination_calendar_id"`
 		IsActive                 *bool            `json:"is_active"`
 		IsPublic                 *bool            `json:"is_public"`
 		AllowPhoneCall           *bool            `json:"allow_phone_call"`
@@ -1005,6 +1007,9 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		}
 		b, _ := json.Marshal(clean)
 		set("location_options", string(b))
+	}
+	if req.DestinationCalendarID != nil {
+		set("destination_calendar_id", strings.TrimSpace(*req.DestinationCalendarID))
 	}
 	if req.PriceCents != nil {
 		if *req.PriceCents < 0 {
@@ -1338,4 +1343,47 @@ func (h *Handler) DeleteEventType(w http.ResponseWriter, r *http.Request) {
 	}
 	h.logForeignEventTypeChange(r.Context(), "delete", etID, ownerID, user)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListConnectedCalendars handles GET /v1/calendar/calendars (auth required).
+// Returns the authenticated user's connected calendars for per-event destination selection.
+func (h *Handler) ListConnectedCalendars(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	type calItem struct {
+		CalendarID    string `json:"calendar_id"`
+		Name          string `json:"name"`
+		Provider      string `json:"provider"`
+		AccountEmail  string `json:"account_email"`
+		IsDestination bool   `json:"is_destination"`
+	}
+	rows, err := h.db.QueryContext(r.Context(), `
+		SELECT calendar_id, COALESCE(name, calendar_id), provider, COALESCE(account_email, ''), is_destination
+		FROM connection_calendars
+		WHERE user_id = ?
+		ORDER BY is_destination DESC, provider, account_email, name`, user.ID)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "list connected calendars", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer rows.Close()
+
+	items := []calItem{}
+	for rows.Next() {
+		var c calItem
+		var isDest int
+		if err := rows.Scan(&c.CalendarID, &c.Name, &c.Provider, &c.AccountEmail, &isDest); err != nil {
+			h.logger.ErrorContext(r.Context(), "scan connected calendar", "error", err)
+			h.writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		c.IsDestination = isDest != 0
+		items = append(items, c)
+	}
+	if err := rows.Err(); err != nil {
+		h.logger.ErrorContext(r.Context(), "list connected calendars rows", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	h.writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }

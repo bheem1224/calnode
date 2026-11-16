@@ -633,6 +633,7 @@ func TestDuplicateEventType_handlesEveryEventTypeColumn(t *testing.T) {
 		"allow_multiple_durations":    true,
 		"duration_options":            true,
 		"location_options":            true,
+		"destination_calendar_id":     true,
 	}
 	// Deliberately not inherited, with the reason.
 	notInherited := map[string]string{

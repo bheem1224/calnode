@@ -1374,12 +1374,12 @@ func (h *Handler) createHostEvents(ctx context.Context, b *booking.Booking, in b
 	if gc == nil {
 		return
 	}
-	var calTitleTmpl string
+	var calTitleTmpl, destCalID string
 	var hideNotesCal, hideCalDetails int
 	_ = h.db.QueryRowContext(ctx,
-		`SELECT COALESCE(calendar_event_title, ''), hide_notes_in_calendar, hide_calendar_event_details
+		`SELECT COALESCE(calendar_event_title, ''), hide_notes_in_calendar, hide_calendar_event_details, COALESCE(destination_calendar_id, '')
 		 FROM event_types WHERE id = ?`, b.EventTypeID).
-		Scan(&calTitleTmpl, &hideNotesCal, &hideCalDetails)
+		Scan(&calTitleTmpl, &hideNotesCal, &hideCalDetails, &destCalID)
 	summary := bData.Tf("calendar_event_summary", in.EventTypeName, in.OrganizerName)
 	if strings.TrimSpace(calTitleTmpl) != "" {
 		summary = strings.NewReplacer(
@@ -1411,15 +1411,16 @@ func (h *Handler) createHostEvents(ctx context.Context, b *booking.Booking, in b
 			// The attendee is added as a calendar invitee below, so this text reaches
 			// them via the provider's own native invite (Google/Outlook/CalDAV) —
 			// follows their locale like the confirmation email, not English/host-fixed.
-			Summary:        summary,
-			Description:    calDesc,
-			Location:       location,
-			Start:          b.StartAt,
-			End:            b.EndAt,
-			OrganizerName:  in.OrganizerName,
-			OrganizerEmail: calendarInvitee(b.InviteDelivery, in.OrganizerEmail),
-			AddMeet:        autoGenMeet && host.IsPrimary,
-			Private:        hideCalDetails != 0,
+			Summary:               summary,
+			Description:           calDesc,
+			Location:              location,
+			Start:                 b.StartAt,
+			End:                   b.EndAt,
+			OrganizerName:         in.OrganizerName,
+			OrganizerEmail:        calendarInvitee(b.InviteDelivery, in.OrganizerEmail),
+			AddMeet:               autoGenMeet && host.IsPrimary,
+			Private:               hideCalDetails != 0,
+			DestinationCalendarID: destCalID,
 		})
 		if err != nil {
 			h.logger.Error("create gcal event", "error", err, "booking_id", b.ID, "host", host.UserID)
