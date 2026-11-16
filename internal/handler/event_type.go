@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/calnode/calnode/internal/booking"
 	"github.com/calnode/calnode/internal/db"
@@ -40,6 +41,14 @@ type eventTypeJSON struct {
 	MaxActiveBookings   int     `json:"max_active_bookings"`
 	MaxPerDay           *int    `json:"max_per_day"`
 	MaxPerWeek          *int    `json:"max_per_week"`
+	MaxPerMonth         *int    `json:"max_per_month"`
+	MaxPerYear          *int    `json:"max_per_year"`
+	MaxDurationPerDay   *int    `json:"max_duration_per_day"`
+	MaxDurationPerWeek  *int    `json:"max_duration_per_week"`
+	ShowFirstSlotOnly   bool    `json:"show_first_slot_only"`
+	FutureLimitMode     string  `json:"future_limit_mode"`
+	FutureRangeStart    *string `json:"future_range_start"`
+	FutureRangeEnd      *string `json:"future_range_end"`
 	DisableCancel       bool    `json:"disable_cancel"`
 	DisableReschedule   bool    `json:"disable_reschedule"`
 	RequireCancelReason string  `json:"require_cancel_reason"`
@@ -113,9 +122,10 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	var et eventTypeJSON
 	var desc, locVal, msgConf, msgCancel, msgResched, msgRemind, msgGreeting sql.NullString
 	var subjConf, subjCancel, subjResched, subjRemind sql.NullString
-	var maxPerDay, maxPerWeek sql.NullInt64
+	var maxPerDay, maxPerWeek, maxPerMonth, maxPerYear, maxDurDay, maxDurWeek sql.NullInt64
+	var futureRangeStart, futureRangeEnd sql.NullString
 	var isActive, isPublic, showTaken int
-	var disableCancel, disableResched, allowReschedPast int
+	var disableCancel, disableResched, allowReschedPast, showFirstSlotOnly int
 
 	dests := []any{
 		&et.ID, &et.Slug, &et.Name, &desc,
@@ -130,6 +140,8 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 		&et.PriceCents, &et.Currency, &et.InviteDelivery, &et.DisplayOrder,
 		&maxPerDay, &maxPerWeek,
 		&disableCancel, &disableResched, &et.RequireCancelReason, &allowReschedPast,
+		&maxPerMonth, &maxPerYear, &maxDurDay, &maxDurWeek,
+		&showFirstSlotOnly, &et.FutureLimitMode, &futureRangeStart, &futureRangeEnd,
 	}
 	dests = append(dests, trailing...)
 	err := s.Scan(dests...)
@@ -177,6 +189,17 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	}
 	et.MaxPerDay = nullIntPtr(maxPerDay)
 	et.MaxPerWeek = nullIntPtr(maxPerWeek)
+	et.MaxPerMonth = nullIntPtr(maxPerMonth)
+	et.MaxPerYear = nullIntPtr(maxPerYear)
+	et.MaxDurationPerDay = nullIntPtr(maxDurDay)
+	et.MaxDurationPerWeek = nullIntPtr(maxDurWeek)
+	et.ShowFirstSlotOnly = showFirstSlotOnly != 0
+	if futureRangeStart.Valid {
+		et.FutureRangeStart = &futureRangeStart.String
+	}
+	if futureRangeEnd.Valid {
+		et.FutureRangeEnd = &futureRangeEnd.String
+	}
 	et.DisableCancel = disableCancel != 0
 	et.DisableReschedule = disableResched != 0
 	et.AllowReschedulePast = allowReschedPast != 0
@@ -237,7 +260,9 @@ const etColumns = `id, slug, name, description,
 	subj_confirmation, subj_cancellation, subj_reschedule, subj_reminder,
 	price_cents, currency, invite_delivery, display_order,
 	max_per_day, max_per_week,
-	disable_cancel, disable_reschedule, require_cancel_reason, allow_reschedule_past`
+	disable_cancel, disable_reschedule, require_cancel_reason, allow_reschedule_past,
+	max_per_month, max_per_year, max_duration_per_day, max_duration_per_week,
+	show_first_slot_only, future_limit_mode, future_range_start, future_range_end`
 
 // selectETCols fetches a single event type without the caller-relative columns.
 const selectETCols = "SELECT " + etColumns + " FROM event_types"
@@ -592,6 +617,14 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		MaxActiveBookings   *int        `json:"max_active_bookings"`
 		MaxPerDay           nullableInt `json:"max_per_day"`
 		MaxPerWeek          nullableInt `json:"max_per_week"`
+		MaxPerMonth         nullableInt `json:"max_per_month"`
+		MaxPerYear          nullableInt `json:"max_per_year"`
+		MaxDurationPerDay   nullableInt `json:"max_duration_per_day"`
+		MaxDurationPerWeek  nullableInt `json:"max_duration_per_week"`
+		ShowFirstSlotOnly   *bool       `json:"show_first_slot_only"`
+		FutureLimitMode     *string     `json:"future_limit_mode"`
+		FutureRangeStart    *string     `json:"future_range_start"`
+		FutureRangeEnd      *string     `json:"future_range_end"`
 		DisableCancel       *bool       `json:"disable_cancel"`
 		DisableReschedule   *bool       `json:"disable_reschedule"`
 		RequireCancelReason *string     `json:"require_cancel_reason"`
@@ -728,6 +761,70 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		set("max_per_week", v)
+	}
+	if req.MaxPerMonth.set {
+		v, capErr := normalizeCap(req.MaxPerMonth.value, "max_per_month")
+		if capErr != "" {
+			h.writeError(w, http.StatusBadRequest, capErr)
+			return
+		}
+		set("max_per_month", v)
+	}
+	if req.MaxPerYear.set {
+		v, capErr := normalizeCap(req.MaxPerYear.value, "max_per_year")
+		if capErr != "" {
+			h.writeError(w, http.StatusBadRequest, capErr)
+			return
+		}
+		set("max_per_year", v)
+	}
+	if req.MaxDurationPerDay.set {
+		v, capErr := normalizeCap(req.MaxDurationPerDay.value, "max_duration_per_day")
+		if capErr != "" {
+			h.writeError(w, http.StatusBadRequest, capErr)
+			return
+		}
+		set("max_duration_per_day", v)
+	}
+	if req.MaxDurationPerWeek.set {
+		v, capErr := normalizeCap(req.MaxDurationPerWeek.value, "max_duration_per_week")
+		if capErr != "" {
+			h.writeError(w, http.StatusBadRequest, capErr)
+			return
+		}
+		set("max_duration_per_week", v)
+	}
+	if req.ShowFirstSlotOnly != nil {
+		set("show_first_slot_only", *req.ShowFirstSlotOnly)
+	}
+	if req.FutureLimitMode != nil {
+		switch *req.FutureLimitMode {
+		case "calendar_days", "business_days", "date_range":
+			set("future_limit_mode", *req.FutureLimitMode)
+		default:
+			h.writeError(w, http.StatusBadRequest, "future_limit_mode must be calendar_days, business_days, or date_range")
+			return
+		}
+	}
+	if req.FutureRangeStart != nil {
+		s := strings.TrimSpace(*req.FutureRangeStart)
+		if s != "" {
+			if _, err := time.Parse("2006-01-02", s); err != nil {
+				h.writeError(w, http.StatusBadRequest, "future_range_start must be YYYY-MM-DD")
+				return
+			}
+		}
+		set("future_range_start", nullableString(s))
+	}
+	if req.FutureRangeEnd != nil {
+		s := strings.TrimSpace(*req.FutureRangeEnd)
+		if s != "" {
+			if _, err := time.Parse("2006-01-02", s); err != nil {
+				h.writeError(w, http.StatusBadRequest, "future_range_end must be YYYY-MM-DD")
+				return
+			}
+		}
+		set("future_range_end", nullableString(s))
 	}
 	if req.DisableCancel != nil {
 		set("disable_cancel", *req.DisableCancel)

@@ -56,6 +56,14 @@ export type EventType = {
 	max_active_bookings: number;
 	max_per_day?: number | null;
 	max_per_week?: number | null;
+	max_per_month?: number | null;
+	max_per_year?: number | null;
+	max_duration_per_day?: number | null;
+	max_duration_per_week?: number | null;
+	show_first_slot_only?: boolean;
+	future_limit_mode?: 'calendar_days' | 'business_days' | 'date_range';
+	future_range_start?: string | null;
+	future_range_end?: string | null;
 	disable_cancel?: boolean;
 	disable_reschedule?: boolean;
 	require_cancel_reason?: 'none' | 'optional' | 'required';

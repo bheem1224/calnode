@@ -265,6 +265,11 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 		degraded = degraded || d
 	}
 
+	maxFutureDays := et.MaxFutureDays
+	if et.FutureLimitMode != "" && et.FutureLimitMode != "calendar_days" {
+		// Let GenerateDetailed produce the range and apply business_days / date_range filtering below.
+		maxFutureDays = 0
+	}
 	req := slots.Request{
 		Event: slots.EventConfig{
 			DurationMinutes:     et.DurationMinutes,
@@ -272,7 +277,7 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 			BufferBeforeMinutes: et.BufferBeforeMinutes,
 			BufferAfterMinutes:  et.BufferAfterMinutes,
 			MinNoticeMinutes:    et.MinNoticeMinutes,
-			MaxFutureDays:       et.MaxFutureDays,
+			MaxFutureDays:       maxFutureDays,
 			RoutingMode:         et.RoutingMode,
 		},
 		Hosts:    hostAvails,
@@ -291,7 +296,24 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 		return slotsResult{}, fmt.Errorf("slots generate: %w", err)
 	}
 
-	if (et.MaxPerDay != nil && *et.MaxPerDay > 0) || (et.MaxPerWeek != nil && *et.MaxPerWeek > 0) {
+	if et.FutureLimitMode != "" && et.FutureLimitMode != "calendar_days" {
+		ownerLoc := booking.LoadLocationOrUTC(et.OwnerTimezone)
+		filtered := make([]slots.Slot, 0, len(result.Free))
+		for _, s := range result.Free {
+			if booking.WithinFutureLimit(now, s.Start, ownerLoc, et.FutureLimitMode, et.MaxFutureDays, et.FutureRangeStart, et.FutureRangeEnd) {
+				filtered = append(filtered, s)
+			}
+		}
+		result.Free = filtered
+	}
+
+	hasCaps := (et.MaxPerDay != nil && *et.MaxPerDay > 0) ||
+		(et.MaxPerWeek != nil && *et.MaxPerWeek > 0) ||
+		(et.MaxPerMonth != nil && *et.MaxPerMonth > 0) ||
+		(et.MaxPerYear != nil && *et.MaxPerYear > 0) ||
+		(et.MaxDurationPerDay != nil && *et.MaxDurationPerDay > 0) ||
+		(et.MaxDurationPerWeek != nil && *et.MaxDurationPerWeek > 0)
+	if hasCaps {
 		capLoc := booking.LoadLocationOrUTC(et.OwnerTimezone)
 		rangeStart, _ := booking.ISOWeekWindow(dateFrom, capLoc)
 		_, rangeEnd := booking.ISOWeekWindow(dateTo.Add(24*time.Hour), capLoc)
@@ -305,17 +327,53 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 				rangeEnd = lastEnd
 			}
 		}
+		if et.MaxPerYear != nil && *et.MaxPerYear > 0 {
+			fs := rangeStart.In(capLoc)
+			le := rangeEnd.In(capLoc)
+			ys := time.Date(fs.Year(), 1, 1, 0, 0, 0, 0, capLoc).UTC()
+			ye := time.Date(le.Year()+1, 1, 1, 0, 0, 0, 0, capLoc).UTC()
+			if ys.Before(rangeStart) {
+				rangeStart = ys
+			}
+			if ye.After(rangeEnd) {
+				rangeEnd = ye
+			}
+		} else if et.MaxPerMonth != nil && *et.MaxPerMonth > 0 {
+			fs := rangeStart.In(capLoc)
+			le := rangeEnd.In(capLoc)
+			ms := time.Date(fs.Year(), fs.Month(), 1, 0, 0, 0, 0, capLoc).UTC()
+			me := time.Date(le.Year(), le.Month()+1, 1, 0, 0, 0, 0, capLoc).UTC()
+			if ms.Before(rangeStart) {
+				rangeStart = ms
+			}
+			if me.After(rangeEnd) {
+				rangeEnd = me
+			}
+		}
 		counts, err := booking.CountFrequencyBookings(ctx, h.db, et.ID, rangeStart, rangeEnd, capLoc)
 		if err != nil {
 			return slotsResult{}, fmt.Errorf("count frequency caps: %w", err)
 		}
 		filtered := make([]slots.Slot, 0, len(result.Free))
 		for _, s := range result.Free {
-			if !counts.Exceeded(s.Start, capLoc, et.MaxPerDay, et.MaxPerWeek) {
+			if !counts.ExceededAll(s.Start, et.DurationMinutes, capLoc, et.MaxPerDay, et.MaxPerWeek, et.MaxPerMonth, et.MaxPerYear, et.MaxDurationPerDay, et.MaxDurationPerWeek) {
 				filtered = append(filtered, s)
 			}
 		}
 		result.Free = filtered
+	}
+
+	if et.ShowFirstSlotOnly && len(result.Free) > 0 {
+		seenDays := make(map[string]bool)
+		firstOnly := make([]slots.Slot, 0, len(result.Free))
+		for _, s := range result.Free {
+			dayKey := s.Start.In(bookerTZ).Format("2006-01-02")
+			if !seenDays[dayKey] {
+				seenDays[dayKey] = true
+				firstOnly = append(firstOnly, s)
+			}
+		}
+		result.Free = firstOnly
 	}
 
 	// Host metadata (name + avatar) for the candidate pool, so the booking page can

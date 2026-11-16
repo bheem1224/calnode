@@ -133,6 +133,14 @@
     max_active_bookings: 1,
     max_per_day: "" as number | "" | null,
     max_per_week: "" as number | "" | null,
+    max_per_month: "" as number | "" | null,
+    max_per_year: "" as number | "" | null,
+    max_duration_per_day: "" as number | "" | null,
+    max_duration_per_week: "" as number | "" | null,
+    show_first_slot_only: false,
+    future_limit_mode: "calendar_days" as "calendar_days" | "business_days" | "date_range",
+    future_range_start: "",
+    future_range_end: "",
     disable_cancel: false,
     disable_reschedule: false,
     require_cancel_reason: "optional" as "none" | "optional" | "required",
@@ -210,55 +218,69 @@
     return opts.find((o) => o.value === Number(v))?.label ?? `${v} minutes`;
   }
 
+  type FreqUnit = "day" | "week" | "month" | "year";
+  const ALL_FREQ_UNITS: FreqUnit[] = ["day", "week", "month", "year"];
   let freqEnabled = $state(false);
-  let freqOrder = $state<("day" | "week")[]>([]);
+  let freqOrder = $state<FreqUnit[]>([]);
+  let durEnabled = $state(false);
+  let durOrder = $state<("day" | "week")[]>([]);
   let futureLimitEnabled = $state(false);
   let maxActiveEnabled = $state(false);
 
-  function syncFreqFromForm() {
-    const next: ("day" | "week")[] = [];
-    if (
-      form.max_per_day !== "" &&
-      form.max_per_day !== null &&
-      form.max_per_day !== undefined
-    )
-      next.push("day");
-    if (
-      form.max_per_week !== "" &&
-      form.max_per_week !== null &&
-      form.max_per_week !== undefined
-    )
-      next.push("week");
-    freqOrder = next;
+  function freqLabel(u: FreqUnit): string {
+    if (u === "day") return $t("eventTypeEditor.limits.perDay");
+    if (u === "week") return $t("eventTypeEditor.limits.perWeek");
+    if (u === "month") return $t("eventTypeEditor.limits.perMonth");
+    return $t("eventTypeEditor.limits.perYear");
   }
 
-  function setFreqRowUnit(idx: number, newUnit: "day" | "week") {
+  function getFreqVal(u: FreqUnit): number | "" | null {
+    if (u === "day") return form.max_per_day;
+    if (u === "week") return form.max_per_week;
+    if (u === "month") return form.max_per_month;
+    return form.max_per_year;
+  }
+
+  function setFreqVal(u: FreqUnit, v: number | "" | null) {
+    if (u === "day") form.max_per_day = v;
+    else if (u === "week") form.max_per_week = v;
+    else if (u === "month") form.max_per_month = v;
+    else form.max_per_year = v;
+  }
+
+  function syncFreqFromForm() {
+    const next: FreqUnit[] = [];
+    for (const u of ALL_FREQ_UNITS) {
+      const v = getFreqVal(u);
+      if (v !== "" && v !== null && v !== undefined) next.push(u);
+    }
+    freqOrder = next;
+    const nextDur: ("day" | "week")[] = [];
+    if (form.max_duration_per_day !== "" && form.max_duration_per_day !== null && form.max_duration_per_day !== undefined)
+      nextDur.push("day");
+    if (form.max_duration_per_week !== "" && form.max_duration_per_week !== null && form.max_duration_per_week !== undefined)
+      nextDur.push("week");
+    durOrder = nextDur;
+  }
+
+  function setFreqRowUnit(idx: number, newUnit: FreqUnit) {
     const oldUnit = freqOrder[idx];
     if (!oldUnit || oldUnit === newUnit) return;
-    const val = oldUnit === "day" ? form.max_per_day : form.max_per_week;
-    if (oldUnit === "day") {
-      form.max_per_day = "";
-      form.max_per_week = val || 1;
-    } else {
-      form.max_per_week = "";
-      form.max_per_day = val || 1;
-    }
+    const val = getFreqVal(oldUnit);
+    setFreqVal(oldUnit, "");
+    setFreqVal(newUnit, val || 1);
     freqOrder = freqOrder.map((u, i) => (i === idx ? newUnit : u));
   }
 
   function addFreqRow() {
-    if (!freqOrder.includes("day")) {
-      form.max_per_day = 1;
-      freqOrder = [...freqOrder, "day"];
-    } else if (!freqOrder.includes("week")) {
-      form.max_per_week = 3;
-      freqOrder = [...freqOrder, "week"];
-    }
+    const next = ALL_FREQ_UNITS.find((u) => !freqOrder.includes(u));
+    if (!next) return;
+    setFreqVal(next, next === "day" ? 1 : 3);
+    freqOrder = [...freqOrder, next];
   }
 
-  function removeFreqRow(unit: "day" | "week") {
-    if (unit === "day") form.max_per_day = "";
-    else form.max_per_week = "";
+  function removeFreqRow(unit: FreqUnit) {
+    setFreqVal(unit, "");
     freqOrder = freqOrder.filter((u) => u !== unit);
     if (freqOrder.length === 0) freqEnabled = false;
   }
@@ -266,13 +288,55 @@
   function toggleFreqEnabled(on: boolean) {
     freqEnabled = on;
     if (!on) {
-      form.max_per_day = "";
-      form.max_per_week = "";
+      for (const u of ALL_FREQ_UNITS) setFreqVal(u, "");
       freqOrder = [];
     } else if (freqOrder.length === 0) {
       form.max_per_day = 1;
       freqOrder = ["day"];
     }
+  }
+
+  function toggleDurEnabled(on: boolean) {
+    durEnabled = on;
+    if (!on) {
+      form.max_duration_per_day = "";
+      form.max_duration_per_week = "";
+      durOrder = [];
+    } else if (durOrder.length === 0) {
+      form.max_duration_per_day = 60;
+      durOrder = ["day"];
+    }
+  }
+
+  function addDurRow() {
+    if (!durOrder.includes("day")) {
+      form.max_duration_per_day = 60;
+      durOrder = [...durOrder, "day"];
+    } else if (!durOrder.includes("week")) {
+      form.max_duration_per_week = 180;
+      durOrder = [...durOrder, "week"];
+    }
+  }
+
+  function removeDurRow(unit: "day" | "week") {
+    if (unit === "day") form.max_duration_per_day = "";
+    else form.max_duration_per_week = "";
+    durOrder = durOrder.filter((u) => u !== unit);
+    if (durOrder.length === 0) durEnabled = false;
+  }
+
+  function setDurRowUnit(idx: number, newUnit: "day" | "week") {
+    const oldUnit = durOrder[idx];
+    if (!oldUnit || oldUnit === newUnit) return;
+    const val = oldUnit === "day" ? form.max_duration_per_day : form.max_duration_per_week;
+    if (oldUnit === "day") {
+      form.max_duration_per_day = "";
+      form.max_duration_per_week = val || 60;
+    } else {
+      form.max_duration_per_week = "";
+      form.max_duration_per_day = val || 60;
+    }
+    durOrder = durOrder.map((u, i) => (i === idx ? newUnit : u));
   }
 
   function toggleFutureLimit(on: boolean) {
@@ -572,6 +636,14 @@
         max_active_bookings: et.max_active_bookings,
         max_per_day: et.max_per_day ?? "",
         max_per_week: et.max_per_week ?? "",
+        max_per_month: et.max_per_month ?? "",
+        max_per_year: et.max_per_year ?? "",
+        max_duration_per_day: et.max_duration_per_day ?? "",
+        max_duration_per_week: et.max_duration_per_week ?? "",
+        show_first_slot_only: !!et.show_first_slot_only,
+        future_limit_mode: et.future_limit_mode ?? "calendar_days",
+        future_range_start: et.future_range_start ?? "",
+        future_range_end: et.future_range_end ?? "",
         disable_cancel: !!et.disable_cancel,
         disable_reschedule: !!et.disable_reschedule,
         require_cancel_reason: et.require_cancel_reason ?? "optional",
@@ -583,10 +655,18 @@
       paidEnabled = (et.price_cents ?? 0) > 0;
       freqEnabled = !!(
         (et.max_per_day && et.max_per_day > 0) ||
-        (et.max_per_week && et.max_per_week > 0)
+        (et.max_per_week && et.max_per_week > 0) ||
+        (et.max_per_month && et.max_per_month > 0) ||
+        (et.max_per_year && et.max_per_year > 0)
+      );
+      durEnabled = !!(
+        (et.max_duration_per_day && et.max_duration_per_day > 0) ||
+        (et.max_duration_per_week && et.max_duration_per_week > 0)
       );
       syncFreqFromForm();
-      futureLimitEnabled = (et.max_future_days ?? 0) > 0;
+      futureLimitEnabled =
+        (et.max_future_days ?? 0) > 0 ||
+        et.future_limit_mode === "date_range";
       maxActiveEnabled = (et.max_active_bookings ?? 0) > 0;
       reminders = et.reminders ?? [];
       if (et.routing_mode === "round_robin") {
@@ -643,14 +723,14 @@
       toast.error(tr("eventTypeEditor.validation.maxActive"));
       return;
     }
-    const maxPerDay =
-      form.max_per_day === "" || form.max_per_day === null
-        ? null
-        : Number(form.max_per_day);
-    const maxPerWeek =
-      form.max_per_week === "" || form.max_per_week === null
-        ? null
-        : Number(form.max_per_week);
+    const toCap = (v: number | "" | null) =>
+      v === "" || v === null ? null : Number(v);
+    const maxPerDay = toCap(form.max_per_day);
+    const maxPerWeek = toCap(form.max_per_week);
+    const maxPerMonth = toCap(form.max_per_month);
+    const maxPerYear = toCap(form.max_per_year);
+    const maxDurDay = toCap(form.max_duration_per_day);
+    const maxDurWeek = toCap(form.max_duration_per_week);
     if (maxPerDay !== null && (!Number.isFinite(maxPerDay) || maxPerDay < 0)) {
       toast.error("Max bookings per day cannot be negative.");
       return;
@@ -696,6 +776,14 @@
         max_active_bookings: Number(form.max_active_bookings),
         max_per_day: maxPerDay === 0 ? null : maxPerDay,
         max_per_week: maxPerWeek === 0 ? null : maxPerWeek,
+        max_per_month: maxPerMonth === 0 ? null : maxPerMonth,
+        max_per_year: maxPerYear === 0 ? null : maxPerYear,
+        max_duration_per_day: maxDurDay === 0 ? null : maxDurDay,
+        max_duration_per_week: maxDurWeek === 0 ? null : maxDurWeek,
+        show_first_slot_only: form.show_first_slot_only,
+        future_limit_mode: form.future_limit_mode,
+        future_range_start: form.future_range_start.trim(),
+        future_range_end: form.future_range_end.trim(),
         disable_cancel: form.disable_cancel,
         disable_reschedule: form.disable_reschedule,
         require_cancel_reason: form.require_cancel_reason,
@@ -1688,7 +1776,7 @@
               {#if freqEnabled}
                 <div class="space-y-2.5 pt-1">
                   {#each freqOrder as unit, idx (unit)}
-                    {@const availableUnits = (["day", "week"] as const).filter(
+                    {@const availableUnits = ALL_FREQ_UNITS.filter(
                       (u) => u === unit || !freqOrder.includes(u),
                     )}
                     <div class="flex items-center gap-2">
@@ -1700,7 +1788,7 @@
                           bind:value={form.max_per_day}
                           aria-label="Max bookings per day"
                         />
-                      {:else}
+                      {:else if unit === "week"}
                         <Input
                           type="number"
                           min="1"
@@ -1708,27 +1796,43 @@
                           bind:value={form.max_per_week}
                           aria-label="Max bookings per week"
                         />
+                      {:else if unit === "month"}
+                        <Input
+                          type="number"
+                          min="1"
+                          class="w-20 shrink-0"
+                          bind:value={form.max_per_month}
+                          aria-label="Max bookings per month"
+                        />
+                      {:else}
+                        <Input
+                          type="number"
+                          min="1"
+                          class="w-20 shrink-0"
+                          bind:value={form.max_per_year}
+                          aria-label="Max bookings per year"
+                        />
                       {/if}
                       <Select.Root
                         type="single"
                         value={unit}
                         onValueChange={(v) => {
-                          if (v) setFreqRowUnit(idx, v as "day" | "week");
+                          if (v) setFreqRowUnit(idx, v as FreqUnit);
                         }}
                       >
                         <Select.Trigger
                           class="w-40 min-w-0"
                           aria-label="Frequency period"
                         >
-                          {unit === "day" ? "Per Day" : "Per Week"}
+                          {freqLabel(unit)}
                         </Select.Trigger>
                         <Select.Content>
                           {#each availableUnits as opt}
                             <Select.Item
                               value={opt}
-                              label={opt === "day" ? "Per Day" : "Per Week"}
+                              label={freqLabel(opt)}
                             >
-                              {opt === "day" ? "Per Day" : "Per Week"}
+                              {freqLabel(opt)}
                             </Select.Item>
                           {/each}
                         </Select.Content>
@@ -1758,7 +1862,7 @@
                       </Button>
                     </div>
                   {/each}
-                  {#if freqOrder.length < 2}
+                  {#if freqOrder.length < ALL_FREQ_UNITS.length}
                     <Button
                       type="button"
                       variant="ghost"
@@ -1773,13 +1877,100 @@
               {/if}
             </div>
 
+            <!-- Limit total booking duration -->
+            <div class="rounded-lg border p-4 space-y-3">
+              <div class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <p class="text-sm font-medium">{$t("eventTypeEditor.limits.durationTitle")}</p>
+                  {@render infoTip($t("eventTypeEditor.limits.durationHint"))}
+                </div>
+                <Switch
+                  checked={durEnabled}
+                  onCheckedChange={toggleDurEnabled}
+                />
+              </div>
+              {#if durEnabled}
+                <div class="space-y-2 pt-1">
+                  {#each durOrder as unit, idx (unit)}
+                    {@const availDur = (["day", "week"] as const).filter(
+                      (u) => u === unit || !durOrder.includes(u),
+                    )}
+                    <div class="flex items-center gap-2">
+                      {#if unit === "day"}
+                        <Input
+                          type="number"
+                          min="5"
+                          step="5"
+                          class="w-24 shrink-0"
+                          bind:value={form.max_duration_per_day}
+                          aria-label="Max minutes per day"
+                        />
+                      {:else}
+                        <Input
+                          type="number"
+                          min="5"
+                          step="5"
+                          class="w-24 shrink-0"
+                          bind:value={form.max_duration_per_week}
+                          aria-label="Max minutes per week"
+                        />
+                      {/if}
+                      <span class="text-xs text-muted-foreground shrink-0">{$t("eventTypeEditor.limits.minutes")}</span>
+                      <Select.Root
+                        type="single"
+                        value={unit}
+                        onValueChange={(v) => {
+                          if (v) setDurRowUnit(idx, v as "day" | "week");
+                        }}
+                      >
+                        <Select.Trigger class="w-36 min-w-0" aria-label="Duration period">
+                          {unit === "day" ? $t("eventTypeEditor.limits.perDay") : $t("eventTypeEditor.limits.perWeek")}
+                        </Select.Trigger>
+                        <Select.Content>
+                          {#each availDur as opt}
+                            <Select.Item
+                              value={opt}
+                              label={opt === "day" ? $t("eventTypeEditor.limits.perDay") : $t("eventTypeEditor.limits.perWeek")}
+                            >
+                              {opt === "day" ? $t("eventTypeEditor.limits.perDay") : $t("eventTypeEditor.limits.perWeek")}
+                            </Select.Item>
+                          {/each}
+                        </Select.Content>
+                      </Select.Root>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        class="shrink-0 text-destructive hover:text-destructive"
+                        onclick={() => removeDurRow(unit)}
+                        aria-label="Remove duration limit"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /></svg>
+                      </Button>
+                    </div>
+                  {/each}
+                  {#if durOrder.length < 2}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      class="h-8 px-2 text-xs"
+                      onclick={addDurRow}
+                    >
+                      + Add limit
+                    </Button>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+
             <!-- Limit future bookings -->
             <div class="rounded-lg border p-4 space-y-3">
               <div class="flex items-center justify-between gap-3">
                 <div class="flex items-center gap-1.5 min-w-0">
                   <p class="text-sm font-medium">Limit future bookings</p>
                   {@render infoTip(
-                    "Limit how far in the future (calendar days) this event can be booked.",
+                    "Limit how far in the future this event can be booked.",
                   )}
                 </div>
                 <Switch
@@ -1788,19 +1979,45 @@
                 />
               </div>
               {#if futureLimitEnabled}
-                <div class="flex items-center gap-2 pt-1">
-                  <Input
-                    id="et-future"
-                    type="number"
-                    min="1"
-                    class="w-24"
-                    bind:value={form.max_future_days}
-                  />
-                  <span class="text-sm text-muted-foreground"
-                    >calendar days into the future</span
-                  >
+                <div class="space-y-3 pt-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <Input
+                      id="et-future"
+                      type="number"
+                      min="1"
+                      class="w-24"
+                      disabled={form.future_limit_mode === "date_range"}
+                      bind:value={form.max_future_days}
+                    />
+                    <select
+                      bind:value={form.future_limit_mode}
+                      class="flex h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    >
+                      <option value="calendar_days">{$t("eventTypeEditor.limits.calendarDays")}</option>
+                      <option value="business_days">{$t("eventTypeEditor.limits.businessDays")}</option>
+                      <option value="date_range">{$t("eventTypeEditor.limits.dateRange")}</option>
+                    </select>
+                  </div>
+                  {#if form.future_limit_mode === "date_range"}
+                    <div class="flex flex-wrap items-center gap-2">
+                      <Input type="date" class="w-40" bind:value={form.future_range_start} />
+                      <span class="text-xs text-muted-foreground">{$t("eventTypeEditor.limits.rangeTo")}</span>
+                      <Input type="date" class="w-40" bind:value={form.future_range_end} />
+                    </div>
+                  {/if}
                 </div>
               {/if}
+            </div>
+
+            <!-- Show only the first available slot each day -->
+            <div class="rounded-lg border p-4">
+              <div class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <p class="text-sm font-medium">{$t("eventTypeEditor.limits.firstSlotTitle")}</p>
+                  {@render infoTip($t("eventTypeEditor.limits.firstSlotHint"))}
+                </div>
+                <Switch bind:checked={form.show_first_slot_only} />
+              </div>
             </div>
 
             <!-- Limit upcoming bookings per booker -->

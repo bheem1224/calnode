@@ -1597,6 +1597,21 @@
 			"allowReschedulePast": "Allow rescheduling past events",
 			"allowReschedulePastHint": "Let invitees reschedule even after the original start time has passed."
 		},
+		"limits": {
+			"perDay": "Per Day",
+			"perWeek": "Per Week",
+			"perMonth": "Per Month",
+			"perYear": "Per Year",
+			"durationTitle": "Limit total booking duration",
+			"durationHint": "Limit the total booked minutes allowed per day or week.",
+			"minutes": "minutes",
+			"calendarDays": "calendar days into the future",
+			"businessDays": "business days into the future",
+			"dateRange": "Within a date range",
+			"rangeTo": "to",
+			"firstSlotTitle": "Show only the first available slot each day",
+			"firstSlotHint": "Offer only the earliest open time on each day."
+		},
 		"readOnly": {
 			"banner": "created this event type.",
 			"messageThem": "Message them",

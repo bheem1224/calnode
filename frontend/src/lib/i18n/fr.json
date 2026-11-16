@@ -1597,6 +1597,21 @@
 			"allowReschedulePast": "Autoriser la reprogrammation d'événements passés",
 			"allowReschedulePastHint": "Permet aux invités de reprogrammer même après l'heure de début initiale."
 		},
+		"limits": {
+			"perDay": "Par jour",
+			"perWeek": "Par semaine",
+			"perMonth": "Par mois",
+			"perYear": "Par an",
+			"durationTitle": "Limiter la durée totale des réservations",
+			"durationHint": "Limite le nombre total de minutes réservées par jour ou par semaine.",
+			"minutes": "minutes",
+			"calendarDays": "jours calendaires à l'avance",
+			"businessDays": "jours ouvrés à l'avance",
+			"dateRange": "Dans une plage de dates",
+			"rangeTo": "au",
+			"firstSlotTitle": "Afficher uniquement le premier créneau disponible par jour",
+			"firstSlotHint": "Ne propose que le premier créneau libre de chaque journée."
+		},
 		"readOnly": {
 			"banner": "a créé ce type de rendez-vous.",
 			"messageThem": "Écrivez-leur",

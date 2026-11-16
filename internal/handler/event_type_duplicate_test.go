@@ -612,6 +612,14 @@ func TestDuplicateEventType_handlesEveryEventTypeColumn(t *testing.T) {
 		"disable_reschedule":    true,
 		"require_cancel_reason": true,
 		"allow_reschedule_past": true,
+		"max_per_month":         true,
+		"max_per_year":          true,
+		"max_duration_per_day":  true,
+		"max_duration_per_week": true,
+		"show_first_slot_only":  true,
+		"future_limit_mode":     true,
+		"future_range_start":    true,
+		"future_range_end":      true,
 	}
 	// Deliberately not inherited, with the reason.
 	notInherited := map[string]string{

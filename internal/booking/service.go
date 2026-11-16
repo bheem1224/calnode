@@ -553,6 +553,7 @@ func (s *Service) Reschedule(ctx context.Context, bookingID string, newStart, ne
 	if err := enforceFrequencyCaps(ctx, tx, CreateParams{
 		EventTypeID: b.EventTypeID,
 		StartAt:     newStart,
+		EndAt:       newEnd,
 	}, bookingID); err != nil {
 		return nil, err
 	}

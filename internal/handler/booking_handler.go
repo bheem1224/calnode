@@ -318,11 +318,8 @@ func (h *Handler) validateBookingTime(ctx context.Context, et *bookableEventType
 	if startAt.Before(now.Add(time.Duration(et.MinNoticeMinutes) * time.Minute)) {
 		return errSlotUnavailable
 	}
-	maxFuture := now.Add(365 * 24 * time.Hour) // 0 = no configured limit; mirrors internal/slots/generate.go
-	if et.MaxFutureDays > 0 {
-		maxFuture = now.Add(time.Duration(et.MaxFutureDays) * 24 * time.Hour)
-	}
-	if startAt.After(maxFuture) {
+	ownerLoc := booking.LoadLocationOrUTC(et.OwnerTimezone)
+	if !booking.WithinFutureLimit(now, startAt, ownerLoc, et.FutureLimitMode, et.MaxFutureDays, et.FutureRangeStart, et.FutureRangeEnd) {
 		return errSlotUnavailable
 	}
 
@@ -378,11 +375,15 @@ func (h *Handler) validateBookingTime(ctx context.Context, et *bookableEventType
 func (h *Handler) validateRescheduleTime(ctx context.Context, bookingID, eventTypeID, fallbackHostID string, newStart, newEnd time.Time) error {
 	var et bookableEventType
 	et.ID = eventTypeID
-	if err := h.db.QueryRowContext(ctx,
-		`SELECT min_notice_minutes, max_future_days FROM event_types WHERE id = ?`, eventTypeID).
-		Scan(&et.MinNoticeMinutes, &et.MaxFutureDays); err != nil {
+	var rangeStart, rangeEnd sql.NullString
+	if err := h.db.QueryRowContext(ctx, `
+		SELECT et.min_notice_minutes, et.max_future_days, et.future_limit_mode, et.future_range_start, et.future_range_end, COALESCE(u.iana_timezone, 'UTC')
+		FROM event_types et LEFT JOIN users u ON u.id = et.user_id WHERE et.id = ?`, eventTypeID).
+		Scan(&et.MinNoticeMinutes, &et.MaxFutureDays, &et.FutureLimitMode, &rangeStart, &rangeEnd, &et.OwnerTimezone); err != nil {
 		return fmt.Errorf("load event type constraints: %w", err)
 	}
+	et.FutureRangeStart = rangeStart.String
+	et.FutureRangeEnd = rangeEnd.String
 
 	hostRows, err := h.db.QueryContext(ctx, `SELECT user_id FROM booking_hosts WHERE booking_id = ?`, bookingID)
 	if err != nil {
@@ -505,6 +506,14 @@ type bookableEventType struct {
 	MaxActiveBookings   int
 	MaxPerDay           *int
 	MaxPerWeek          *int
+	MaxPerMonth         *int
+	MaxPerYear          *int
+	MaxDurationPerDay   *int
+	MaxDurationPerWeek  *int
+	ShowFirstSlotOnly   bool
+	FutureLimitMode     string
+	FutureRangeStart    string
+	FutureRangeEnd      string
 	OwnerTimezone       string
 	PriceCents          int
 	Currency            string
@@ -528,14 +537,18 @@ func (h *Handler) loadBookableEventType(ctx context.Context, slug string) (*book
 
 func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug string, allowPrivate bool) (*bookableEventType, error) {
 	var et bookableEventType
-	var isActive, isPublic, showTaken int
-	var maxPerDay, maxPerWeek sql.NullInt64
+	var isActive, isPublic, showTaken, showFirst int
+	var maxPerDay, maxPerWeek, maxPerMonth, maxPerYear, maxDurDay, maxDurWeek sql.NullInt64
+	var rangeStart, rangeEnd sql.NullString
 	err := h.db.QueryRowContext(ctx, `
 		SELECT et.id, et.user_id, et.name, et.duration_minutes, et.slot_interval_minutes,
 		       et.location_type, et.location_value, et.allow_phone_call, et.routing_mode, et.rr_strategy,
 		       et.buffer_before_minutes, et.buffer_after_minutes, et.min_notice_minutes, et.max_future_days,
 		       et.is_active, et.is_public, et.show_taken_slots, et.max_active_bookings, et.price_cents, et.currency,
-		       et.invite_delivery, et.max_per_day, et.max_per_week, COALESCE(u.iana_timezone, 'UTC')
+		       et.invite_delivery, et.max_per_day, et.max_per_week,
+		       et.max_per_month, et.max_per_year, et.max_duration_per_day, et.max_duration_per_week,
+		       et.show_first_slot_only, et.future_limit_mode, et.future_range_start, et.future_range_end,
+		       COALESCE(u.iana_timezone, 'UTC')
 		FROM event_types et
 		LEFT JOIN users u ON u.id = et.user_id
 		WHERE et.slug = ?`, slug).
@@ -543,13 +556,23 @@ func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug 
 			&et.LocationType, &et.LocationValue, &et.AllowPhoneCall, &et.RoutingMode, &et.RRStrategy,
 			&et.BufferBeforeMinutes, &et.BufferAfterMinutes, &et.MinNoticeMinutes, &et.MaxFutureDays,
 			&isActive, &isPublic, &showTaken, &et.MaxActiveBookings, &et.PriceCents, &et.Currency,
-			&et.InviteDelivery, &maxPerDay, &maxPerWeek, &et.OwnerTimezone)
+			&et.InviteDelivery, &maxPerDay, &maxPerWeek,
+			&maxPerMonth, &maxPerYear, &maxDurDay, &maxDurWeek,
+			&showFirst, &et.FutureLimitMode, &rangeStart, &rangeEnd,
+			&et.OwnerTimezone)
 	if err != nil || isActive == 0 || (!allowPrivate && isPublic == 0) {
 		return nil, errEventTypeNotFound
 	}
 	et.ShowTakenSlots = showTaken != 0
+	et.ShowFirstSlotOnly = showFirst != 0
 	et.MaxPerDay = nullIntPtr(maxPerDay)
 	et.MaxPerWeek = nullIntPtr(maxPerWeek)
+	et.MaxPerMonth = nullIntPtr(maxPerMonth)
+	et.MaxPerYear = nullIntPtr(maxPerYear)
+	et.MaxDurationPerDay = nullIntPtr(maxDurDay)
+	et.MaxDurationPerWeek = nullIntPtr(maxDurWeek)
+	et.FutureRangeStart = rangeStart.String
+	et.FutureRangeEnd = rangeEnd.String
 	return &et, nil
 }
 
