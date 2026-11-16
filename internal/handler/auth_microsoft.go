@@ -16,16 +16,21 @@ import (
 // own scopes. Called from server.New when Microsoft credentials are configured.
 // secure should be true when BASE_URL starts with https://.
 func (h *Handler) SetMicrosoftAuth(clientID, clientSecret, tenant, redirectURL string, secure bool) {
+	clientID = strings.TrimSpace(clientID)
+	clientSecret = strings.TrimSpace(clientSecret)
 	tenant = strings.TrimSpace(tenant)
 	if tenant == "" {
 		tenant = "common"
 	}
-	cfg := &oauth2.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		Endpoint:     microsoft.AzureADEndpoint(tenant),
-		RedirectURL:  redirectURL,
-		Scopes:       []string{"openid", "email", "profile", "User.Read"},
+	var cfg *oauth2.Config
+	if clientID != "" && clientSecret != "" {
+		cfg = &oauth2.Config{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			Endpoint:     microsoft.AzureADEndpoint(tenant),
+			RedirectURL:  redirectURL,
+			Scopes:       []string{"openid", "email", "profile", "User.Read"},
+		}
 	}
 	h.authMu.Lock()
 	h.microsoftAuth = cfg
@@ -76,13 +81,27 @@ func (h *Handler) CallbackMicrosoft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email, err := fetchMicrosoftEmail(r.Context(), ma, tok)
+	email, upn, err := fetchMicrosoftIdentity(r.Context(), ma, tok)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "auth: microsoft user info", "error", err)
 		http.Redirect(w, r, "/admin/login?error=userinfo", http.StatusFound)
 		return
 	}
-	h.finishOAuthLogin(w, r, email)
+	jitEmail := email
+	if isMultiTenantMicrosoftAuthority(ma.Endpoint.AuthURL) {
+		// Under multi-tenant authorities (common, organizations, consumers), Graph `mail`
+		// is not tenant-domain-verified across arbitrary foreign tenants; only allow JIT
+		// provisioning against the Entra UPN.
+		jitEmail = upn
+	}
+	h.finishOAuthLoginWithJITEmail(w, r, email, jitEmail)
+}
+
+func isMultiTenantMicrosoftAuthority(authURL string) bool {
+	lower := strings.ToLower(authURL)
+	return strings.Contains(lower, "/common/") ||
+		strings.Contains(lower, "/organizations/") ||
+		strings.Contains(lower, "/consumers/")
 }
 
 type microsoftUserInfo struct {
@@ -90,42 +109,32 @@ type microsoftUserInfo struct {
 	UserPrincipalName string `json:"userPrincipalName"`
 }
 
-// fetchMicrosoftEmail reads the signed-in account's email from Graph /me, preferring
-// the routable `mail` and falling back to the userPrincipalName. Lowercased to match
-// stored account emails.
-//
-// Unlike Google's userinfo endpoint (see auth_google.go), Graph /me has no self-asserted
-// "verified" boolean to check — but the trust model differs: Entra ID enforces domain
-// verification at the tenant level (an admin cannot set a tenant's domain suffix, and
-// therefore cannot mint `mail`/userPrincipalName addresses under it, without proving DNS
-// ownership to Microsoft), so both fields are already domain-verified for standard member
-// accounts. The one address shape that ISN'T a real, owned mailbox is a B2B guest's
-// UPN, which Microsoft synthesizes as "user_domain.com#EXT#@resourcetenant.onmicrosoft.com"
-// — rejected below so a guest identity in some other tenant can never be used as an email
-// to look up (and sign in as) an existing Calnode user.
-func fetchMicrosoftEmail(ctx context.Context, cfg *oauth2.Config, tok *oauth2.Token) (string, error) {
+// fetchMicrosoftIdentity reads the signed-in account's `mail` (for existing-user
+// lookup) and `userPrincipalName` (domain-verified by Entra ID for member accounts),
+// rejecting B2B guest UPNs ("...#EXT#@...").
+func fetchMicrosoftIdentity(ctx context.Context, cfg *oauth2.Config, tok *oauth2.Token) (email, upn string, err error) {
 	resp, err := cfg.Client(ctx, tok).Get("https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName")
 	if err != nil {
-		return "", fmt.Errorf("auth: graph /me request: %w", err)
+		return "", "", fmt.Errorf("auth: graph /me request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("auth: graph /me status %d", resp.StatusCode)
+		return "", "", fmt.Errorf("auth: graph /me status %d", resp.StatusCode)
 	}
 	var info microsoftUserInfo
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		return "", fmt.Errorf("auth: decode graph /me: %w", err)
+		return "", "", fmt.Errorf("auth: decode graph /me: %w", err)
 	}
-	email := strings.ToLower(strings.TrimSpace(info.Mail))
+	upn = strings.ToLower(strings.TrimSpace(info.UserPrincipalName))
+	if strings.Contains(upn, "#ext#") {
+		return "", "", fmt.Errorf("auth: Microsoft account is a B2B guest identity, not a verifiable email")
+	}
+	email = strings.ToLower(strings.TrimSpace(info.Mail))
 	if email == "" {
-		upn := strings.ToLower(strings.TrimSpace(info.UserPrincipalName))
-		if strings.Contains(upn, "#ext#") {
-			return "", fmt.Errorf("auth: Microsoft account is a B2B guest identity, not a verifiable email")
-		}
 		email = upn
 	}
 	if email == "" {
-		return "", fmt.Errorf("auth: empty email from Microsoft")
+		return "", "", fmt.Errorf("auth: empty email from Microsoft")
 	}
-	return email, nil
+	return email, upn, nil
 }

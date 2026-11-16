@@ -33,7 +33,8 @@
   max-width: 600px;
   transition: max-width .28s cubic-bezier(.16,1,.3,1);
 }
-.card.has-day { max-width: 860px; }
+.card.has-day,
+.card.manage-card { max-width: 860px; }
 .card.is-confirm { max-width: 780px; }
 .card.is-confirm .cal-col { display: none; }
 .card.is-confirm .info { width: 290px; }
@@ -182,7 +183,8 @@
   overflow: hidden;
   transition: max-width .28s cubic-bezier(.16,1,.3,1), width .28s cubic-bezier(.16,1,.3,1), padding .28s cubic-bezier(.16,1,.3,1), opacity .22s ease;
 }
-.card.has-day .right-col {
+.card.has-day .right-col,
+.card.step-right .right-col {
   flex: 1;
   width: auto;
   max-width: 340px;
@@ -190,6 +192,14 @@
   opacity: 1;
 }
 .card.is-confirm .right-col {
+  flex: 1;
+  width: auto;
+  max-width: none;
+  padding: 2rem;
+  opacity: 1;
+}
+/* :where() keeps specificity (0,1,0) so manage.html's mobile @media .right-col padding wins on <=700px. */
+:where(.card.manage-card) .right-col {
   flex: 1;
   width: auto;
   max-width: none;

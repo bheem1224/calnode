@@ -112,14 +112,12 @@ type bookPageData struct {
 	SingleUseToken string
 	PrefillName    string
 	PrefillEmail   string
-	PrefillDealID  string
 }
 
 type bookPrefill struct {
 	SingleUseToken string
 	Name           string
 	Email          string
-	DealID         string
 }
 
 // hostDisplay is one host's identity for the public booking page.
@@ -463,15 +461,10 @@ func (h *Handler) BookPage(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug string, allowPrivate bool, prefill bookPrefill) {
 	qp := r.URL.Query()
 	if qp.Has("name") {
-		prefill.Name = qp.Get("name")
+		prefill.Name = strings.TrimSpace(qp.Get("name"))
 	}
 	if qp.Has("email") {
-		prefill.Email = qp.Get("email")
-	}
-	if qp.Has("dealId") {
-		prefill.DealID = qp.Get("dealId")
-	} else if qp.Has("deal_id") {
-		prefill.DealID = qp.Get("deal_id")
+		prefill.Email = strings.TrimSpace(qp.Get("email"))
 	}
 
 	var (
@@ -616,7 +609,6 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		SingleUseToken: prefill.SingleUseToken,
 		PrefillName:    prefill.Name,
 		PrefillEmail:   prefill.Email,
-		PrefillDealID:  prefill.DealID,
 	}
 
 	h.persistLangOverride(w, r)

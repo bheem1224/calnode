@@ -55,23 +55,42 @@ func (h *Handler) verifyOAuthState(w http.ResponseWriter, r *http.Request) bool 
 // allowedSignupDomains is configured, matching domains auto-provision a "member"
 // user and non-matching domains are rejected with 403 Forbidden.
 func (h *Handler) finishOAuthLogin(w http.ResponseWriter, r *http.Request, email string) {
+	h.finishOAuthLoginWithJITEmail(w, r, email, email)
+}
+
+func (h *Handler) finishOAuthLoginWithJITEmail(w http.ResponseWriter, r *http.Request, email, jitEmail string) {
 	email = strings.ToLower(strings.TrimSpace(email))
+	jitEmail = strings.ToLower(strings.TrimSpace(jitEmail))
 	var userID string
 	var archivedAt sql.NullString
 	err := h.db.QueryRowContext(r.Context(),
 		`SELECT id, archived_at FROM users WHERE email = ?`, email).Scan(&userID, &archivedAt)
 	if errors.Is(err, sql.ErrNoRows) {
+		// Never JIT-provision a non-owner member before the workspace has been claimed;
+		// otherwise /v1/auth/claim would see userCount > 0 and lock out the first owner.
+		var userCount int
+		if cntErr := h.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM users`).Scan(&userCount); cntErr != nil {
+			h.logger.ErrorContext(r.Context(), "auth: count users", "error", cntErr)
+			http.Redirect(w, r, "/admin/login?error=session", http.StatusFound)
+			return
+		}
+		if userCount == 0 {
+			h.logger.WarnContext(r.Context(), "auth: instance unclaimed, skipping JIT provisioning", "email", email)
+			http.Redirect(w, r, "/admin/login?error=no_account", http.StatusFound)
+			return
+		}
 		allowed := h.getAllowedSignupDomains()
 		if len(allowed) == 0 {
 			h.logger.WarnContext(r.Context(), "auth: no account for email", "email", email)
 			http.Redirect(w, r, "/admin/login?error=no_account", http.StatusFound)
 			return
 		}
-		if !emailDomainAllowed(email, allowed) {
-			h.logger.WarnContext(r.Context(), "auth: email domain not in allowed signup domains", "email", email)
+		if !emailDomainAllowed(jitEmail, allowed) {
+			h.logger.WarnContext(r.Context(), "auth: email domain not in allowed signup domains", "email", jitEmail)
 			h.writeError(w, http.StatusForbidden, "email domain is not allowed")
 			return
 		}
+		email = jitEmail
 		userID = uid.New()
 		name, _, _ := strings.Cut(email, "@")
 		if name == "" {
