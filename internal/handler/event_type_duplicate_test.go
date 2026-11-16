@@ -620,6 +620,9 @@ func TestDuplicateEventType_handlesEveryEventTypeColumn(t *testing.T) {
 		"future_limit_mode":     true,
 		"future_range_start":    true,
 		"future_range_end":      true,
+		"calendar_event_title":  true,
+		"redirect_url":          true,
+		"reply_to":              true,
 	}
 	// Deliberately not inherited, with the reason.
 	notInherited := map[string]string{

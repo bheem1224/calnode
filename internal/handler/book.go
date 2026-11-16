@@ -112,6 +112,7 @@ type bookPageData struct {
 	SingleUseToken string
 	PrefillName    string
 	PrefillEmail   string
+	RedirectURL    string
 }
 
 type bookPrefill struct {
@@ -484,12 +485,14 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		msgGreeting    sql.NullString
 		allowPhoneCall bool
 		accentColor    string
+		redirectURL    string
 	)
 	query := `
 		SELECT et.id, et.name, COALESCE(et.description, ''),
 		       et.duration_minutes, et.location_type, COALESCE(et.location_value, ''),
 		       et.max_future_days, et.min_notice_minutes, et.routing_mode, u.name, COALESCE(u.avatar_url, ''),
-		       et.price_cents, et.currency, et.msg_greeting, et.allow_phone_call, u.booking_accent
+		       et.price_cents, et.currency, et.msg_greeting, et.allow_phone_call, u.booking_accent,
+		       COALESCE(et.redirect_url, '')
 		FROM event_types et
 		JOIN users u ON u.id = et.user_id
 		WHERE et.slug = ? AND et.is_active = 1`
@@ -497,7 +500,7 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		query += ` AND et.is_public = 1`
 	}
 	err := h.db.QueryRowContext(r.Context(), query, slug).
-		Scan(&etID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor)
+		Scan(&etID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor, &redirectURL)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Page not found", http.StatusNotFound)
@@ -609,6 +612,7 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		SingleUseToken: prefill.SingleUseToken,
 		PrefillName:    prefill.Name,
 		PrefillEmail:   prefill.Email,
+		RedirectURL:    redirectURL,
 	}
 
 	h.persistLangOverride(w, r)

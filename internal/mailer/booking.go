@@ -32,6 +32,7 @@ type BookingData struct {
 	BaseURL            string
 	CustomNote         string // optional host-configured note appended to the email body
 	SubjectOverride    string // optional per-event-type custom subject; falls back to the default when empty
+	ReplyTo            string // optional per-event-type Reply-To email address
 	// AttachICS attaches an iCalendar invite to the attendee's email — set by the
 	// handler when the host has no Google destination calendar (so Google isn't already
 	// inviting the attendee, which would duplicate), or when the booking's invites are
@@ -220,6 +221,7 @@ func (d BookingData) OutlookCalURL() string {
 func SendConfirmationToAttendee(ctx context.Context, m Mailer, d BookingData) error {
 	msg := Message{
 		To:      []string{d.OrganizerEmail},
+		ReplyTo: d.ReplyTo,
 		Subject: d.subjectOr(d.Tf("email_subject_confirmed", d.EventTypeName)),
 		Text:    render(confirmOrgTmpl, d),
 		HTML:    renderHTML(htmlConfirmOrg, d),
@@ -279,6 +281,7 @@ func SendCancellationToAttendee(ctx context.Context, m Mailer, d BookingData) er
 	}
 	msg := Message{
 		To:      []string{d.OrganizerEmail},
+		ReplyTo: d.ReplyTo,
 		Subject: d.subjectOr(d.Tf("email_subject_cancelled", d.EventTypeName)),
 		Text:    render(cancelOrgTmpl, d),
 		HTML:    renderHTML(htmlCancelOrg, d),
@@ -336,6 +339,7 @@ func SendCancellation(ctx context.Context, m Mailer, d BookingData) error {
 func SendRescheduleToAttendee(ctx context.Context, m Mailer, d BookingData) error {
 	msg := Message{
 		To:      []string{d.OrganizerEmail},
+		ReplyTo: d.ReplyTo,
 		Subject: d.subjectOr(d.Tf("email_subject_rescheduled", d.EventTypeName)),
 		Text:    render(rescheduleOrgTmpl, d),
 		HTML:    renderHTML(htmlRescheduleOrg, d),
@@ -392,6 +396,7 @@ func SendReschedule(ctx context.Context, m Mailer, d BookingData) error {
 func SendReminder(ctx context.Context, m Mailer, d BookingData) error {
 	if err := m.Send(ctx, Message{
 		To:      []string{d.OrganizerEmail},
+		ReplyTo: d.ReplyTo,
 		Subject: d.subjectOr(d.Tf("email_subject_reminder", d.EventTypeName)),
 		Text:    render(reminderOrgTmpl, d),
 		HTML:    renderHTML(htmlReminderOrg, d),

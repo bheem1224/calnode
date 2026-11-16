@@ -326,6 +326,11 @@ func (s *SMTP) buildRaw(msg Message) ([]byte, error) {
 	fmt.Fprintf(&buf, "Message-ID: <%s@%s>\r\n", uid.New(), s.messageIDDomain())
 	fmt.Fprintf(&buf, "From: %s\r\n", from.String())
 	fmt.Fprintf(&buf, "To: %s\r\n", strings.Join(toFormatted, ", "))
+	if rt := strings.TrimSpace(msg.ReplyTo); rt != "" {
+		if a, err := mail.ParseAddress(rt); err == nil {
+			fmt.Fprintf(&buf, "Reply-To: %s\r\n", a.String())
+		}
+	}
 	fmt.Fprintf(&buf, "Subject: %s\r\n", subject)
 	fmt.Fprintf(&buf, "MIME-Version: 1.0\r\n")
 

@@ -64,6 +64,9 @@ export type EventType = {
 	future_limit_mode?: 'calendar_days' | 'business_days' | 'date_range';
 	future_range_start?: string | null;
 	future_range_end?: string | null;
+	calendar_event_title?: string | null;
+	redirect_url?: string | null;
+	reply_to?: string | null;
 	disable_cancel?: boolean;
 	disable_reschedule?: boolean;
 	require_cancel_reason?: 'none' | 'optional' | 'required';

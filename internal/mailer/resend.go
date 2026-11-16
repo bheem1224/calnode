@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/mail"
+	"strings"
 	"time"
 )
 
@@ -69,6 +70,7 @@ type resendAttachment struct {
 type resendPayload struct {
 	From        string             `json:"from"`
 	To          []string           `json:"to"`
+	ReplyTo     string             `json:"reply_to,omitempty"`
 	Subject     string             `json:"subject"`
 	Text        string             `json:"text,omitempty"`
 	HTML        string             `json:"html,omitempty"`
@@ -85,6 +87,7 @@ func (r *Resend) Send(ctx context.Context, msg Message) error {
 	payload := resendPayload{
 		From:    from.String(),
 		To:      msg.To,
+		ReplyTo: strings.TrimSpace(msg.ReplyTo),
 		Subject: msg.Subject,
 		Text:    msg.Text,
 		HTML:    msg.HTML,

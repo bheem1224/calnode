@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/mail"
+	"net/url"
 	"strings"
 	"time"
 
@@ -49,6 +51,9 @@ type eventTypeJSON struct {
 	FutureLimitMode     string  `json:"future_limit_mode"`
 	FutureRangeStart    *string `json:"future_range_start"`
 	FutureRangeEnd      *string `json:"future_range_end"`
+	CalendarEventTitle  *string `json:"calendar_event_title"`
+	RedirectURL         *string `json:"redirect_url"`
+	ReplyTo             *string `json:"reply_to"`
 	DisableCancel       bool    `json:"disable_cancel"`
 	DisableReschedule   bool    `json:"disable_reschedule"`
 	RequireCancelReason string  `json:"require_cancel_reason"`
@@ -123,7 +128,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	var desc, locVal, msgConf, msgCancel, msgResched, msgRemind, msgGreeting sql.NullString
 	var subjConf, subjCancel, subjResched, subjRemind sql.NullString
 	var maxPerDay, maxPerWeek, maxPerMonth, maxPerYear, maxDurDay, maxDurWeek sql.NullInt64
-	var futureRangeStart, futureRangeEnd sql.NullString
+	var futureRangeStart, futureRangeEnd, calEventTitle, redirectURL, replyTo sql.NullString
 	var isActive, isPublic, showTaken int
 	var disableCancel, disableResched, allowReschedPast, showFirstSlotOnly int
 
@@ -142,6 +147,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 		&disableCancel, &disableResched, &et.RequireCancelReason, &allowReschedPast,
 		&maxPerMonth, &maxPerYear, &maxDurDay, &maxDurWeek,
 		&showFirstSlotOnly, &et.FutureLimitMode, &futureRangeStart, &futureRangeEnd,
+		&calEventTitle, &redirectURL, &replyTo,
 	}
 	dests = append(dests, trailing...)
 	err := s.Scan(dests...)
@@ -199,6 +205,15 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	}
 	if futureRangeEnd.Valid {
 		et.FutureRangeEnd = &futureRangeEnd.String
+	}
+	if calEventTitle.Valid {
+		et.CalendarEventTitle = &calEventTitle.String
+	}
+	if redirectURL.Valid {
+		et.RedirectURL = &redirectURL.String
+	}
+	if replyTo.Valid {
+		et.ReplyTo = &replyTo.String
 	}
 	et.DisableCancel = disableCancel != 0
 	et.DisableReschedule = disableResched != 0
@@ -262,7 +277,8 @@ const etColumns = `id, slug, name, description,
 	max_per_day, max_per_week,
 	disable_cancel, disable_reschedule, require_cancel_reason, allow_reschedule_past,
 	max_per_month, max_per_year, max_duration_per_day, max_duration_per_week,
-	show_first_slot_only, future_limit_mode, future_range_start, future_range_end`
+	show_first_slot_only, future_limit_mode, future_range_start, future_range_end,
+	calendar_event_title, redirect_url, reply_to`
 
 // selectETCols fetches a single event type without the caller-relative columns.
 const selectETCols = "SELECT " + etColumns + " FROM event_types"
@@ -625,6 +641,9 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		FutureLimitMode     *string     `json:"future_limit_mode"`
 		FutureRangeStart    *string     `json:"future_range_start"`
 		FutureRangeEnd      *string     `json:"future_range_end"`
+		CalendarEventTitle  *string     `json:"calendar_event_title"`
+		RedirectURL         *string     `json:"redirect_url"`
+		ReplyTo             *string     `json:"reply_to"`
 		DisableCancel       *bool       `json:"disable_cancel"`
 		DisableReschedule   *bool       `json:"disable_reschedule"`
 		RequireCancelReason *string     `json:"require_cancel_reason"`
@@ -825,6 +844,37 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		set("future_range_end", nullableString(s))
+	}
+	if req.CalendarEventTitle != nil {
+		s := strings.TrimSpace(*req.CalendarEventTitle)
+		if len(s) > 200 {
+			h.writeError(w, http.StatusBadRequest, "calendar_event_title must be 200 characters or fewer")
+			return
+		}
+		set("calendar_event_title", nullableString(s))
+	}
+	if req.RedirectURL != nil {
+		s := strings.TrimSpace(*req.RedirectURL)
+		if s != "" {
+			u, err := url.ParseRequestURI(s)
+			if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+				h.writeError(w, http.StatusBadRequest, "redirect_url must be a valid http or https URL")
+				return
+			}
+		}
+		set("redirect_url", nullableString(s))
+	}
+	if req.ReplyTo != nil {
+		s := strings.TrimSpace(*req.ReplyTo)
+		if s != "" {
+			a, err := mail.ParseAddress(s)
+			if err != nil || a.Address == "" {
+				h.writeError(w, http.StatusBadRequest, "reply_to must be a valid email address")
+				return
+			}
+			s = a.Address
+		}
+		set("reply_to", nullableString(s))
 	}
 	if req.DisableCancel != nil {
 		set("disable_cancel", *req.DisableCancel)

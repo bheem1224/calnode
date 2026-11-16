@@ -1295,12 +1295,23 @@ func (h *Handler) createHostEvents(ctx context.Context, b *booking.Booking, in b
 	if gc == nil {
 		return
 	}
+	var calTitleTmpl string
+	_ = h.db.QueryRowContext(ctx, `SELECT COALESCE(calendar_event_title, '') FROM event_types WHERE id = ?`, b.EventTypeID).
+		Scan(&calTitleTmpl)
+	summary := bData.Tf("calendar_event_summary", in.EventTypeName, in.OrganizerName)
+	if strings.TrimSpace(calTitleTmpl) != "" {
+		summary = strings.NewReplacer(
+			"{Host}", primaryHost(hosts).Name,
+			"{Scheduler}", in.OrganizerName,
+			"{EventName}", in.EventTypeName,
+		).Replace(calTitleTmpl)
+	}
 	create := func(host assignedHost, location string) (link string) {
 		eventID, link, calID, provider, err := gc.CreateEvent(ctx, host.UserID, calendar.CreateEventParams{
 			// The attendee is added as a calendar invitee below, so this text reaches
 			// them via the provider's own native invite (Google/Outlook/CalDAV) —
 			// follows their locale like the confirmation email, not English/host-fixed.
-			Summary:        bData.Tf("calendar_event_summary", in.EventTypeName, in.OrganizerName),
+			Summary:        summary,
 			Description:    bData.Tf("calendar_event_booking_id", b.ID),
 			Location:       location,
 			Start:          b.StartAt,
@@ -1472,14 +1483,17 @@ func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConf
 	} else {
 		bData.ManageURL = h.publicURL() + "/manage/" + tok
 	}
-	var msgNote, subjNote sql.NullString
-	_ = h.db.QueryRowContext(ctx, `SELECT msg_confirmation, subj_confirmation FROM event_types WHERE id = ?`, b.EventTypeID).
-		Scan(&msgNote, &subjNote)
+	var msgNote, subjNote, replyTo sql.NullString
+	_ = h.db.QueryRowContext(ctx, `SELECT msg_confirmation, subj_confirmation, reply_to FROM event_types WHERE id = ?`, b.EventTypeID).
+		Scan(&msgNote, &subjNote, &replyTo)
 	if msgNote.Valid {
 		bData.CustomNote = msgNote.String
 	}
 	if subjNote.Valid {
 		bData.SubjectOverride = subjNote.String
+	}
+	if replyTo.Valid {
+		bData.ReplyTo = replyTo.String
 	}
 
 	meetURL, autoGenMeet, livekitHostURL := h.mintMeetingLink(ctx, b, in, &bData, hosts)

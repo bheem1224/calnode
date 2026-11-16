@@ -12,6 +12,7 @@ type Attachment struct {
 // Message is an outbound email.
 type Message struct {
 	To          []string
+	ReplyTo     string
 	Subject     string
 	Text        string // plain-text body (always set; used as the fallback alternative)
 	HTML        string // optional HTML body; when set the message is multipart/alternative

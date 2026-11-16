@@ -1612,6 +1612,18 @@
 			"firstSlotTitle": "Afficher uniquement le premier créneau disponible par jour",
 			"firstSlotHint": "Ne propose que le premier créneau libre de chaque journée."
 		},
+		"overrides": {
+			"title": "Remplacements de réservation et d'e-mail",
+			"calendarTitle": "Titre de l'événement calendrier",
+			"calendarTitleHint": "Modèle optionnel utilisant {Host}, {Scheduler} et {EventName}.",
+			"calendarTitlePlaceholder": "Réunion entre {Host} et {Scheduler}",
+			"redirectUrl": "Redirection après réservation",
+			"redirectUrlHint": "URL optionnelle (http/https) vers laquelle rediriger après confirmation.",
+			"redirectUrlPlaceholder": "https://example.com/merci",
+			"replyTo": "Adresse Reply-To personnalisée",
+			"replyToHint": "Adresse Reply-To optionnelle pour les e-mails envoyés aux invités.",
+			"replyToPlaceholder": "equipe@example.com"
+		},
 		"readOnly": {
 			"banner": "a créé ce type de rendez-vous.",
 			"messageThem": "Écrivez-leur",

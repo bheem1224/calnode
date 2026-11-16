@@ -1612,6 +1612,18 @@
 			"firstSlotTitle": "Show only the first available slot each day",
 			"firstSlotHint": "Offer only the earliest open time on each day."
 		},
+		"overrides": {
+			"title": "Booking & email overrides",
+			"calendarTitle": "Calendar event title",
+			"calendarTitleHint": "Optional template using {Host}, {Scheduler}, and {EventName}.",
+			"calendarTitlePlaceholder": "Meeting between {Host} and {Scheduler}",
+			"redirectUrl": "Redirect on booking",
+			"redirectUrlHint": "Optional URL (http/https) to redirect the booker to after confirming.",
+			"redirectUrlPlaceholder": "https://example.com/thank-you",
+			"replyTo": "Custom Reply-To email",
+			"replyToHint": "Optional Reply-To address for attendee confirmation, reschedule, cancel, and reminder emails.",
+			"replyToPlaceholder": "team@example.com"
+		},
 		"readOnly": {
 			"banner": "created this event type.",
 			"messageThem": "Message them",

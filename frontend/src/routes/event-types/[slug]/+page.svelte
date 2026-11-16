@@ -141,6 +141,9 @@
     future_limit_mode: "calendar_days" as "calendar_days" | "business_days" | "date_range",
     future_range_start: "",
     future_range_end: "",
+    calendar_event_title: "",
+    redirect_url: "",
+    reply_to: "",
     disable_cancel: false,
     disable_reschedule: false,
     require_cancel_reason: "optional" as "none" | "optional" | "required",
@@ -644,6 +647,9 @@
         future_limit_mode: et.future_limit_mode ?? "calendar_days",
         future_range_start: et.future_range_start ?? "",
         future_range_end: et.future_range_end ?? "",
+        calendar_event_title: et.calendar_event_title ?? "",
+        redirect_url: et.redirect_url ?? "",
+        reply_to: et.reply_to ?? "",
         disable_cancel: !!et.disable_cancel,
         disable_reschedule: !!et.disable_reschedule,
         require_cancel_reason: et.require_cancel_reason ?? "optional",
@@ -784,6 +790,9 @@
         future_limit_mode: form.future_limit_mode,
         future_range_start: form.future_range_start.trim(),
         future_range_end: form.future_range_end.trim(),
+        calendar_event_title: form.calendar_event_title.trim(),
+        redirect_url: form.redirect_url.trim(),
+        reply_to: form.reply_to.trim(),
         disable_cancel: form.disable_cancel,
         disable_reschedule: form.disable_reschedule,
         require_cancel_reason: form.require_cancel_reason,
@@ -1664,6 +1673,46 @@
                   {$t("eventTypeEditor.invite.onlineNoneWarning")}
                 </p>
               {/if}
+            </div>
+          </div>
+
+          <div class="mt-6 rounded-lg border bg-card p-6 space-y-4">
+            <h3 class="text-sm font-semibold">{$t("eventTypeEditor.overrides.title")}</h3>
+            <div class="space-y-1.5">
+              <div class="flex items-center gap-1.5">
+                <Label for="et-cal-title">{$t("eventTypeEditor.overrides.calendarTitle")}</Label>
+                {@render infoTip($t("eventTypeEditor.overrides.calendarTitleHint"))}
+              </div>
+              <Input
+                id="et-cal-title"
+                bind:value={form.calendar_event_title}
+                placeholder={$t("eventTypeEditor.overrides.calendarTitlePlaceholder")}
+                maxlength={200}
+              />
+            </div>
+            <div class="space-y-1.5">
+              <div class="flex items-center gap-1.5">
+                <Label for="et-redirect-url">{$t("eventTypeEditor.overrides.redirectUrl")}</Label>
+                {@render infoTip($t("eventTypeEditor.overrides.redirectUrlHint"))}
+              </div>
+              <Input
+                id="et-redirect-url"
+                type="url"
+                bind:value={form.redirect_url}
+                placeholder={$t("eventTypeEditor.overrides.redirectUrlPlaceholder")}
+              />
+            </div>
+            <div class="space-y-1.5">
+              <div class="flex items-center gap-1.5">
+                <Label for="et-reply-to">{$t("eventTypeEditor.overrides.replyTo")}</Label>
+                {@render infoTip($t("eventTypeEditor.overrides.replyToHint"))}
+              </div>
+              <Input
+                id="et-reply-to"
+                type="email"
+                bind:value={form.reply_to}
+                placeholder={$t("eventTypeEditor.overrides.replyToPlaceholder")}
+              />
             </div>
           </div>
         </div>

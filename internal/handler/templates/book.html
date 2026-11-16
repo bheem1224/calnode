@@ -272,6 +272,7 @@ body {
 
   const SLUG             = "{{.Slug}}";
   const SINGLE_USE_TOKEN = "{{.SingleUseToken}}";
+  const REDIRECT_URL     = "{{.RedirectURL}}";
   const MAX_DAYS = {{.MaxFutureDays}};
   const PRICE_CENTS = {{.PriceCents}};
   const CURRENCY = "{{.Currency}}";
@@ -803,6 +804,10 @@ body {
         });
       }
       if (typeof ga4Convert === 'function') ga4Convert(false, PRICE_CENTS / 100, CURRENCY, booked && booked.id);
+      if (REDIRECT_URL && /^https?:\/\//i.test(REDIRECT_URL)) {
+        window.location.href = REDIRECT_URL;
+        return;
+      }
 
       // Booking succeeded. Re-enable the button so a second booking attempt in the
       // same session (before the page is refreshed) isn't silently blocked by a
