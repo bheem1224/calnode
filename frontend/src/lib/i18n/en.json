@@ -748,6 +748,8 @@
 		},
 		"fieldsCount": "{count} fields",
 		"scopeAll": "All event types",
+		"eventScopedSubtitle": "Webhooks scoped specifically to {name}. Global webhooks are managed on the Webhooks page.",
+		"eventScopedEmpty": "No webhooks are scoped to this event type yet.",
 		"tooltip": {
 			"deliveries": "Recent deliveries",
 			"hideDeliveries": "Hide deliveries",
