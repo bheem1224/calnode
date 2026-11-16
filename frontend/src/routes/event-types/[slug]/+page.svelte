@@ -1216,7 +1216,7 @@
   {/if}
 
   <div
-    class="flex flex-col gap-6 pb-16 lg:grid lg:grid-cols-[208px_minmax(480px,1fr)] lg:items-start xl:grid-cols-[208px_minmax(480px,1fr)_320px]"
+    class="flex flex-col gap-6 pb-16 lg:grid lg:grid-cols-[200px_minmax(460px,1fr)] lg:items-start xl:grid-cols-[200px_minmax(460px,1fr)_360px]"
   >
     <!-- Sub-Navigation Rail (Left) -->
     <nav
@@ -1764,9 +1764,6 @@
               <div class="flex items-center justify-between gap-3">
                 <div class="flex items-center gap-1.5 min-w-0">
                   <p class="text-sm font-medium">Limit booking frequency</p>
-                  {@render infoTip(
-                    "Limit how many times this event can be booked per day and/or per week.",
-                  )}
                 </div>
                 <Switch
                   checked={freqEnabled}
@@ -1882,7 +1879,6 @@
               <div class="flex items-center justify-between gap-3">
                 <div class="flex items-center gap-1.5 min-w-0">
                   <p class="text-sm font-medium">{$t("eventTypeEditor.limits.durationTitle")}</p>
-                  {@render infoTip($t("eventTypeEditor.limits.durationHint"))}
                 </div>
                 <Switch
                   checked={durEnabled}
@@ -1969,9 +1965,6 @@
               <div class="flex items-center justify-between gap-3">
                 <div class="flex items-center gap-1.5 min-w-0">
                   <p class="text-sm font-medium">Limit future bookings</p>
-                  {@render infoTip(
-                    "Limit how far in the future this event can be booked.",
-                  )}
                 </div>
                 <Switch
                   checked={futureLimitEnabled}
@@ -1985,18 +1978,42 @@
                       id="et-future"
                       type="number"
                       min="1"
-                      class="w-24"
+                      class="w-24 shrink-0"
                       disabled={form.future_limit_mode === "date_range"}
                       bind:value={form.max_future_days}
                     />
-                    <select
-                      bind:value={form.future_limit_mode}
-                      class="flex h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    <Select.Root
+                      type="single"
+                      value={form.future_limit_mode}
+                      onValueChange={(v) => {
+                        if (v) form.future_limit_mode = v as typeof form.future_limit_mode;
+                      }}
                     >
-                      <option value="calendar_days">{$t("eventTypeEditor.limits.calendarDays")}</option>
-                      <option value="business_days">{$t("eventTypeEditor.limits.businessDays")}</option>
-                      <option value="date_range">{$t("eventTypeEditor.limits.dateRange")}</option>
-                    </select>
+                      <Select.Trigger class="flex-1 min-w-[200px]">
+                        {form.future_limit_mode === "business_days"
+                          ? $t("eventTypeEditor.limits.businessDays")
+                          : form.future_limit_mode === "date_range"
+                            ? $t("eventTypeEditor.limits.dateRange")
+                            : $t("eventTypeEditor.limits.calendarDays")}
+                      </Select.Trigger>
+                      <Select.Content>
+                        <Select.Item
+                          value="calendar_days"
+                          label={$t("eventTypeEditor.limits.calendarDays")}
+                          >{$t("eventTypeEditor.limits.calendarDays")}</Select.Item
+                        >
+                        <Select.Item
+                          value="business_days"
+                          label={$t("eventTypeEditor.limits.businessDays")}
+                          >{$t("eventTypeEditor.limits.businessDays")}</Select.Item
+                        >
+                        <Select.Item
+                          value="date_range"
+                          label={$t("eventTypeEditor.limits.dateRange")}
+                          >{$t("eventTypeEditor.limits.dateRange")}</Select.Item
+                        >
+                      </Select.Content>
+                    </Select.Root>
                   </div>
                   {#if form.future_limit_mode === "date_range"}
                     <div class="flex flex-wrap items-center gap-2">
@@ -2027,9 +2044,6 @@
                   <p class="text-sm font-medium">
                     Limit upcoming bookings per booker
                   </p>
-                  {@render infoTip(
-                    "Limit the number of active bookings a booker can hold at once.",
-                  )}
                 </div>
                 <Switch
                   checked={maxActiveEnabled}
@@ -2698,16 +2712,26 @@
             Reassign ownership to a saved required host (only available with no
             upcoming bookings).
           </p>
-          <select
-            id="transfer-owner"
-            bind:value={transferOwner}
-            class="h-9 w-full rounded-md border bg-background px-3 text-sm"
+          <Select.Root
+            type="single"
+            value={transferOwner}
+            onValueChange={(v) => (transferOwner = v ?? "")}
           >
-            <option value="">{$t("eventTypeEditor.transfer.select")}</option>
-            {#each transferHosts as host}<option value={host.user_id}
-                >{host.name || host.email}</option
-              >{/each}
-          </select>
+            <Select.Trigger id="transfer-owner" class="w-full">
+              {transferHosts.find((h) => h.user_id === transferOwner)?.name ||
+                transferHosts.find((h) => h.user_id === transferOwner)?.email ||
+                $t("eventTypeEditor.transfer.select")}
+            </Select.Trigger>
+            <Select.Content>
+              {#each transferHosts as host}
+                <Select.Item
+                  value={host.user_id}
+                  label={host.name || host.email}
+                  >{host.name || host.email}</Select.Item
+                >
+              {/each}
+            </Select.Content>
+          </Select.Root>
           <Button
             variant="outline"
             disabled={!transferOwner || transferring}
@@ -2800,7 +2824,7 @@
     </div>
 
     <!-- Live Interactive Booking Preview (Right, hidden on mobile/tablet < 1280px) -->
-    <aside class="hidden w-80 shrink-0 xl:block">
+    <aside class="hidden w-[360px] shrink-0 xl:block">
       <BookingPreviewCard
         name={form.name}
         description={form.description}
