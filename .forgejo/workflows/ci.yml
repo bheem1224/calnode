@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: svelte-check (frontend types)
+        working-directory: frontend
+        run: pnpm check
+
+      - name: i18n catalogue guard (call sites, no {@html})
+        working-directory: frontend
+        run: pnpm check:i18n
+
+      - name: Build frontend (required by the Go embed)
+        working-directory: frontend
+        run: pnpm build
+
+      - name: Install the browser for visual tests
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Visual smoke tests (computed styles in a real browser)
+        working-directory: frontend
+        run: pnpm test:visual
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt check
+        run: |
+          fmtout=$(gofmt -l .)
+          if [ -n "$fmtout" ]; then
+            echo "The following files are not gofmt'd:"
+            echo "$fmtout"
+            echo "Run: gofmt -w ."
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: Translation coverage
+        run: go run ./cmd/i18n-coverage
