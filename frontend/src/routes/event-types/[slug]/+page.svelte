@@ -148,7 +148,7 @@
     reply_to: "",
     disable_cancel: false,
     disable_reschedule: false,
-    require_cancel_reason: "optional" as "none" | "optional" | "required",
+    require_cancel_reason: "optional" as "none" | "optional" | "required" | "both" | "host_only" | "attendee_only",
     allow_reschedule_past: false,
     price_cents: 0,
     currency: "usd",
@@ -2121,29 +2121,71 @@
             </div>
 
             {#if !form.disable_cancel}
-              <div class="space-y-1.5 border-t pt-4">
-                <Label for="et-cancel-reason"
-                  >{$t("eventTypeEditor.policies.cancelReason")}</Label
-                >
-                <select
-                  id="et-cancel-reason"
-                  bind:value={form.require_cancel_reason}
-                  class="flex h-9 w-full max-w-xs rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                >
-                  <option value="none"
-                    >{$t("eventTypeEditor.policies.cancelReasonNone")}</option
+              {@const cancelReasonRequired =
+                form.require_cancel_reason === "required" ||
+                form.require_cancel_reason === "both" ||
+                form.require_cancel_reason === "host_only" ||
+                form.require_cancel_reason === "attendee_only"}
+              {@const cancelReasonSelection =
+                form.require_cancel_reason === "required"
+                  ? "attendee_only"
+                  : form.require_cancel_reason}
+              <div class="space-y-3 border-t pt-4">
+                <div class="flex items-center justify-between gap-4">
+                  <div>
+                    <Label for="et-cancel-reason-toggle"
+                      >{$t("eventTypeEditor.policies.cancelReason")}</Label
+                    >
+                    <p class="text-xs text-muted-foreground">
+                      {$t("eventTypeEditor.policies.cancelReasonHint")}
+                    </p>
+                  </div>
+                  <Switch
+                    id="et-cancel-reason-toggle"
+                    checked={cancelReasonRequired}
+                    onCheckedChange={(checked) => {
+                      form.require_cancel_reason = checked ? "both" : "optional";
+                    }}
+                  />
+                </div>
+                {#if cancelReasonRequired}
+                  <Select.Root
+                    type="single"
+                    value={cancelReasonSelection}
+                    onValueChange={(v) => {
+                      if (v) form.require_cancel_reason = v as typeof form.require_cancel_reason;
+                    }}
                   >
-                  <option value="optional"
-                    >{$t(
-                      "eventTypeEditor.policies.cancelReasonOptional",
-                    )}</option
-                  >
-                  <option value="required"
-                    >{$t(
-                      "eventTypeEditor.policies.cancelReasonRequired",
-                    )}</option
-                  >
-                </select>
+                    <Select.Trigger id="et-cancel-reason" class="w-full">
+                      {cancelReasonSelection === "both"
+                        ? $t("eventTypeEditor.policies.cancelReasonBoth")
+                        : cancelReasonSelection === "host_only"
+                          ? $t("eventTypeEditor.policies.cancelReasonHostOnly")
+                          : $t("eventTypeEditor.policies.cancelReasonAttendeeOnly")}
+                    </Select.Trigger>
+                    <Select.Content>
+                      <Select.Item
+                        value="both"
+                        label={$t("eventTypeEditor.policies.cancelReasonBoth")}
+                        >{$t("eventTypeEditor.policies.cancelReasonBoth")}</Select.Item
+                      >
+                      <Select.Item
+                        value="host_only"
+                        label={$t("eventTypeEditor.policies.cancelReasonHostOnly")}
+                        >{$t("eventTypeEditor.policies.cancelReasonHostOnly")}</Select.Item
+                      >
+                      <Select.Item
+                        value="attendee_only"
+                        label={$t(
+                          "eventTypeEditor.policies.cancelReasonAttendeeOnly",
+                        )}
+                        >{$t(
+                          "eventTypeEditor.policies.cancelReasonAttendeeOnly",
+                        )}</Select.Item
+                      >
+                    </Select.Content>
+                  </Select.Root>
+                {/if}
               </div>
             {/if}
 

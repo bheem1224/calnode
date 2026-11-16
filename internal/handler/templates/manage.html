@@ -217,8 +217,8 @@ body {
       <p class="hint" style="margin-bottom:1rem">{{call .T "cancel_booking_notice"}}</p>
       {{if ne .RequireCancelReason "none"}}
       <div class="field">
-        <label for="cancel-reason">{{call .T "reason_optional_label"}}{{if eq .RequireCancelReason "required"}} *{{end}}</label>
-        <input id="cancel-reason" type="text" placeholder="{{call .T "reason_placeholder"}}" maxlength="200"{{if eq .RequireCancelReason "required"}} required{{end}}>
+        <label for="cancel-reason">{{call .T "reason_optional_label"}}{{if or (eq .RequireCancelReason "required") (eq .RequireCancelReason "both") (eq .RequireCancelReason "attendee_only")}} *{{end}}</label>
+        <input id="cancel-reason" type="text" placeholder="{{call .T "reason_placeholder"}}" maxlength="200"{{if or (eq .RequireCancelReason "required") (eq .RequireCancelReason "both") (eq .RequireCancelReason "attendee_only")}} required{{end}}>
       </div>
       {{end}}
       <p id="cancel-error" class="form-error" role="alert" aria-live="assertive"></p>

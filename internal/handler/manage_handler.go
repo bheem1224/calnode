@@ -425,7 +425,7 @@ func (h *Handler) CancelByToken(w http.ResponseWriter, r *http.Request) {
 	}
 	reason := strings.TrimSpace(req.Reason)
 	switch requireCancelReason {
-	case "required":
+	case "required", "both", "attendee_only":
 		if reason == "" {
 			h.writeError(w, http.StatusBadRequest, "cancellation reason is required")
 			return

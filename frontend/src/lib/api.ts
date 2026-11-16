@@ -69,7 +69,7 @@ export type EventType = {
 	reply_to?: string | null;
 	disable_cancel?: boolean;
 	disable_reschedule?: boolean;
-	require_cancel_reason?: 'none' | 'optional' | 'required';
+	require_cancel_reason?: 'none' | 'optional' | 'required' | 'both' | 'host_only' | 'attendee_only';
 	allow_reschedule_past?: boolean;
 	price_cents: number; // 0 = free
 	currency: string;    // ISO 4217, lowercase (e.g. "usd")
