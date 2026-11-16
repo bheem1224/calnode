@@ -171,7 +171,7 @@ func (h *Handler) ManagePage(w http.ResponseWriter, r *http.Request) {
 		OrganizerTZ:         orgTZ,
 		Status:              b.Status,
 		CanCancel:           disableCancel == 0,
-		CanReschedule:       disableReschedule == 0 && (allowReschedulePast == 1 || !b.StartAt.Before(time.Now().UTC())),
+		CanReschedule:       disableReschedule == 0 && (allowReschedulePast == 1 || !b.StartAt.Before(bookingNow().UTC())),
 		RequireCancelReason: requireCancelReason,
 	}
 	h.renderManage(w, r, data, loc)
@@ -258,7 +258,7 @@ func (h *Handler) RescheduleByToken(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusForbidden, "rescheduling is disabled for this event type")
 		return
 	}
-	if allowReschedulePast == 0 && b.StartAt.Before(time.Now().UTC()) {
+	if allowReschedulePast == 0 && b.StartAt.Before(bookingNow().UTC()) {
 		h.writeError(w, http.StatusForbidden, "past bookings cannot be rescheduled")
 		return
 	}
