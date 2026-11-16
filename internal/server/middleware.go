@@ -23,6 +23,9 @@ const requestIDKey contextKey = "request_id"
 // TRUSTED_PROXY_CIDRS is configured, in which case remoteIP falls back to the peer.
 const clientIPKey contextKey = "client_ip"
 
+// trustedProxyKey is true when the TCP peer belongs to TRUSTED_PROXY_CIDRS.
+const trustedProxyKey contextKey = "trusted_proxy"
+
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-Id")
@@ -125,11 +128,20 @@ func (rw *responseWriter) Flush() {
 // the primary guard, and non-browser clients legitimately omit both. The comparison
 // is against the request Host header, so a reverse proxy must forward the original
 // Host (the common default).
+// SameOriginCheck wraps SameOriginCheckWithHosts with no extra configured hosts.
 func SameOriginCheck(next http.Handler) http.Handler {
+	return SameOriginCheckWithHosts(nil, next)
+}
+
+// SameOriginCheckWithHosts rejects state-changing cookie-authenticated requests whose
+// Origin (or Referer fallback) does not match the request Host, an explicitly
+// configured base host (BASE_URL / PUBLIC_BASE_URL), or X-Forwarded-Host from a
+// trusted proxy (TRUSTED_PROXY_CIDRS).
+func SameOriginCheckWithHosts(allowedHosts []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isStateChanging(r.Method) {
 			if _, err := r.Cookie("calnode_session"); err == nil {
-				if src := requestOriginHost(r); src != "" && !strings.EqualFold(src, r.Host) {
+				if src := requestOriginHost(r); src != "" && !isAllowedOriginHost(r, src, allowedHosts) {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusForbidden)
 					fmt.Fprint(w, `{"error":"cross-origin request blocked"}`)
@@ -139,6 +151,44 @@ func SameOriginCheck(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isAllowedOriginHost(r *http.Request, src string, allowedHosts []string) bool {
+	if sameHostMatch(src, r.Host) {
+		return true
+	}
+	for _, h := range allowedHosts {
+		if sameHostMatch(src, h) {
+			return true
+		}
+	}
+	// Only consult X-Forwarded-Host when TrustClientIP confirmed the peer is in TRUSTED_PROXY_CIDRS.
+	if trusted, _ := r.Context().Value(trustedProxyKey).(bool); trusted {
+		if xfh := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0]); xfh != "" {
+			if sameHostMatch(src, xfh) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sameHostMatch(a, b string) bool {
+	if strings.EqualFold(a, b) {
+		return true
+	}
+	return strings.EqualFold(stripDefaultPort(a), stripDefaultPort(b))
+}
+
+func stripDefaultPort(hostport string) string {
+	h, p, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return hostport
+	}
+	if p == "80" || p == "443" {
+		return h
+	}
+	return hostport
 }
 
 func isStateChanging(method string) bool {
@@ -394,6 +444,9 @@ func TrustClientIP(trusted []*net.IPNet) func(http.Handler) http.Handler {
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := context.WithValue(r.Context(), clientIPKey, resolveClientIP(r, trusted))
+			if ipInAny(peerIP(r), trusted) {
+				ctx = context.WithValue(ctx, trustedProxyKey, true)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

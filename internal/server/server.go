@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -694,7 +695,14 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 		logger.Info("trusting forwarded headers from proxies", "cidrs", cfg.TrustedProxyCIDRs)
 	}
 
-	return TrustClientIP(trustedProxies)(RequestID(Logging(logger, Recover(logger, SameOriginCheck(mux))))), drain
+	var allowedHosts []string
+	for _, raw := range []string{cfg.BaseURL, cfg.PublicBaseURL} {
+		if u, parseErr := url.Parse(strings.TrimSpace(raw)); parseErr == nil && u.Host != "" {
+			allowedHosts = append(allowedHosts, u.Host)
+		}
+	}
+
+	return TrustClientIP(trustedProxies)(RequestID(Logging(logger, Recover(logger, SameOriginCheckWithHosts(allowedHosts, mux))))), drain
 }
 
 // seedSMTPToDB writes env-var SMTP settings into the DB on first boot so they
