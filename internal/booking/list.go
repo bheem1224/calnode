@@ -96,7 +96,9 @@ func (f ListFilter) where(includeWhen bool) (string, []any) {
 	var conds []string
 	var args []any
 
-	if f.Status != "" {
+	if f.Status == "pending" {
+		conds = append(conds, "bookings.status = 'confirmed' AND bookings.pending_approval = 1")
+	} else if f.Status != "" {
 		conds = append(conds, "bookings.status = ?")
 		args = append(args, f.Status)
 	} else {

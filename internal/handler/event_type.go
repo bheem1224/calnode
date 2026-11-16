@@ -24,41 +24,48 @@ const (
 )
 
 type eventTypeJSON struct {
-	AllowPhoneCall      bool    `json:"allow_phone_call"`
-	ID                  string  `json:"id"`
-	Slug                string  `json:"slug"`
-	Name                string  `json:"name"`
-	DisplayOrder        int     `json:"display_order"` // lower first on public directories; ties sort by name, then slug
-	Description         *string `json:"description"`
-	DurationMinutes     int     `json:"duration_minutes"`
-	SlotIntervalMinutes int     `json:"slot_interval_minutes"`
-	LocationType        string  `json:"location_type"`
-	LocationValue       *string `json:"location_value"`
-	RoutingMode         string  `json:"routing_mode"`
-	RRStrategy          string  `json:"rr_strategy"`
-	BufferBeforeMinutes int     `json:"buffer_before_minutes"`
-	BufferAfterMinutes  int     `json:"buffer_after_minutes"`
-	MinNoticeMinutes    int     `json:"min_notice_minutes"`
-	MaxFutureDays       int     `json:"max_future_days"`
-	MaxActiveBookings   int     `json:"max_active_bookings"`
-	MaxPerDay           *int    `json:"max_per_day"`
-	MaxPerWeek          *int    `json:"max_per_week"`
-	MaxPerMonth         *int    `json:"max_per_month"`
-	MaxPerYear          *int    `json:"max_per_year"`
-	MaxDurationPerDay   *int    `json:"max_duration_per_day"`
-	MaxDurationPerWeek  *int    `json:"max_duration_per_week"`
-	ShowFirstSlotOnly   bool    `json:"show_first_slot_only"`
-	FutureLimitMode     string  `json:"future_limit_mode"`
-	FutureRangeStart    *string `json:"future_range_start"`
-	FutureRangeEnd      *string `json:"future_range_end"`
-	CalendarEventTitle  *string `json:"calendar_event_title"`
-	RedirectURL         *string `json:"redirect_url"`
-	ReplyTo             *string `json:"reply_to"`
-	DisableCancel       bool    `json:"disable_cancel"`
-	DisableReschedule   bool    `json:"disable_reschedule"`
-	RequireCancelReason string  `json:"require_cancel_reason"`
-	AllowReschedulePast bool    `json:"allow_reschedule_past"`
-	IsActive            bool    `json:"is_active"`
+	AllowPhoneCall           bool    `json:"allow_phone_call"`
+	ID                       string  `json:"id"`
+	Slug                     string  `json:"slug"`
+	Name                     string  `json:"name"`
+	DisplayOrder             int     `json:"display_order"` // lower first on public directories; ties sort by name, then slug
+	Description              *string `json:"description"`
+	DurationMinutes          int     `json:"duration_minutes"`
+	SlotIntervalMinutes      int     `json:"slot_interval_minutes"`
+	LocationType             string  `json:"location_type"`
+	LocationValue            *string `json:"location_value"`
+	RoutingMode              string  `json:"routing_mode"`
+	RRStrategy               string  `json:"rr_strategy"`
+	BufferBeforeMinutes      int     `json:"buffer_before_minutes"`
+	BufferAfterMinutes       int     `json:"buffer_after_minutes"`
+	MinNoticeMinutes         int     `json:"min_notice_minutes"`
+	MaxFutureDays            int     `json:"max_future_days"`
+	MaxActiveBookings        int     `json:"max_active_bookings"`
+	MaxPerDay                *int    `json:"max_per_day"`
+	MaxPerWeek               *int    `json:"max_per_week"`
+	MaxPerMonth              *int    `json:"max_per_month"`
+	MaxPerYear               *int    `json:"max_per_year"`
+	MaxDurationPerDay        *int    `json:"max_duration_per_day"`
+	MaxDurationPerWeek       *int    `json:"max_duration_per_week"`
+	ShowFirstSlotOnly        bool    `json:"show_first_slot_only"`
+	FutureLimitMode          string  `json:"future_limit_mode"`
+	FutureRangeStart         *string `json:"future_range_start"`
+	FutureRangeEnd           *string `json:"future_range_end"`
+	CalendarEventTitle       *string `json:"calendar_event_title"`
+	RedirectURL              *string `json:"redirect_url"`
+	ReplyTo                  *string `json:"reply_to"`
+	DisableCancel            bool    `json:"disable_cancel"`
+	DisableReschedule        bool    `json:"disable_reschedule"`
+	RequireCancelReason      string  `json:"require_cancel_reason"`
+	AllowReschedulePast      bool    `json:"allow_reschedule_past"`
+	HideNotesInCalendar      bool    `json:"hide_notes_in_calendar"`
+	HideCalendarEventDetails bool    `json:"hide_calendar_event_details"`
+	RequiresConfirmation     bool    `json:"requires_confirmation"`
+	ConfirmMode              string  `json:"confirm_mode"`
+	ConfirmNoticeMinutes     int     `json:"confirm_notice_minutes"`
+	UnconfirmedBlocksSlots   bool    `json:"unconfirmed_blocks_slots"`
+	RequireEmailVerification bool    `json:"require_email_verification"`
+	IsActive                 bool    `json:"is_active"`
 	// ShowTakenSlots renders already-booked times greyed out on the booking page
 	// instead of omitting them. Off by default: the slots endpoint is public, so this
 	// makes the host's booked hours legible to anyone with the link (#19).
@@ -131,6 +138,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	var futureRangeStart, futureRangeEnd, calEventTitle, redirectURL, replyTo sql.NullString
 	var isActive, isPublic, showTaken int
 	var disableCancel, disableResched, allowReschedPast, showFirstSlotOnly int
+	var hideNotesCal, hideCalDetails, reqConfirm, unconfirmedBlocks, reqEmailVerify int
 
 	dests := []any{
 		&et.ID, &et.Slug, &et.Name, &desc,
@@ -148,6 +156,8 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 		&maxPerMonth, &maxPerYear, &maxDurDay, &maxDurWeek,
 		&showFirstSlotOnly, &et.FutureLimitMode, &futureRangeStart, &futureRangeEnd,
 		&calEventTitle, &redirectURL, &replyTo,
+		&hideNotesCal, &hideCalDetails, &reqConfirm, &et.ConfirmMode,
+		&et.ConfirmNoticeMinutes, &unconfirmedBlocks, &reqEmailVerify,
 	}
 	dests = append(dests, trailing...)
 	err := s.Scan(dests...)
@@ -218,6 +228,11 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	et.DisableCancel = disableCancel != 0
 	et.DisableReschedule = disableResched != 0
 	et.AllowReschedulePast = allowReschedPast != 0
+	et.HideNotesInCalendar = hideNotesCal != 0
+	et.HideCalendarEventDetails = hideCalDetails != 0
+	et.RequiresConfirmation = reqConfirm != 0
+	et.UnconfirmedBlocksSlots = unconfirmedBlocks != 0
+	et.RequireEmailVerification = reqEmailVerify != 0
 	et.Reminders = []int{} // initialise to non-nil so JSON encodes as [] not null
 	return &et, nil
 }
@@ -278,7 +293,9 @@ const etColumns = `id, slug, name, description,
 	disable_cancel, disable_reschedule, require_cancel_reason, allow_reschedule_past,
 	max_per_month, max_per_year, max_duration_per_day, max_duration_per_week,
 	show_first_slot_only, future_limit_mode, future_range_start, future_range_end,
-	calendar_event_title, redirect_url, reply_to`
+	calendar_event_title, redirect_url, reply_to,
+	hide_notes_in_calendar, hide_calendar_event_details, requires_confirmation,
+	confirm_mode, confirm_notice_minutes, unconfirmed_blocks_slots, require_email_verification`
 
 // selectETCols fetches a single event type without the caller-relative columns.
 const selectETCols = "SELECT " + etColumns + " FROM event_types"
@@ -616,56 +633,63 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 
 	var req struct {
-		Slug                *string     `json:"slug"`
-		Name                *string     `json:"name"`
-		DisplayOrder        *int        `json:"display_order"`
-		Description         *string     `json:"description"`
-		DurationMinutes     *int        `json:"duration_minutes"`
-		SlotIntervalMinutes *int        `json:"slot_interval_minutes"`
-		LocationType        *string     `json:"location_type"`
-		LocationValue       *string     `json:"location_value"`
-		RoutingMode         *string     `json:"routing_mode"`
-		RRStrategy          *string     `json:"rr_strategy"`
-		BufferBeforeMinutes *int        `json:"buffer_before_minutes"`
-		BufferAfterMinutes  *int        `json:"buffer_after_minutes"`
-		MinNoticeMinutes    *int        `json:"min_notice_minutes"`
-		MaxFutureDays       *int        `json:"max_future_days"`
-		MaxActiveBookings   *int        `json:"max_active_bookings"`
-		MaxPerDay           nullableInt `json:"max_per_day"`
-		MaxPerWeek          nullableInt `json:"max_per_week"`
-		MaxPerMonth         nullableInt `json:"max_per_month"`
-		MaxPerYear          nullableInt `json:"max_per_year"`
-		MaxDurationPerDay   nullableInt `json:"max_duration_per_day"`
-		MaxDurationPerWeek  nullableInt `json:"max_duration_per_week"`
-		ShowFirstSlotOnly   *bool       `json:"show_first_slot_only"`
-		FutureLimitMode     *string     `json:"future_limit_mode"`
-		FutureRangeStart    *string     `json:"future_range_start"`
-		FutureRangeEnd      *string     `json:"future_range_end"`
-		CalendarEventTitle  *string     `json:"calendar_event_title"`
-		RedirectURL         *string     `json:"redirect_url"`
-		ReplyTo             *string     `json:"reply_to"`
-		DisableCancel       *bool       `json:"disable_cancel"`
-		DisableReschedule   *bool       `json:"disable_reschedule"`
-		RequireCancelReason *string     `json:"require_cancel_reason"`
-		AllowReschedulePast *bool       `json:"allow_reschedule_past"`
-		IsActive            *bool       `json:"is_active"`
-		IsPublic            *bool       `json:"is_public"`
-		AllowPhoneCall      *bool       `json:"allow_phone_call"`
-		ShowTakenSlots      *bool       `json:"show_taken_slots"`
-		InviteDelivery      *string     `json:"invite_delivery"`
-		Archived            *bool       `json:"archived"`
-		MsgConfirmation     *string     `json:"msg_confirmation"`
-		MsgCancellation     *string     `json:"msg_cancellation"`
-		MsgReschedule       *string     `json:"msg_reschedule"`
-		MsgReminder         *string     `json:"msg_reminder"`
-		MsgGreeting         *string     `json:"msg_greeting"`
-		SubjConfirmation    *string     `json:"subj_confirmation"`
-		SubjCancellation    *string     `json:"subj_cancellation"`
-		SubjReschedule      *string     `json:"subj_reschedule"`
-		SubjReminder        *string     `json:"subj_reminder"`
-		PriceCents          *int        `json:"price_cents"`
-		Currency            *string     `json:"currency"`
-		Reminders           []int       `json:"reminders"` // nil = don't touch; [] = clear all
+		Slug                     *string     `json:"slug"`
+		Name                     *string     `json:"name"`
+		DisplayOrder             *int        `json:"display_order"`
+		Description              *string     `json:"description"`
+		DurationMinutes          *int        `json:"duration_minutes"`
+		SlotIntervalMinutes      *int        `json:"slot_interval_minutes"`
+		LocationType             *string     `json:"location_type"`
+		LocationValue            *string     `json:"location_value"`
+		RoutingMode              *string     `json:"routing_mode"`
+		RRStrategy               *string     `json:"rr_strategy"`
+		BufferBeforeMinutes      *int        `json:"buffer_before_minutes"`
+		BufferAfterMinutes       *int        `json:"buffer_after_minutes"`
+		MinNoticeMinutes         *int        `json:"min_notice_minutes"`
+		MaxFutureDays            *int        `json:"max_future_days"`
+		MaxActiveBookings        *int        `json:"max_active_bookings"`
+		MaxPerDay                nullableInt `json:"max_per_day"`
+		MaxPerWeek               nullableInt `json:"max_per_week"`
+		MaxPerMonth              nullableInt `json:"max_per_month"`
+		MaxPerYear               nullableInt `json:"max_per_year"`
+		MaxDurationPerDay        nullableInt `json:"max_duration_per_day"`
+		MaxDurationPerWeek       nullableInt `json:"max_duration_per_week"`
+		ShowFirstSlotOnly        *bool       `json:"show_first_slot_only"`
+		FutureLimitMode          *string     `json:"future_limit_mode"`
+		FutureRangeStart         *string     `json:"future_range_start"`
+		FutureRangeEnd           *string     `json:"future_range_end"`
+		CalendarEventTitle       *string     `json:"calendar_event_title"`
+		RedirectURL              *string     `json:"redirect_url"`
+		ReplyTo                  *string     `json:"reply_to"`
+		DisableCancel            *bool       `json:"disable_cancel"`
+		DisableReschedule        *bool       `json:"disable_reschedule"`
+		RequireCancelReason      *string     `json:"require_cancel_reason"`
+		AllowReschedulePast      *bool       `json:"allow_reschedule_past"`
+		HideNotesInCalendar      *bool       `json:"hide_notes_in_calendar"`
+		HideCalendarEventDetails *bool       `json:"hide_calendar_event_details"`
+		RequiresConfirmation     *bool       `json:"requires_confirmation"`
+		ConfirmMode              *string     `json:"confirm_mode"`
+		ConfirmNoticeMinutes     *int        `json:"confirm_notice_minutes"`
+		UnconfirmedBlocksSlots   *bool       `json:"unconfirmed_blocks_slots"`
+		RequireEmailVerification *bool       `json:"require_email_verification"`
+		IsActive                 *bool       `json:"is_active"`
+		IsPublic                 *bool       `json:"is_public"`
+		AllowPhoneCall           *bool       `json:"allow_phone_call"`
+		ShowTakenSlots           *bool       `json:"show_taken_slots"`
+		InviteDelivery           *string     `json:"invite_delivery"`
+		Archived                 *bool       `json:"archived"`
+		MsgConfirmation          *string     `json:"msg_confirmation"`
+		MsgCancellation          *string     `json:"msg_cancellation"`
+		MsgReschedule            *string     `json:"msg_reschedule"`
+		MsgReminder              *string     `json:"msg_reminder"`
+		MsgGreeting              *string     `json:"msg_greeting"`
+		SubjConfirmation         *string     `json:"subj_confirmation"`
+		SubjCancellation         *string     `json:"subj_cancellation"`
+		SubjReschedule           *string     `json:"subj_reschedule"`
+		SubjReminder             *string     `json:"subj_reminder"`
+		PriceCents               *int        `json:"price_cents"`
+		Currency                 *string     `json:"currency"`
+		Reminders                []int       `json:"reminders"` // nil = don't touch; [] = clear all
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -893,6 +917,37 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AllowReschedulePast != nil {
 		set("allow_reschedule_past", *req.AllowReschedulePast)
+	}
+	if req.HideNotesInCalendar != nil {
+		set("hide_notes_in_calendar", *req.HideNotesInCalendar)
+	}
+	if req.HideCalendarEventDetails != nil {
+		set("hide_calendar_event_details", *req.HideCalendarEventDetails)
+	}
+	if req.RequiresConfirmation != nil {
+		set("requires_confirmation", *req.RequiresConfirmation)
+	}
+	if req.ConfirmMode != nil {
+		switch *req.ConfirmMode {
+		case "always", "under_notice", "free_email":
+			set("confirm_mode", *req.ConfirmMode)
+		default:
+			h.writeError(w, http.StatusBadRequest, "confirm_mode must be always, under_notice, or free_email")
+			return
+		}
+	}
+	if req.ConfirmNoticeMinutes != nil {
+		if *req.ConfirmNoticeMinutes < 0 {
+			h.writeError(w, http.StatusBadRequest, "confirm_notice_minutes cannot be negative")
+			return
+		}
+		set("confirm_notice_minutes", *req.ConfirmNoticeMinutes)
+	}
+	if req.UnconfirmedBlocksSlots != nil {
+		set("unconfirmed_blocks_slots", *req.UnconfirmedBlocksSlots)
+	}
+	if req.RequireEmailVerification != nil {
+		set("require_email_verification", *req.RequireEmailVerification)
 	}
 	if req.PriceCents != nil {
 		if *req.PriceCents < 0 {

@@ -43,6 +43,7 @@ type calEventReq struct {
 	End            calEventDateTime   `json:"end"`
 	Attendees      []calEventAttendee `json:"attendees"`
 	ConferenceData *calConferenceData `json:"conferenceData,omitempty"`
+	Visibility     string             `json:"visibility,omitempty"`
 }
 
 type calEntryPoint struct {
@@ -98,6 +99,9 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 		Start:       calEventDateTime{DateTime: p.Start.UTC().Format(time.RFC3339), TimeZone: "UTC"},
 		End:         calEventDateTime{DateTime: p.End.UTC().Format(time.RFC3339), TimeZone: "UTC"},
 		Attendees:   attendees,
+	}
+	if p.Private {
+		reqBody.Visibility = "private"
 	}
 	if p.AddMeet {
 		reqBody.ConferenceData = &calConferenceData{

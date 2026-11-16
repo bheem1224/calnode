@@ -557,7 +557,9 @@ func (h *Handler) hostAvailability(ctx context.Context, userID, eventTypeID stri
 	busyRows, err := h.db.QueryContext(ctx, `
 		SELECT b.start_at, b.end_at FROM bookings b
 		JOIN booking_hosts bh ON bh.booking_id = b.id
+		JOIN event_types et ON et.id = b.event_type_id
 		WHERE bh.user_id = ? AND b.status != 'cancelled'
+		  AND (b.pending_approval = 0 OR et.unconfirmed_blocks_slots = 1)
 		  AND b.start_at >= ? AND b.start_at < ?`,
 		userID, busyFrom, busyTo)
 	if err != nil {

@@ -223,7 +223,12 @@
 		},
 		"status": {
 			"confirmed": "confirmée",
+			"pending": "en attente",
 			"cancelled": "annulée"
+		},
+		"actions": {
+			"approve": "Approuver",
+			"decline": "Refuser"
 		}
 	},
 	"availability": {
@@ -1584,10 +1589,28 @@
 		"previewTooltip": "Aperçu de la page de réservation",
 		"tabs": {
 			"general": "Général",
+			"privacy": "Confidentialité et sécurité",
 			"hosts": "Hôtes",
 			"notifications": "Notifications",
 			"questions": "Questions",
 			"embed": "Intégration"
+		},
+		"privacy": {
+			"title": "Confidentialité et sécurité",
+			"requiresConfirmation": "Confirmation requise",
+			"requiresConfirmationHint": "Mettre les nouvelles réservations en attente jusqu'à votre approbation manuelle.",
+			"confirmModeLabel": "Quand la confirmation est requise",
+			"confirmModeAlways": "Toujours",
+			"confirmModeUnderNotice": "Pour un préavis inférieur à",
+			"confirmModeFreeEmail": "Uniquement pour les fournisseurs gratuits (ex. gmail.com, outlook.com)",
+			"confirmNoticeUnit": "minutes de préavis",
+			"unconfirmedBlocksSlots": "Les réservations non confirmées bloquent quand même les créneaux",
+			"requireEmailVerification": "Exiger la vérification de l'e-mail du participant",
+			"requireEmailVerificationHint": "Exiger la saisie d'un code envoyé par e-mail avant de soumettre la réservation.",
+			"hideNotesInCalendar": "Masquer les notes dans le calendrier",
+			"hideNotesInCalendarHint": "Exclure les notes et réponses du formulaire de la description de l'événement (toujours envoyées par e-mail).",
+			"hideCalendarEventDetails": "Masquer les détails sur les calendriers partagés",
+			"hideCalendarEventDetailsHint": "Marquer les événements créés comme privés sur les calendriers partagés."
 		},
 		"policies": {
 			"title": "Reprogrammation et annulation",

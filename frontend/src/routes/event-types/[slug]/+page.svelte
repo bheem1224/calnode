@@ -82,6 +82,7 @@
   const TABS = $derived([
     { id: "general" as const, label: $t("eventTypeEditor.tabs.general") },
     { id: "limits" as const, label: "Limits & buffers" },
+    { id: "privacy" as const, label: $t("eventTypeEditor.tabs.privacy") },
     { id: "hosts" as const, label: $t("eventTypeEditor.tabs.hosts") },
     { id: "payments" as const, label: $t("settings.nav.payments") },
     {
@@ -150,6 +151,13 @@
     disable_reschedule: false,
     require_cancel_reason: "optional" as "none" | "optional" | "required" | "both" | "host_only" | "attendee_only",
     allow_reschedule_past: false,
+    hide_notes_in_calendar: false,
+    hide_calendar_event_details: false,
+    requires_confirmation: false,
+    confirm_mode: "always" as "always" | "under_notice" | "free_email",
+    confirm_notice_minutes: 30,
+    unconfirmed_blocks_slots: true,
+    require_email_verification: false,
     price_cents: 0,
     currency: "usd",
   });
@@ -656,6 +664,13 @@
         disable_reschedule: !!et.disable_reschedule,
         require_cancel_reason: et.require_cancel_reason ?? "optional",
         allow_reschedule_past: !!et.allow_reschedule_past,
+        hide_notes_in_calendar: !!et.hide_notes_in_calendar,
+        hide_calendar_event_details: !!et.hide_calendar_event_details,
+        requires_confirmation: !!et.requires_confirmation,
+        confirm_mode: (et.confirm_mode as "always" | "under_notice" | "free_email") ?? "always",
+        confirm_notice_minutes: et.confirm_notice_minutes ?? 30,
+        unconfirmed_blocks_slots: et.unconfirmed_blocks_slots ?? true,
+        require_email_verification: !!et.require_email_verification,
         price_cents: et.price_cents ?? 0,
         currency: et.currency ?? "usd",
       };
@@ -799,6 +814,13 @@
         disable_reschedule: form.disable_reschedule,
         require_cancel_reason: form.require_cancel_reason,
         allow_reschedule_past: form.allow_reschedule_past,
+        hide_notes_in_calendar: form.hide_notes_in_calendar,
+        hide_calendar_event_details: form.hide_calendar_event_details,
+        requires_confirmation: form.requires_confirmation,
+        confirm_mode: form.confirm_mode,
+        confirm_notice_minutes: Math.max(0, Number(form.confirm_notice_minutes) || 0),
+        unconfirmed_blocks_slots: form.unconfirmed_blocks_slots,
+        require_email_verification: form.require_email_verification,
         price_cents: Math.max(0, Math.round(Number(priceMajor) * 100)) || 0,
         currency: form.currency.trim().toLowerCase() || "usd",
         routing_mode: routingMode,
@@ -2227,6 +2249,154 @@
                 <Switch bind:checked={form.allow_reschedule_past} />
               </div>
             {/if}
+          </div>
+        </div>
+      {/if}
+
+      {#if activeTab === "privacy"}
+        <div class="mb-8">
+          <h2
+            class="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground"
+          >
+            {$t("eventTypeEditor.privacy.title")}
+          </h2>
+          <div class="space-y-4 rounded-lg border bg-card p-6">
+            <div class="space-y-3">
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <Label for="et-req-confirm"
+                    >{$t("eventTypeEditor.privacy.requiresConfirmation")}</Label
+                  >
+                  <p class="text-xs text-muted-foreground">
+                    {$t("eventTypeEditor.privacy.requiresConfirmationHint")}
+                  </p>
+                </div>
+                <Switch
+                  id="et-req-confirm"
+                  bind:checked={form.requires_confirmation}
+                />
+              </div>
+
+              {#if form.requires_confirmation}
+                <div class="space-y-3 rounded-md border bg-muted/20 p-4">
+                  <div class="space-y-1.5">
+                    <Label for="et-confirm-mode"
+                      >{$t("eventTypeEditor.privacy.confirmModeLabel")}</Label
+                    >
+                    <Select.Root
+                      type="single"
+                      value={form.confirm_mode}
+                      onValueChange={(v) => {
+                        if (v) form.confirm_mode = v as typeof form.confirm_mode;
+                      }}
+                    >
+                      <Select.Trigger id="et-confirm-mode" class="w-full">
+                        {form.confirm_mode === "under_notice"
+                          ? $t("eventTypeEditor.privacy.confirmModeUnderNotice")
+                          : form.confirm_mode === "free_email"
+                            ? $t("eventTypeEditor.privacy.confirmModeFreeEmail")
+                            : $t("eventTypeEditor.privacy.confirmModeAlways")}
+                      </Select.Trigger>
+                      <Select.Content>
+                        <Select.Item
+                          value="always"
+                          label={$t("eventTypeEditor.privacy.confirmModeAlways")}
+                          >{$t("eventTypeEditor.privacy.confirmModeAlways")}</Select.Item
+                        >
+                        <Select.Item
+                          value="under_notice"
+                          label={$t(
+                            "eventTypeEditor.privacy.confirmModeUnderNotice",
+                          )}
+                          >{$t(
+                            "eventTypeEditor.privacy.confirmModeUnderNotice",
+                          )}</Select.Item
+                        >
+                        <Select.Item
+                          value="free_email"
+                          label={$t(
+                            "eventTypeEditor.privacy.confirmModeFreeEmail",
+                          )}
+                          >{$t(
+                            "eventTypeEditor.privacy.confirmModeFreeEmail",
+                          )}</Select.Item
+                        >
+                      </Select.Content>
+                    </Select.Root>
+                  </div>
+
+                  {#if form.confirm_mode === "under_notice"}
+                    <div class="flex items-center gap-2">
+                      <Input
+                        id="et-confirm-notice"
+                        type="number"
+                        min="1"
+                        class="w-24"
+                        bind:value={form.confirm_notice_minutes}
+                      />
+                      <span class="text-sm text-muted-foreground"
+                        >{$t("eventTypeEditor.privacy.confirmNoticeUnit")}</span
+                      >
+                    </div>
+                  {/if}
+
+                  <div class="flex items-center justify-between gap-4 pt-1">
+                    <Label for="et-unconfirmed-blocks" class="font-normal">
+                      {$t("eventTypeEditor.privacy.unconfirmedBlocksSlots")}
+                    </Label>
+                    <Switch
+                      id="et-unconfirmed-blocks"
+                      bind:checked={form.unconfirmed_blocks_slots}
+                    />
+                  </div>
+                </div>
+              {/if}
+            </div>
+
+            <div class="flex items-center justify-between gap-4 border-t pt-4">
+              <div>
+                <Label for="et-email-verify"
+                  >{$t("eventTypeEditor.privacy.requireEmailVerification")}</Label
+                >
+                <p class="text-xs text-muted-foreground">
+                  {$t("eventTypeEditor.privacy.requireEmailVerificationHint")}
+                </p>
+              </div>
+              <Switch
+                id="et-email-verify"
+                bind:checked={form.require_email_verification}
+              />
+            </div>
+
+            <div class="flex items-center justify-between gap-4 border-t pt-4">
+              <div>
+                <Label for="et-hide-notes"
+                  >{$t("eventTypeEditor.privacy.hideNotesInCalendar")}</Label
+                >
+                <p class="text-xs text-muted-foreground">
+                  {$t("eventTypeEditor.privacy.hideNotesInCalendarHint")}
+                </p>
+              </div>
+              <Switch
+                id="et-hide-notes"
+                bind:checked={form.hide_notes_in_calendar}
+              />
+            </div>
+
+            <div class="flex items-center justify-between gap-4 border-t pt-4">
+              <div>
+                <Label for="et-hide-cal-details"
+                  >{$t("eventTypeEditor.privacy.hideCalendarEventDetails")}</Label
+                >
+                <p class="text-xs text-muted-foreground">
+                  {$t("eventTypeEditor.privacy.hideCalendarEventDetailsHint")}
+                </p>
+              </div>
+              <Switch
+                id="et-hide-cal-details"
+                bind:checked={form.hide_calendar_event_details}
+              />
+            </div>
           </div>
         </div>
       {/if}

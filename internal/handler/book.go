@@ -69,13 +69,14 @@ type bookPageData struct {
 	// event type sets none. Rendered here rather than derived by the page's JS because the
 	// server already knows the resolved locale — the /slots call the page makes carries no
 	// ?lang=, so a label built from its response would silently ignore a language override.
-	MinNoticeLabel string
-	LocationLabel  string
-	PriceLabel     string // formatted price (e.g. "$50.00"); empty for free events
-	PriceCents     int    // raw price for the dataLayer conversion value (0 = free)
-	Currency       string // ISO 4217, lowercase
-	MaxFutureDays  int
-	Questions      []bookQuestion
+	MinNoticeLabel           string
+	LocationLabel            string
+	PriceLabel               string // formatted price (e.g. "$50.00"); empty for free events
+	PriceCents               int    // raw price for the dataLayer conversion value (0 = free)
+	Currency                 string // ISO 4217, lowercase
+	MaxFutureDays            int
+	Questions                []bookQuestion
+	RequireEmailVerification bool
 	// AssistantEnabled shows the conversational-booking chat panel when the LLM layer is on.
 	AssistantEnabled bool
 	// AssistantDisclosure is the persistent AI-disclosure notice on the chat panel (Art. 50(1)).
@@ -489,13 +490,14 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		allowPhoneCall bool
 		accentColor    string
 		redirectURL    string
+		reqEmailVerify bool
 	)
 	query := `
 		SELECT et.id, et.name, COALESCE(et.description, ''),
 		       et.duration_minutes, et.location_type, COALESCE(et.location_value, ''),
 		       et.max_future_days, et.min_notice_minutes, et.routing_mode, u.name, COALESCE(u.avatar_url, ''),
 		       et.price_cents, et.currency, et.msg_greeting, et.allow_phone_call, u.booking_accent,
-		       COALESCE(et.redirect_url, '')
+		       COALESCE(et.redirect_url, ''), et.require_email_verification
 		FROM event_types et
 		JOIN users u ON u.id = et.user_id
 		WHERE et.slug = ? AND et.is_active = 1`
@@ -503,7 +505,7 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		query += ` AND et.is_public = 1`
 	}
 	err := h.db.QueryRowContext(r.Context(), query, slug).
-		Scan(&etID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor, &redirectURL)
+		Scan(&etID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor, &redirectURL, &reqEmailVerify)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Page not found", http.StatusNotFound)
@@ -606,19 +608,20 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		DataLayerFields:  template.JS(dlFields), // #nosec G203 -- json.Marshal output, which escapes <,>,& by default; safe for embedding in a <script> block
 		QuestionsJSON:    template.JS(qjson),    // #nosec G203 -- json.Marshal output, which escapes <,>,& by default; safe for embedding in a <script> block
 
-		BusinessName:   brand.BusinessName,
-		LogoURL:        brand.LogoURL,
-		LogoHeight:     pageLogoHeight(brand.LogoHeight),
-		LogoOpacity:    opacityCSS(brand.LogoOpacity),
-		BannerURL:      brand.BannerURL,
-		BannerOpacity:  opacityCSS(brand.BannerOpacity),
-		PrivacyURL:     brand.PrivacyURL,
-		TermsURL:       brand.TermsURL,
-		DemoMode:       h.demoMode,
-		SingleUseToken: prefill.SingleUseToken,
-		PrefillName:    prefill.Name,
-		PrefillEmail:   prefill.Email,
-		RedirectURL:    redirectURL,
+		BusinessName:             brand.BusinessName,
+		LogoURL:                  brand.LogoURL,
+		LogoHeight:               pageLogoHeight(brand.LogoHeight),
+		LogoOpacity:              opacityCSS(brand.LogoOpacity),
+		BannerURL:                brand.BannerURL,
+		BannerOpacity:            opacityCSS(brand.BannerOpacity),
+		PrivacyURL:               brand.PrivacyURL,
+		TermsURL:                 brand.TermsURL,
+		DemoMode:                 h.demoMode,
+		SingleUseToken:           prefill.SingleUseToken,
+		PrefillName:              prefill.Name,
+		PrefillEmail:             prefill.Email,
+		RedirectURL:              redirectURL,
+		RequireEmailVerification: reqEmailVerify,
 	}
 
 	h.persistLangOverride(w, r)

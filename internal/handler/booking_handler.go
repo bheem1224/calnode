@@ -523,7 +523,11 @@ type bookableEventType struct {
 	ShowTakenSlots bool
 	// InviteDelivery is who sends the booker's invite (booking.InviteByCalendar/ByCalnode/ByNone),
 	// copied onto each booking at creation.
-	InviteDelivery string
+	InviteDelivery           string
+	RequiresConfirmation     bool
+	ConfirmMode              string
+	ConfirmNoticeMinutes     int
+	RequireEmailVerification bool
 }
 
 // loadBookableEventType loads an event type by slug for the booking-creation/slot paths.
@@ -538,6 +542,7 @@ func (h *Handler) loadBookableEventType(ctx context.Context, slug string) (*book
 func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug string, allowPrivate bool) (*bookableEventType, error) {
 	var et bookableEventType
 	var isActive, isPublic, showTaken, showFirst int
+	var reqConfirm, reqEmailVerify int
 	var maxPerDay, maxPerWeek, maxPerMonth, maxPerYear, maxDurDay, maxDurWeek sql.NullInt64
 	var rangeStart, rangeEnd sql.NullString
 	err := h.db.QueryRowContext(ctx, `
@@ -548,7 +553,8 @@ func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug 
 		       et.invite_delivery, et.max_per_day, et.max_per_week,
 		       et.max_per_month, et.max_per_year, et.max_duration_per_day, et.max_duration_per_week,
 		       et.show_first_slot_only, et.future_limit_mode, et.future_range_start, et.future_range_end,
-		       COALESCE(u.iana_timezone, 'UTC')
+		       COALESCE(u.iana_timezone, 'UTC'),
+		       et.requires_confirmation, et.confirm_mode, et.confirm_notice_minutes, et.require_email_verification
 		FROM event_types et
 		LEFT JOIN users u ON u.id = et.user_id
 		WHERE et.slug = ?`, slug).
@@ -559,12 +565,15 @@ func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug 
 			&et.InviteDelivery, &maxPerDay, &maxPerWeek,
 			&maxPerMonth, &maxPerYear, &maxDurDay, &maxDurWeek,
 			&showFirst, &et.FutureLimitMode, &rangeStart, &rangeEnd,
-			&et.OwnerTimezone)
+			&et.OwnerTimezone,
+			&reqConfirm, &et.ConfirmMode, &et.ConfirmNoticeMinutes, &reqEmailVerify)
 	if err != nil || isActive == 0 || (!allowPrivate && isPublic == 0) {
 		return nil, errEventTypeNotFound
 	}
 	et.ShowTakenSlots = showTaken != 0
 	et.ShowFirstSlotOnly = showFirst != 0
+	et.RequiresConfirmation = reqConfirm != 0
+	et.RequireEmailVerification = reqEmailVerify != 0
 	et.MaxPerDay = nullIntPtr(maxPerDay)
 	et.MaxPerWeek = nullIntPtr(maxPerWeek)
 	et.MaxPerMonth = nullIntPtr(maxPerMonth)
@@ -684,6 +693,7 @@ type bookingJSON struct {
 	StartAt            string `json:"start_at"`
 	EndAt              string `json:"end_at"`
 	Status             string `json:"status"`
+	PendingApproval    bool   `json:"pending_approval,omitempty"`
 	CancellationReason string `json:"cancellation_reason,omitempty"`
 	LocationValue      string `json:"location_value,omitempty"`
 	LocationType       string `json:"location_type,omitempty"`
@@ -722,12 +732,16 @@ func toBookingJSON(b *booking.Booking) bookingJSON {
 		StartAt:            b.StartAt.UTC().Format(time.RFC3339),
 		EndAt:              b.EndAt.UTC().Format(time.RFC3339),
 		Status:             b.Status,
+		PendingApproval:    b.PendingApproval,
 		CancellationReason: b.CancellationReason,
 		LocationValue:      b.LocationValue,
 		LocationType:       b.LocationType,
 		CreatedAt:          b.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:          b.UpdatedAt.UTC().Format(time.RFC3339),
 		InviteDelivery:     b.InviteDelivery,
+	}
+	if j.Status == "confirmed" && b.PendingApproval {
+		j.Status = "pending"
 	}
 	if j.InviteDelivery == "" {
 		j.InviteDelivery = booking.InviteByCalendar
@@ -802,9 +816,10 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		// Deliberately NOT named "company": browsers map that to the organization
 		// autofill entry (ignoring autocomplete="off") and fill this invisible field
 		// for real humans, who are then rejected as bots (#33).
-		Honeypot       string `json:"hp_extra"`
-		SingleUseToken string `json:"single_use_token"`
-		Answers        []struct {
+		Honeypot          string `json:"hp_extra"`
+		SingleUseToken    string `json:"single_use_token"`
+		VerificationToken string `json:"verification_token"`
+		Answers           []struct {
 			QuestionID string `json:"question_id"`
 			Value      string `json:"value"`
 		} `json:"answers"`
@@ -923,6 +938,11 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if et.RequireEmailVerification && !h.consumeEmailVerificationToken(r.Context(), req.EventTypeSlug, req.Email, req.VerificationToken) {
+		h.writeError(w, http.StatusBadRequest, "email verification required")
+		return
+	}
+
 	// Validate intake question answers.
 	answers, err := h.validateAnswers(w, r, et.ID, loc, req.Answers)
 	if err != nil {
@@ -982,6 +1002,7 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	needsApproval := shouldRequireConfirmation(et, req.Email, startAt.UTC())
 	b, err := h.bookingSvc.Create(r.Context(), booking.CreateParams{
 		EventTypeID:   et.ID,
 		HostIDs:       candidates,
@@ -1007,6 +1028,7 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		EventTimezone:       et.OwnerTimezone,
 		SingleUseToken:      singleUseToken,
 		InviteDelivery:      et.InviteDelivery,
+		PendingApproval:     needsApproval,
 	})
 	if err != nil {
 		if errors.Is(err, booking.ErrSingleUseTokenGone) {
@@ -1102,18 +1124,20 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	_, _ = w.Write(respBody)
 
-	// Run calendar/email/webhook side effects in the background — the booking is
-	// committed; a side-effect failure must not roll it back or change the response.
-	go h.dispatchBookingConfirmation(b, bookingConfirmationInput{ // #nosec G118 -- deliberately its own context.Background(); see dispatchBookingConfirmation's doc comment
-		EventTypeName:     et.Name,
-		EventTypeSlug:     req.EventTypeSlug,
-		LocationType:      et.LocationType,
-		OrganizerName:     req.Name,
-		OrganizerEmail:    req.Email,
-		OrganizerTimezone: req.Timezone,
-		OrganizerLocale:   i18n.Resolve("", req.Language).Code,
-		SingleUseToken:    singleUseToken,
-	})
+	// Run calendar/email/webhook side effects in the background once confirmed.
+	// Pending-approval bookings wait for ConfirmBooking before pushing to calendars.
+	if !b.PendingApproval {
+		go h.dispatchBookingConfirmation(b, bookingConfirmationInput{ // #nosec G118 -- deliberately its own context.Background(); see dispatchBookingConfirmation's doc comment
+			EventTypeName:     et.Name,
+			EventTypeSlug:     req.EventTypeSlug,
+			LocationType:      et.LocationType,
+			OrganizerName:     req.Name,
+			OrganizerEmail:    req.Email,
+			OrganizerTimezone: req.Timezone,
+			OrganizerLocale:   i18n.Resolve("", req.Language).Code,
+			SingleUseToken:    singleUseToken,
+		})
+	}
 }
 
 // bookingConfirmationInput carries the event-type and organizer details that the
@@ -1296,8 +1320,11 @@ func (h *Handler) createHostEvents(ctx context.Context, b *booking.Booking, in b
 		return
 	}
 	var calTitleTmpl string
-	_ = h.db.QueryRowContext(ctx, `SELECT COALESCE(calendar_event_title, '') FROM event_types WHERE id = ?`, b.EventTypeID).
-		Scan(&calTitleTmpl)
+	var hideNotesCal, hideCalDetails int
+	_ = h.db.QueryRowContext(ctx,
+		`SELECT COALESCE(calendar_event_title, ''), hide_notes_in_calendar, hide_calendar_event_details
+		 FROM event_types WHERE id = ?`, b.EventTypeID).
+		Scan(&calTitleTmpl, &hideNotesCal, &hideCalDetails)
 	summary := bData.Tf("calendar_event_summary", in.EventTypeName, in.OrganizerName)
 	if strings.TrimSpace(calTitleTmpl) != "" {
 		summary = strings.NewReplacer(
@@ -1306,19 +1333,38 @@ func (h *Handler) createHostEvents(ctx context.Context, b *booking.Booking, in b
 			"{EventName}", in.EventTypeName,
 		).Replace(calTitleTmpl)
 	}
+	calDesc := bData.Tf("calendar_event_booking_id", b.ID)
+	if hideNotesCal == 0 {
+		ansRows, ansErr := h.db.QueryContext(ctx, `
+			SELECT q.label, a.value
+			FROM booking_answers a
+			JOIN event_type_questions q ON q.id = a.question_id
+			WHERE a.booking_id = ?
+			ORDER BY q.position, q.id`, b.ID)
+		if ansErr == nil {
+			defer ansRows.Close()
+			for ansRows.Next() {
+				var qLabel, aVal string
+				if ansRows.Scan(&qLabel, &aVal) == nil && strings.TrimSpace(aVal) != "" {
+					calDesc += "\n" + qLabel + ": " + aVal
+				}
+			}
+		}
+	}
 	create := func(host assignedHost, location string) (link string) {
 		eventID, link, calID, provider, err := gc.CreateEvent(ctx, host.UserID, calendar.CreateEventParams{
 			// The attendee is added as a calendar invitee below, so this text reaches
 			// them via the provider's own native invite (Google/Outlook/CalDAV) —
 			// follows their locale like the confirmation email, not English/host-fixed.
 			Summary:        summary,
-			Description:    bData.Tf("calendar_event_booking_id", b.ID),
+			Description:    calDesc,
 			Location:       location,
 			Start:          b.StartAt,
 			End:            b.EndAt,
 			OrganizerName:  in.OrganizerName,
 			OrganizerEmail: calendarInvitee(b.InviteDelivery, in.OrganizerEmail),
 			AddMeet:        autoGenMeet && host.IsPrimary,
+			Private:        hideCalDetails != 0,
 		})
 		if err != nil {
 			h.logger.Error("create gcal event", "error", err, "booking_id", b.ID, "host", host.UserID)
@@ -1921,6 +1967,153 @@ func (h *Handler) CancelBooking(w http.ResponseWriter, r *http.Request) {
 
 	// Cancel calendar events and send cancellation emails in the background.
 	go h.cancelSideEffects(*b) // #nosec G118 -- deliberately its own context.Background(); see cancelSideEffects' doc comment
+}
+
+var freeEmailDomains = map[string]bool{
+	"gmail.com":      true,
+	"googlemail.com": true,
+	"outlook.com":    true,
+	"hotmail.com":    true,
+	"live.com":       true,
+	"msn.com":        true,
+	"yahoo.com":      true,
+	"icloud.com":     true,
+	"me.com":         true,
+	"aol.com":        true,
+	"proton.me":      true,
+	"protonmail.com": true,
+}
+
+func isFreeEmailProvider(email string) bool {
+	parts := strings.Split(strings.TrimSpace(strings.ToLower(email)), "@")
+	if len(parts) != 2 {
+		return false
+	}
+	return freeEmailDomains[parts[1]]
+}
+
+func shouldRequireConfirmation(et *bookableEventType, email string, startAt time.Time) bool {
+	if !et.RequiresConfirmation {
+		return false
+	}
+	switch et.ConfirmMode {
+	case "under_notice":
+		return startAt.Sub(bookingNow().UTC()) < time.Duration(et.ConfirmNoticeMinutes)*time.Minute
+	case "free_email":
+		return isFreeEmailProvider(email)
+	default:
+		return true
+	}
+}
+
+// ConfirmBooking handles POST /v1/bookings/{id}/confirm (admin/host).
+// Approves a pending booking, creates calendar events, and sends confirmation emails.
+func (h *Handler) ConfirmBooking(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	id := r.PathValue("id")
+
+	existing, err := h.bookingSvc.Get(r.Context(), id)
+	if errors.Is(err, booking.ErrNotFound) {
+		h.writeError(w, http.StatusNotFound, "booking not found")
+		return
+	}
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "confirm booking: load", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !user.IsAdmin && existing.HostID != user.ID {
+		var assigned int
+		_ = h.db.QueryRowContext(r.Context(),
+			`SELECT COUNT(*) FROM booking_hosts WHERE booking_id = ? AND user_id = ?`, id, user.ID).Scan(&assigned)
+		if assigned == 0 {
+			h.writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+	}
+
+	b, err := h.bookingSvc.Approve(r.Context(), id)
+	if errors.Is(err, booking.ErrNotFound) {
+		h.writeError(w, http.StatusConflict, "booking is not pending confirmation")
+		return
+	}
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "confirm booking: approve", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	var etName, etSlug, locType string
+	_ = h.db.QueryRowContext(r.Context(),
+		`SELECT name, slug, location_type FROM event_types WHERE id = ?`, b.EventTypeID).
+		Scan(&etName, &etSlug, &locType)
+	var orgName, orgEmail, orgTZ, orgLocale string
+	_ = h.db.QueryRowContext(r.Context(),
+		`SELECT name, email, iana_timezone, COALESCE(locale, '') FROM booking_attendees WHERE booking_id = ? AND is_organizer = 1`, b.ID).
+		Scan(&orgName, &orgEmail, &orgTZ, &orgLocale)
+
+	h.writeJSON(w, http.StatusOK, toBookingJSON(b))
+	go h.dispatchBookingConfirmation(b, bookingConfirmationInput{ // #nosec G118 -- intentionally detached background context
+		EventTypeName:     etName,
+		EventTypeSlug:     etSlug,
+		LocationType:      locType,
+		OrganizerName:     orgName,
+		OrganizerEmail:    orgEmail,
+		OrganizerTimezone: orgTZ,
+		OrganizerLocale:   i18n.Resolve("", orgLocale).Code,
+	})
+}
+
+// DeclineBooking handles POST /v1/bookings/{id}/decline (admin/host).
+// Declines a pending booking by cancelling it and notifying the attendee.
+func (h *Handler) DeclineBooking(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	id := r.PathValue("id")
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	actor := user.Name
+	if strings.TrimSpace(actor) == "" {
+		actor = user.Email
+	}
+	if strings.TrimSpace(actor) == "" {
+		actor = "host"
+	}
+	attribution := "Declined by " + actor
+	if reason := strings.TrimSpace(req.Reason); reason != "" {
+		attribution += ": " + reason
+	}
+
+	var cancelErr error
+	if user.IsAdmin {
+		cancelErr = h.bookingSvc.CancelByID(r.Context(), id, attribution)
+	} else {
+		cancelErr = h.bookingSvc.Cancel(r.Context(), user.ID, id, attribution)
+	}
+	if err := cancelErr; err != nil {
+		switch {
+		case errors.Is(err, booking.ErrNotFound):
+			h.writeError(w, http.StatusNotFound, "booking not found")
+		case errors.Is(err, booking.ErrAlreadyCancelled):
+			h.writeError(w, http.StatusConflict, "booking already cancelled")
+		default:
+			h.logger.ErrorContext(r.Context(), "decline booking", "error", err)
+			h.writeError(w, http.StatusInternalServerError, "internal error")
+		}
+		return
+	}
+
+	b, err := h.bookingSvc.Get(r.Context(), id)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "fetch declined booking", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	h.writeJSON(w, http.StatusOK, toBookingJSON(b))
+	go h.cancelSideEffects(*b) // #nosec G118 -- intentionally detached background context
 }
 
 // cancelSideEffects removes every assigned host's calendar event, notifies each

@@ -205,6 +205,16 @@ body {
           <label for="f-email">{{call .T "email_label"}}</label>
           <input id="f-email" name="email" type="email" required autocomplete="email" value="{{.PrefillEmail}}" placeholder="{{call .T "email_placeholder"}}">
         </div>
+        {{if .RequireEmailVerification}}
+        <div class="field" id="email-verify-box">
+          <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+            <button type="button" id="send-code-btn" class="btn-secondary" style="width:auto;padding:0.45rem 0.75rem;font-size:0.82rem">Send verification code</button>
+            <input id="verify-code-input" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit code" style="width:120px;display:none">
+            <button type="button" id="check-code-btn" class="btn-secondary" style="width:auto;padding:0.45rem 0.75rem;font-size:0.82rem;display:none">Verify</button>
+            <span id="verify-status" class="hint" style="margin:0"></span>
+          </div>
+        </div>
+        {{end}}
         {{/* SAFE (generic.html-templates.security.unquoted-attribute-var, this whole block):
              .ID is the event type's own intake-question primary key (admin-configured, not
              attacker-controlled at booking time), and Go's html/template context-aware-escapes
@@ -308,6 +318,9 @@ body {
   const SLUG             = "{{.Slug}}";
   const SINGLE_USE_TOKEN = "{{.SingleUseToken}}";
   const REDIRECT_URL     = "{{.RedirectURL}}";
+  const REQUIRE_EMAIL_VERIFY = {{if .RequireEmailVerification}}true{{else}}false{{end}};
+  let verificationToken = '';
+  let verifiedEmail = '';
   const MAX_DAYS = {{.MaxFutureDays}};
   const PRICE_CENTS = {{.PriceCents}};
   const CURRENCY = "{{.Currency}}";
@@ -759,6 +772,76 @@ body {
     });
   })();
 
+  // ── Email verification (when enabled) ───────────────────────────────────
+  if (REQUIRE_EMAIL_VERIFY) {
+    const sendBtn = $('send-code-btn');
+    const codeInput = $('verify-code-input');
+    const checkBtn = $('check-code-btn');
+    const statusEl = $('verify-status');
+    const emailEl = $('f-email');
+
+    emailEl?.addEventListener('input', () => {
+      if (emailEl.value.trim().toLowerCase() !== verifiedEmail) {
+        verificationToken = '';
+        if (statusEl) statusEl.textContent = '';
+      }
+    });
+
+    sendBtn?.addEventListener('click', async () => {
+      const email = emailEl?.value.trim() || '';
+      if (!email) { $('form-error').textContent = t('required_fields_error'); return; }
+      sendBtn.disabled = true;
+      if (statusEl) statusEl.textContent = 'Sending...';
+      try {
+        const res = await fetch(`/v1/book/${encodeURIComponent(SLUG)}/verify-email/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          if (statusEl) statusEl.textContent = d.error || 'Failed to send code';
+        } else {
+          if (codeInput) codeInput.style.display = 'inline-block';
+          if (checkBtn) checkBtn.style.display = 'inline-block';
+          if (statusEl) statusEl.textContent = 'Code sent — check your inbox';
+        }
+      } catch {
+        if (statusEl) statusEl.textContent = 'Failed to send code';
+      } finally {
+        sendBtn.disabled = false;
+      }
+    });
+
+    checkBtn?.addEventListener('click', async () => {
+      const email = emailEl?.value.trim() || '';
+      const code = codeInput?.value.trim() || '';
+      if (!email || !code) return;
+      checkBtn.disabled = true;
+      try {
+        const res = await fetch(`/v1/book/${encodeURIComponent(SLUG)}/verify-email/check`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, code }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok || !d.verification_token) {
+          if (statusEl) statusEl.textContent = d.error || 'Invalid code';
+        } else {
+          verificationToken = d.verification_token;
+          verifiedEmail = email.toLowerCase();
+          if (statusEl) statusEl.textContent = 'Email verified ✓';
+          if (codeInput) codeInput.style.display = 'none';
+          checkBtn.style.display = 'none';
+        }
+      } catch {
+        if (statusEl) statusEl.textContent = 'Verification failed';
+      } finally {
+        checkBtn.disabled = false;
+      }
+    });
+  }
+
   // ── Booking form ──────────────────────────────────────────────────────────
   $('booking-form').addEventListener('submit', async e => {
     e.preventDefault();
@@ -822,6 +905,7 @@ body {
           language: LOCALE,
           hp_extra: form.hp_extra.value,
           single_use_token: SINGLE_USE_TOKEN || undefined,
+          verification_token: verificationToken || undefined,
           answers,
         }),
       });
@@ -857,6 +941,10 @@ body {
       }
 
       $('confirm-time').textContent = `${fmtDate(pickedDate)} · ${fmtTime(pickedSlot.start)}`;
+      if (booked && (booked.status === 'pending' || booked.pending_approval)) {
+        const heading = document.querySelector('#confirm-view h2, #confirm-view .confirm-title');
+        if (heading) heading.textContent = 'Booking request sent — awaiting host confirmation';
+      }
       showView('confirm-view');
 
       if (window.__CALNODE_DL && typeof calnodePush === 'function') {

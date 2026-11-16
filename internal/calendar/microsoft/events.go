@@ -46,6 +46,7 @@ type graphEventReq struct {
 	Attendees             []graphAttendee `json:"attendees,omitempty"`
 	IsOnlineMeeting       bool            `json:"isOnlineMeeting,omitempty"`
 	OnlineMeetingProvider string          `json:"onlineMeetingProvider,omitempty"`
+	Sensitivity           string          `json:"sensitivity,omitempty"`
 }
 
 type graphItemBody struct {
@@ -89,6 +90,9 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 	if p.AddMeet {
 		reqBody.IsOnlineMeeting = true
 		reqBody.OnlineMeetingProvider = "teamsForBusiness"
+	}
+	if p.Private {
+		reqBody.Sensitivity = "private"
 	}
 
 	body, err := json.Marshal(reqBody)

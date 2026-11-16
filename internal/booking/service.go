@@ -161,13 +161,18 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 		inviteDelivery = InviteByCalendar
 	}
 
+	pendingInt := 0
+	if p.PendingApproval {
+		pendingInt = 1
+	}
+
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO bookings
 		  (id, event_type_id, host_id, start_at, end_at, status, location_value, location_type,
-		   invite_delivery, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?)`,
+		   invite_delivery, pending_approval, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?)`,
 		bookingID, p.EventTypeID, chosenHost, startStr, endStr, p.LocationValue, p.LocationType,
-		inviteDelivery, now, now)
+		inviteDelivery, pendingInt, now, now)
 	if err != nil {
 		if db.IsUniqueViolation(err) {
 			return nil, ErrDoubleBooked
@@ -242,17 +247,18 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 
 	nowT, _ := time.Parse(time.RFC3339Nano, now)
 	return &Booking{
-		ID:             bookingID,
-		EventTypeID:    p.EventTypeID,
-		HostID:         chosenHost,
-		StartAt:        p.StartAt.UTC(),
-		EndAt:          p.EndAt.UTC(),
-		Status:         "confirmed",
-		LocationValue:  p.LocationValue,
-		LocationType:   p.LocationType,
-		InviteDelivery: inviteDelivery,
-		CreatedAt:      nowT,
-		UpdatedAt:      nowT,
+		ID:              bookingID,
+		EventTypeID:     p.EventTypeID,
+		HostID:          chosenHost,
+		StartAt:         p.StartAt.UTC(),
+		EndAt:           p.EndAt.UTC(),
+		Status:          "confirmed",
+		LocationValue:   p.LocationValue,
+		LocationType:    p.LocationType,
+		InviteDelivery:  inviteDelivery,
+		PendingApproval: p.PendingApproval,
+		CreatedAt:       nowT,
+		UpdatedAt:       nowT,
 	}, nil
 }
 
@@ -332,7 +338,7 @@ const bookingColumns = `id, event_type_id, host_id, start_at, end_at, status,
 	       COALESCE(cancellation_reason, ''), COALESCE(location_value, ''),
 	       created_at, updated_at,
 	       payment_status, amount_paid_cents, amount_paid_currency, location_type,
-	       confirm_failed, invite_delivery`
+	       confirm_failed, invite_delivery, pending_approval`
 
 // hostBusy reports whether hostID has any non-cancelled booking overlapping
 // [start, end) — the double-booking invariant every write path (Create, Reschedule,
@@ -346,6 +352,7 @@ func hostBusy(ctx context.Context, tx *sql.Tx, hostID, start, end, excludeBookin
 	err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM bookings b
 		JOIN booking_hosts bh ON bh.booking_id = b.id
+		JOIN event_types et ON et.id = b.event_type_id
 		WHERE (bh.user_id = ? OR EXISTS (
             SELECT 1 FROM connection_calendars checked
             JOIN connection_calendars destination
@@ -354,10 +361,31 @@ func hostBusy(ctx context.Context, tx *sql.Tx, hostID, start, end, excludeBookin
              AND destination.calendar_id = checked.calendar_id
             WHERE checked.user_id = ? AND checked.check_conflicts = 1
               AND destination.user_id = bh.user_id AND destination.is_destination = 1
-        )) AND b.status != 'cancelled' AND b.id != ?
+        )) AND b.status != 'cancelled'
+		  AND (b.pending_approval = 0 OR et.unconfirmed_blocks_slots = 1)
+		  AND b.id != ?
 		  AND b.start_at < ? AND b.end_at > ?`,
 		hostID, hostID, excludeBookingID, end, start).Scan(&n)
 	return n > 0, err
+}
+
+// Approve marks a pending booking as confirmed (pending_approval = 0).
+func (s *Service) Approve(ctx context.Context, bookingID string) (*Booking, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE bookings SET pending_approval = 0, updated_at = ?
+		WHERE id = ? AND status = 'confirmed' AND pending_approval = 1`, now, bookingID)
+	if err != nil {
+		if db.IsUniqueViolation(err) {
+			return nil, ErrDoubleBooked
+		}
+		return nil, fmt.Errorf("booking: approve: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil, ErrNotFound
+	}
+	return s.Get(ctx, bookingID)
 }
 
 // Get returns a single booking by ID.
@@ -731,7 +759,7 @@ type scanner interface {
 func scanBooking(s scanner) (*Booking, error) {
 	var b Booking
 	var startStr, endStr, createdStr, updatedStr string
-	var confirmFailed int
+	var confirmFailed, pendingApproval int
 
 	err := s.Scan(
 		&b.ID, &b.EventTypeID, &b.HostID,
@@ -739,7 +767,7 @@ func scanBooking(s scanner) (*Booking, error) {
 		&b.CancellationReason, &b.LocationValue,
 		&createdStr, &updatedStr,
 		&b.PaymentStatus, &b.AmountPaidCents, &b.AmountPaidCurrency, &b.LocationType,
-		&confirmFailed, &b.InviteDelivery,
+		&confirmFailed, &b.InviteDelivery, &pendingApproval,
 	)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
@@ -762,5 +790,6 @@ func scanBooking(s scanner) (*Booking, error) {
 		return nil, fmt.Errorf("booking: parse updated_at %q: %w", updatedStr, parseErr)
 	}
 	b.ConfirmFailed = confirmFailed != 0
+	b.PendingApproval = pendingApproval != 0
 	return &b, nil
 }

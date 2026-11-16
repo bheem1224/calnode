@@ -223,7 +223,12 @@
 		},
 		"status": {
 			"confirmed": "confirmed",
+			"pending": "pending",
 			"cancelled": "cancelled"
+		},
+		"actions": {
+			"approve": "Approve",
+			"decline": "Decline"
 		}
 	},
 	"availability": {
@@ -1584,10 +1589,28 @@
 		"previewTooltip": "Preview booking page",
 		"tabs": {
 			"general": "General",
+			"privacy": "Privacy & security",
 			"hosts": "Hosts",
 			"notifications": "Notifications",
 			"questions": "Questions",
 			"embed": "Embed"
+		},
+		"privacy": {
+			"title": "Privacy & security",
+			"requiresConfirmation": "Requires confirmation",
+			"requiresConfirmationHint": "Hold new bookings as pending until you manually approve or decline them.",
+			"confirmModeLabel": "When confirmation is required",
+			"confirmModeAlways": "Always",
+			"confirmModeUnderNotice": "When booked with less notice than",
+			"confirmModeFreeEmail": "Only for free email providers (e.g. gmail.com, outlook.com)",
+			"confirmNoticeUnit": "minutes notice",
+			"unconfirmedBlocksSlots": "Unconfirmed bookings still block calendar slots",
+			"requireEmailVerification": "Requires booker email verification",
+			"requireEmailVerificationHint": "Require bookers to verify their email address with a one-time code before submitting.",
+			"hideNotesInCalendar": "Hide notes in calendar",
+			"hideNotesInCalendarHint": "Keep booker notes and intake answers out of the calendar event description (still sent by email).",
+			"hideCalendarEventDetails": "Hide calendar event details on shared calendars",
+			"hideCalendarEventDetailsHint": "Mark created calendar events as private so details are hidden on shared calendars."
 		},
 		"policies": {
 			"title": "Reschedule & cancel",

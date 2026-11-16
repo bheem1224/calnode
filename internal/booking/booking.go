@@ -57,6 +57,9 @@ type Booking struct {
 	// InviteDelivery is who sent this booking's invite (InviteByCalendar/InviteByCalnode/
 	// InviteByNone), fixed at creation; reschedule, cancel and reassign follow it.
 	InviteDelivery string
+	// PendingApproval is true when the event type requires manual host confirmation
+	// and the booking has not yet been approved.
+	PendingApproval bool
 }
 
 // Attendee is a participant in a booking (the person who made the booking).
@@ -125,4 +128,7 @@ type CreateParams struct {
 	// Stored on the booking so its reschedule and cancel follow the mode it was created
 	// with, not whatever the event type is set to by then.
 	InviteDelivery string
+	// PendingApproval is true when the event type requires manual host confirmation
+	// and the booking has not yet been approved.
+	PendingApproval bool
 }

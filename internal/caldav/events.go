@@ -24,7 +24,7 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 	}
 	id := uid.New()
 	resourceURL := joinURL(cn.calURL, id+".ics")
-	ics := buildICS(id, p.Start, p.End, p.Summary, p.Description, p.Location, p.OrganizerName, p.OrganizerEmail, 0)
+	ics := buildICS(id, p.Start, p.End, p.Summary, p.Description, p.Location, p.OrganizerName, p.OrganizerEmail, 0, p.Private)
 
 	status, _, err := c.putICS(ctx, resourceURL, cn.username, cn.password, ics, "*", "")
 	if err != nil {
@@ -327,7 +327,7 @@ func joinURL(base, name string) string {
 
 // buildICS renders a VCALENDAR/VEVENT for a booking. Times are emitted as UTC. Text values are
 // escaped and long lines folded per RFC 5545.
-func buildICS(id string, start, end time.Time, summary, description, location, orgName, orgEmail string, sequence int) string {
+func buildICS(id string, start, end time.Time, summary, description, location, orgName, orgEmail string, sequence int, private bool) string {
 	var b strings.Builder
 	w := func(line string) { b.WriteString(foldLine(line)); b.WriteString("\r\n") }
 	w("BEGIN:VCALENDAR")
@@ -341,6 +341,9 @@ func buildICS(id string, start, end time.Time, summary, description, location, o
 	w("DTSTART:" + icsUTC(start))
 	w("DTEND:" + icsUTC(end))
 	w("SUMMARY:" + escapeText(summary))
+	if private {
+		w("CLASS:PRIVATE")
+	}
 	if description != "" {
 		w("DESCRIPTION:" + escapeText(description))
 	}

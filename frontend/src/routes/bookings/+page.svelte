@@ -344,10 +344,35 @@
 
   function bookingStatusLabel(status: string): string {
     if (status === "confirmed") return $t("bookings.status.confirmed");
+    if (status === "pending") return $t("bookings.status.pending");
     if (status === "cancelled") return $t("bookings.status.cancelled");
     if (status === "rescheduled")
       return $t("bookings.filter.status.rescheduled");
     return status;
+  }
+
+  let approvingId = $state<string | null>(null);
+  async function approveBooking(id: string) {
+    approvingId = id;
+    try {
+      await api.post(`/v1/bookings/${id}/confirm`, {});
+      await load();
+    } catch (e: any) {
+      error = e.message;
+    } finally {
+      approvingId = null;
+    }
+  }
+  async function declineBooking(id: string) {
+    approvingId = id;
+    try {
+      await api.post(`/v1/bookings/${id}/decline`, {});
+      await load();
+    } catch (e: any) {
+      error = e.message;
+    } finally {
+      approvingId = null;
+    }
   }
 
   const statusFilterLabel = $derived(
@@ -1074,6 +1099,11 @@
                 class="shrink-0 bg-green-50 text-green-700 border-green-200"
                 >{bookingStatusLabel(b.status)}</Badge
               >
+            {:else if b.status === "pending"}
+              <Badge
+                class="shrink-0 bg-amber-50 text-amber-700 border-amber-200"
+                >{bookingStatusLabel(b.status)}</Badge
+              >
             {:else if b.status === "cancelled"}
               <Badge
                 variant="destructive"
@@ -1105,7 +1135,23 @@
             >
               {expandedId === b.id ? "Hide details" : "Details"}
             </Button>
-            {#if b.status === "confirmed"}
+            {#if b.status === "pending"}
+              <Button
+                size="sm"
+                class="h-8 text-xs"
+                disabled={approvingId === b.id}
+                onclick={() => approveBooking(b.id)}
+                >{$t("bookings.actions.approve")}</Button
+              >
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 text-xs text-destructive hover:text-destructive"
+                disabled={approvingId === b.id}
+                onclick={() => declineBooking(b.id)}
+                >{$t("bookings.actions.decline")}</Button
+              >
+            {:else if b.status === "confirmed"}
               {#if reschedulingId === b.id}
                 <Button
                   variant="outline"
@@ -1302,6 +1348,10 @@
                     <Badge class="bg-green-50 text-green-700 border-green-200"
                       >{bookingStatusLabel(b.status)}</Badge
                     >
+                  {:else if b.status === "pending"}
+                    <Badge class="bg-amber-50 text-amber-700 border-amber-200"
+                      >{bookingStatusLabel(b.status)}</Badge
+                    >
                   {:else if b.status === "cancelled"}
                     <Badge
                       variant="destructive"
@@ -1383,7 +1433,23 @@
                       >
                     </Tooltip.Root>
 
-                    {#if b.status === "confirmed"}
+                    {#if b.status === "pending"}
+              <Button
+                size="sm"
+                class="h-8 text-xs"
+                disabled={approvingId === b.id}
+                onclick={() => approveBooking(b.id)}
+                >{$t("bookings.actions.approve")}</Button
+              >
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 text-xs text-destructive hover:text-destructive"
+                disabled={approvingId === b.id}
+                onclick={() => declineBooking(b.id)}
+                >{$t("bookings.actions.decline")}</Button
+              >
+            {:else if b.status === "confirmed"}
                       {#if reschedulingId === b.id}
                         <Button
                           variant="outline"

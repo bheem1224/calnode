@@ -151,7 +151,9 @@ func (h *Handler) DuplicateEventType(w http.ResponseWriter, r *http.Request) {
 		  disable_cancel, disable_reschedule, require_cancel_reason, allow_reschedule_past,
 		  max_per_month, max_per_year, max_duration_per_day, max_duration_per_week,
 		  show_first_slot_only, future_limit_mode, future_range_start, future_range_end,
-		  calendar_event_title, redirect_url, reply_to)
+		  calendar_event_title, redirect_url, reply_to,
+		  hide_notes_in_calendar, hide_calendar_event_details, requires_confirmation,
+		  confirm_mode, confirm_notice_minutes, unconfirmed_blocks_slots, require_email_verification)
 		SELECT
 		  ?, user_id, team_id, ?, name, description,
 		  duration_minutes, slot_interval_minutes,
@@ -167,7 +169,9 @@ func (h *Handler) DuplicateEventType(w http.ResponseWriter, r *http.Request) {
 		  disable_cancel, disable_reschedule, require_cancel_reason, allow_reschedule_past,
 		  max_per_month, max_per_year, max_duration_per_day, max_duration_per_week,
 		  show_first_slot_only, future_limit_mode, future_range_start, future_range_end,
-		  calendar_event_title, redirect_url, reply_to
+		  calendar_event_title, redirect_url, reply_to,
+		  hide_notes_in_calendar, hide_calendar_event_details, requires_confirmation,
+		  confirm_mode, confirm_notice_minutes, unconfirmed_blocks_slots, require_email_verification
 		FROM event_types WHERE id = ?`, newID, newSlug, srcID); err != nil {
 		h.logger.ErrorContext(r.Context(), "duplicate event type: copy row", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")

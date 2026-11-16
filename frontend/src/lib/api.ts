@@ -71,6 +71,13 @@ export type EventType = {
 	disable_reschedule?: boolean;
 	require_cancel_reason?: 'none' | 'optional' | 'required' | 'both' | 'host_only' | 'attendee_only';
 	allow_reschedule_past?: boolean;
+	hide_notes_in_calendar?: boolean;
+	hide_calendar_event_details?: boolean;
+	requires_confirmation?: boolean;
+	confirm_mode?: 'always' | 'under_notice' | 'free_email';
+	confirm_notice_minutes?: number;
+	unconfirmed_blocks_slots?: boolean;
+	require_email_verification?: boolean;
 	price_cents: number; // 0 = free
 	currency: string;    // ISO 4217, lowercase (e.g. "usd")
 	created_at: string;
@@ -157,7 +164,8 @@ export type Booking = {
 	event_type_slug: string;
 	start_at: string;
 	end_at: string;
-	status: 'confirmed' | 'cancelled';
+	status: 'confirmed' | 'cancelled' | 'pending';
+	pending_approval?: boolean;
 	attendees: { name: string; email: string }[];
 	created_at: string;
 	host_name?: string; // populated only in the admin "All bookings" view

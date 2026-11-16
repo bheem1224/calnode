@@ -24,6 +24,7 @@ type CreateEventParams struct {
 	OrganizerName  string
 	OrganizerEmail string
 	AddMeet        bool
+	Private        bool
 }
 
 // CalendarInfo is one calendar the provider exposes for a connected account.
