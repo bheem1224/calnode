@@ -11,14 +11,15 @@ import (
 )
 
 type roleJSON struct {
-	ID                 string `json:"id"`
-	Name               string `json:"name"`
-	IsSystem           bool   `json:"is_system"`
-	AllowImpersonation bool   `json:"allow_impersonation"`
-	CanManageUsers     bool   `json:"can_manage_users"`
-	CanManageSettings  bool   `json:"can_manage_settings"`
-	CanManageTeams     bool   `json:"can_manage_teams"`
-	CreatedAt          string `json:"created_at"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	IsSystem          bool   `json:"is_system"`
+	CanImpersonate    bool   `json:"can_impersonate"`
+	IsImpersonatable  bool   `json:"is_impersonatable"`
+	CanManageUsers    bool   `json:"can_manage_users"`
+	CanManageSettings bool   `json:"can_manage_settings"`
+	CanManageTeams    bool   `json:"can_manage_teams"`
+	CreatedAt         string `json:"created_at"`
 }
 
 func boolInt(b bool) int {
@@ -34,7 +35,7 @@ func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := h.db.QueryContext(r.Context(), `
-		SELECT id, name, is_system, allow_impersonation, can_manage_users, can_manage_settings, can_manage_teams, created_at
+		SELECT id, name, is_system, allow_impersonation, is_impersonatable, can_manage_users, can_manage_settings, can_manage_teams, created_at
 		FROM roles
 		ORDER BY is_system DESC, name ASC`)
 	if err != nil {
@@ -47,13 +48,14 @@ func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
 	items := []roleJSON{}
 	for rows.Next() {
 		var item roleJSON
-		var isSys, allowImp, canUsers, canSettings, canTeams int
-		if err := rows.Scan(&item.ID, &item.Name, &isSys, &allowImp, &canUsers, &canSettings, &canTeams, &item.CreatedAt); err != nil {
+		var isSys, allowImp, isImpTarget, canUsers, canSettings, canTeams int
+		if err := rows.Scan(&item.ID, &item.Name, &isSys, &allowImp, &isImpTarget, &canUsers, &canSettings, &canTeams, &item.CreatedAt); err != nil {
 			h.writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 		item.IsSystem = isSys != 0
-		item.AllowImpersonation = allowImp != 0
+		item.CanImpersonate = allowImp != 0
+		item.IsImpersonatable = isImpTarget != 0
 		item.CanManageUsers = canUsers != 0
 		item.CanManageSettings = canSettings != 0
 		item.CanManageTeams = canTeams != 0
@@ -74,7 +76,9 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 	var req struct {
 		Name               string `json:"name"`
-		AllowImpersonation bool   `json:"allow_impersonation"`
+		CanImpersonate     bool   `json:"can_impersonate"`
+		AllowImpersonation bool   `json:"allow_impersonation"` // legacy alias
+		IsImpersonatable   *bool  `json:"is_impersonatable"`
 		CanManageUsers     bool   `json:"can_manage_users"`
 		CanManageSettings  bool   `json:"can_manage_settings"`
 		CanManageTeams     bool   `json:"can_manage_teams"`
@@ -88,12 +92,17 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	canImp := req.CanImpersonate || req.AllowImpersonation
+	isImpTarget := true
+	if req.IsImpersonatable != nil {
+		isImpTarget = *req.IsImpersonatable
+	}
 
 	id := uid.New()
 	if _, err := h.db.ExecContext(r.Context(), `
-		INSERT INTO roles (id, name, is_system, allow_impersonation, can_manage_users, can_manage_settings, can_manage_teams)
-		VALUES (?, ?, 0, ?, ?, ?, ?)`,
-		id, req.Name, boolInt(req.AllowImpersonation), boolInt(req.CanManageUsers), boolInt(req.CanManageSettings), boolInt(req.CanManageTeams)); err != nil {
+		INSERT INTO roles (id, name, is_system, allow_impersonation, is_impersonatable, can_manage_users, can_manage_settings, can_manage_teams)
+		VALUES (?, ?, 0, ?, ?, ?, ?, ?)`,
+		id, req.Name, boolInt(canImp), boolInt(isImpTarget), boolInt(req.CanManageUsers), boolInt(req.CanManageSettings), boolInt(req.CanManageTeams)); err != nil {
 		if db.IsUniqueViolation(err) {
 			h.writeError(w, http.StatusConflict, "role name already exists")
 			return
@@ -103,13 +112,14 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeJSON(w, http.StatusCreated, roleJSON{
-		ID:                 id,
-		Name:               req.Name,
-		IsSystem:           false,
-		AllowImpersonation: req.AllowImpersonation,
-		CanManageUsers:     req.CanManageUsers,
-		CanManageSettings:  req.CanManageSettings,
-		CanManageTeams:     req.CanManageTeams,
+		ID:                id,
+		Name:              req.Name,
+		IsSystem:          false,
+		CanImpersonate:    canImp,
+		IsImpersonatable:  isImpTarget,
+		CanManageUsers:    req.CanManageUsers,
+		CanManageSettings: req.CanManageSettings,
+		CanManageTeams:    req.CanManageTeams,
 	})
 }
 
@@ -220,12 +230,15 @@ func (h *Handler) StartImpersonation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var targetIsOwner int
+	var targetIsOwner, targetIsAdmin, targetRoleImpersonatable int
 	var targetName, targetEmail string
 	var archivedAt sql.NullString
 	err := h.db.QueryRowContext(r.Context(), `
-		SELECT name, email, is_owner, archived_at FROM users WHERE id = ?`, targetID).
-		Scan(&targetName, &targetEmail, &targetIsOwner, &archivedAt)
+		SELECT u.name, u.email, u.is_owner, u.is_admin, u.archived_at, COALESCE(r.is_impersonatable, 1)
+		FROM users u
+		LEFT JOIN roles r ON r.id = u.custom_role_id
+		WHERE u.id = ?`, targetID).
+		Scan(&targetName, &targetEmail, &targetIsOwner, &targetIsAdmin, &archivedAt, &targetRoleImpersonatable)
 	if err == sql.ErrNoRows {
 		h.writeError(w, http.StatusNotFound, "target user not found")
 		return
@@ -238,8 +251,16 @@ func (h *Handler) StartImpersonation(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "cannot impersonate an archived user")
 		return
 	}
-	if targetIsOwner != 0 && !actor.IsOwner {
+	if targetIsOwner != 0 {
 		h.writeError(w, http.StatusForbidden, "cannot impersonate the workspace owner")
+		return
+	}
+	if targetIsAdmin != 0 && !actor.IsOwner {
+		h.writeError(w, http.StatusForbidden, "only the workspace owner can impersonate an admin")
+		return
+	}
+	if targetRoleImpersonatable == 0 {
+		h.writeError(w, http.StatusForbidden, "this user's role does not allow impersonation")
 		return
 	}
 

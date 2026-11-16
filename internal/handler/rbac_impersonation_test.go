@@ -11,8 +11,8 @@ import (
 	"github.com/calnode/calnode/internal/uid"
 )
 
-func TestRBAC_SystemRolesProtectedAndNoDefaultImpersonation(t *testing.T) {
-	h, database, apiKey, ownerID := setupWorkspaceWithDB(t)
+func TestRBAC_SystemRolesAndMemberCannotImpersonate(t *testing.T) {
+	h, database, apiKey, _ := setupWorkspaceWithDB(t)
 
 	// Built-in admin/member roles exist and cannot be deleted.
 	delReq := authReq(http.MethodDelete, "/v1/roles/role_admin", "", apiKey)
@@ -23,59 +23,72 @@ func TestRBAC_SystemRolesProtectedAndNoDefaultImpersonation(t *testing.T) {
 		t.Fatalf("delete built-in role: got %d, want 403 — %s", delRec.Code, delRec.Body.String())
 	}
 
-	// Seed a target member and a browser session for the owner (who has no custom role with allow_impersonation).
-	memberID := uid.New()
-	mustExec(t, database, `INSERT INTO users (id, email, name, iana_timezone) VALUES (?, 'member@example.com', 'Member', 'UTC')`, memberID)
+	// Seed two members; member1 tries to impersonate member2 -> 403.
+	m1ID := uid.New()
+	m2ID := uid.New()
+	mustExec(t, database, `INSERT INTO users (id, email, name, iana_timezone) VALUES (?, 'm1@example.com', 'Member 1', 'UTC')`, m1ID)
+	mustExec(t, database, `INSERT INTO users (id, email, name, iana_timezone) VALUES (?, 'm2@example.com', 'Member 2', 'UTC')`, m2ID)
 	sessID := uid.New()
 	exp := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
-	mustExec(t, database, `INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)`, sessID, ownerID, exp)
+	mustExec(t, database, `INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)`, sessID, m1ID, exp)
 
-	impReq := httptest.NewRequest(http.MethodPost, "/v1/admin/impersonate", strings.NewReader(`{"user_id":"`+memberID+`"}`))
+	impReq := httptest.NewRequest(http.MethodPost, "/v1/admin/impersonate", strings.NewReader(`{"user_id":"`+m2ID+`"}`))
 	impReq.Header.Set("Content-Type", "application/json")
 	impReq.AddCookie(&http.Cookie{Name: "calnode_session", Value: sessID})
 	impRec := httptest.NewRecorder()
 	h.RequireAuth(h.StartImpersonation)(impRec, impReq)
 	if impRec.Code != http.StatusForbidden {
-		t.Fatalf("default owner/admin without allow_impersonation role should get 403, got %d — %s", impRec.Code, impRec.Body.String())
+		t.Fatalf("member should not be allowed to impersonate: got %d — %s", impRec.Code, impRec.Body.String())
 	}
 }
 
-func TestRBAC_CustomRoleImpersonationLifecycleAndAuditLog(t *testing.T) {
+func TestRBAC_AdminImpersonatesMember_And_ProtectedCustomRoleBlocked(t *testing.T) {
 	h, database, apiKey, ownerID := setupWorkspaceWithDB(t)
 
 	memberID := uid.New()
+	vipID := uid.New()
 	mustExec(t, database, `INSERT INTO users (id, email, name, iana_timezone) VALUES (?, 'member@example.com', 'Member One', 'UTC')`, memberID)
+	mustExec(t, database, `INSERT INTO users (id, email, name, iana_timezone) VALUES (?, 'vip@example.com', 'VIP Exec', 'UTC')`, vipID)
 
-	// 1. Create custom role with allow_impersonation = true.
-	cReq := authReq(http.MethodPost, "/v1/roles", `{"name":"Support Lead","allow_impersonation":true,"can_manage_users":true}`, apiKey)
+	// 1. Create a protected custom role (is_impersonatable = false) and assign to VIP.
+	cReq := authReq(http.MethodPost, "/v1/roles", `{"name":"Executive","can_impersonate":false,"is_impersonatable":false}`, apiKey)
 	cRec := httptest.NewRecorder()
 	h.RequireAuth(h.CreateRole)(cRec, cReq)
 	if cRec.Code != http.StatusCreated {
 		t.Fatalf("CreateRole: got %d — %s", cRec.Code, cRec.Body.String())
 	}
 	var roleResp struct {
-		ID                 string `json:"id"`
-		AllowImpersonation bool   `json:"allow_impersonation"`
+		ID               string `json:"id"`
+		IsImpersonatable bool   `json:"is_impersonatable"`
 	}
 	_ = json.Unmarshal(cRec.Body.Bytes(), &roleResp)
-	if !roleResp.AllowImpersonation {
-		t.Fatalf("expected allow_impersonation=true")
+	if roleResp.IsImpersonatable {
+		t.Fatalf("expected is_impersonatable=false")
 	}
 
-	// 2. Assign custom role to owner.
-	aReq := authReq(http.MethodPatch, "/v1/users/"+ownerID+"/custom-role", `{"custom_role_id":"`+roleResp.ID+`"}`, apiKey)
-	aReq.SetPathValue("id", ownerID)
+	aReq := authReq(http.MethodPatch, "/v1/users/"+vipID+"/custom-role", `{"custom_role_id":"`+roleResp.ID+`"}`, apiKey)
+	aReq.SetPathValue("id", vipID)
 	aRec := httptest.NewRecorder()
 	h.RequireAuth(h.SetUserCustomRole)(aRec, aReq)
 	if aRec.Code != http.StatusOK {
 		t.Fatalf("SetUserCustomRole: got %d — %s", aRec.Code, aRec.Body.String())
 	}
 
-	// 3. Create browser session for owner and start impersonating member.
+	// 2. Owner/admin session cannot impersonate VIP (is_impersonatable = false) -> 403.
 	sessID := uid.New()
 	exp := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
 	mustExec(t, database, `INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)`, sessID, ownerID, exp)
 
+	vipImpReq := httptest.NewRequest(http.MethodPost, "/v1/admin/impersonate", strings.NewReader(`{"user_id":"`+vipID+`"}`))
+	vipImpReq.Header.Set("Content-Type", "application/json")
+	vipImpReq.AddCookie(&http.Cookie{Name: "calnode_session", Value: sessID})
+	vipImpRec := httptest.NewRecorder()
+	h.RequireAuth(h.StartImpersonation)(vipImpRec, vipImpReq)
+	if vipImpRec.Code != http.StatusForbidden {
+		t.Fatalf("protected role should block impersonation with 403, got %d — %s", vipImpRec.Code, vipImpRec.Body.String())
+	}
+
+	// 3. Owner/admin CAN impersonate built-in Member One -> 200.
 	startReq := httptest.NewRequest(http.MethodPost, "/v1/admin/impersonate", strings.NewReader(`{"user_id":"`+memberID+`"}`))
 	startReq.Header.Set("Content-Type", "application/json")
 	startReq.AddCookie(&http.Cookie{Name: "calnode_session", Value: sessID})
@@ -85,7 +98,7 @@ func TestRBAC_CustomRoleImpersonationLifecycleAndAuditLog(t *testing.T) {
 		t.Fatalf("StartImpersonation: got %d — %s", startRec.Code, startRec.Body.String())
 	}
 
-	// 4. GET /v1/users/me now returns Member One with impersonating=true.
+	// 4. GET /v1/users/me returns Member One with impersonating=true.
 	meReq := httptest.NewRequest(http.MethodGet, "/v1/users/me", nil)
 	meReq.AddCookie(&http.Cookie{Name: "calnode_session", Value: sessID})
 	meRec := httptest.NewRecorder()
@@ -103,7 +116,7 @@ func TestRBAC_CustomRoleImpersonationLifecycleAndAuditLog(t *testing.T) {
 		t.Fatalf("unexpected GetMe while impersonating: %+v", meResp)
 	}
 
-	// 5. Stop impersonation.
+	// 5. Stop impersonation + check audit log.
 	stopReq := httptest.NewRequest(http.MethodPost, "/v1/admin/impersonate/stop", nil)
 	stopReq.AddCookie(&http.Cookie{Name: "calnode_session", Value: sessID})
 	stopRec := httptest.NewRecorder()
@@ -112,7 +125,6 @@ func TestRBAC_CustomRoleImpersonationLifecycleAndAuditLog(t *testing.T) {
 		t.Fatalf("StopImpersonation: got %d — %s", stopRec.Code, stopRec.Body.String())
 	}
 
-	// 6. Verify audit log has both start and stop entries.
 	logReq := authReq(http.MethodGet, "/v1/admin/impersonate/logs", "", apiKey)
 	logRec := httptest.NewRecorder()
 	h.RequireAuth(h.ListImpersonationLogs)(logRec, logReq)

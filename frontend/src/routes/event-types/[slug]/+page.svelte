@@ -32,6 +32,7 @@
   import BookingPreviewCard from "$lib/components/event-types/BookingPreviewCard.svelte";
   import WebhooksManager from "$lib/components/WebhooksManager.svelte";
   import { ConfirmDialog } from "$lib/components/ui/confirm-dialog";
+  import { DateRangePicker } from "$lib/components/ui/date-range-picker";
   import { t, tr, localeTag } from "$lib/i18n";
   import LinkedText from "$lib/i18n/linked-text.svelte";
 
@@ -2369,10 +2370,12 @@
                     </Select.Root>
                   </div>
                   {#if form.future_limit_mode === "date_range"}
-                    <div class="flex flex-wrap items-center gap-2">
-                      <Input type="date" class="w-40" bind:value={form.future_range_start} />
-                      <span class="text-xs text-muted-foreground">{$t("eventTypeEditor.limits.rangeTo")}</span>
-                      <Input type="date" class="w-40" bind:value={form.future_range_end} />
+                    <div class="max-w-xs">
+                      <DateRangePicker
+                        bind:start={form.future_range_start}
+                        bind:end={form.future_range_end}
+                        placeholder="Select date range"
+                      />
                     </div>
                   {/if}
                 </div>

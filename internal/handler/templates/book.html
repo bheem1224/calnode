@@ -154,6 +154,16 @@ body {
     {{end}}
     {{if .Description}}<div class="description">{{.Description}}</div>
     <button type="button" class="desc-toggle" id="desc-toggle">{{call .T "show_more"}}</button>{{end}}
+    {{if or .OOONote .OOORedirectHandle}}
+    <div style="margin-top:12px;padding:10px 12px;border-radius:8px;border:1px solid #d97706;background:rgba(217,119,6,0.1);font-size:13px;line-height:1.45;">
+      {{if .OOONote}}<div>{{.OOONote}}</div>{{end}}
+      {{if .OOORedirectHandle}}
+        <div style="margin-top:6px;">
+          Need an earlier time? <a href="/u/{{.OOORedirectHandle}}" style="text-decoration:underline;font-weight:600;">Book with {{if .OOORedirectName}}{{.OOORedirectName}}{{else}}{{.OOORedirectHandle}}{{end}} instead</a>.
+        </div>
+      {{end}}
+    </div>
+    {{end}}
   </aside>
 
   <!-- Calendar column -->

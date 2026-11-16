@@ -24,7 +24,7 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		SELECT u.id, u.email, u.name, u.iana_timezone, u.is_admin, u.is_owner, u.email_login,
 		       COALESCE(u.provider,''), COALESCE(u.avatar_url,''), COALESCE(u.handle,''), u.created_at,
 		       u.archived_at, COALESCE(u.archived_by,''), COALESCE(ab.name,''),
-		       COALESCE(u.custom_role_id,''), COALESCE(r.name,'')
+		       COALESCE(u.custom_role_id,''), COALESCE(r.name,''), COALESCE(r.is_impersonatable, 1)
 		FROM users u
 		LEFT JOIN users ab ON ab.id = u.archived_by
 		LEFT JOIN roles r ON r.id = u.custom_role_id
@@ -41,39 +41,41 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	type userRow struct {
-		ID             string    `json:"id"`
-		Email          string    `json:"email"`
-		Name           string    `json:"name"`
-		Handle         string    `json:"handle,omitempty"`
-		Timezone       string    `json:"timezone"`
-		IsAdmin        bool      `json:"is_admin"`
-		IsOwner        bool      `json:"is_owner"`
-		Role           string    `json:"role"` // "owner" | "admin" | "member"
-		CustomRoleID   string    `json:"custom_role_id,omitempty"`
-		CustomRoleName string    `json:"custom_role_name,omitempty"`
-		EmailLogin     bool      `json:"email_login"`
-		Provider       string    `json:"provider,omitempty"`
-		AvatarURL      string    `json:"avatar_url,omitempty"`
-		CreatedAt      string    `json:"created_at"`
-		Archived       bool      `json:"archived"`
-		ArchivedAt     string    `json:"archived_at,omitempty"`
-		ArchivedBy     string    `json:"archived_by,omitempty"`
-		ArchivedByName string    `json:"archived_by_name,omitempty"`
-		Teams          []teamRef `json:"teams"`
+		ID               string    `json:"id"`
+		Email            string    `json:"email"`
+		Name             string    `json:"name"`
+		Handle           string    `json:"handle,omitempty"`
+		Timezone         string    `json:"timezone"`
+		IsAdmin          bool      `json:"is_admin"`
+		IsOwner          bool      `json:"is_owner"`
+		Role             string    `json:"role"` // "owner" | "admin" | "member"
+		CustomRoleID     string    `json:"custom_role_id,omitempty"`
+		CustomRoleName   string    `json:"custom_role_name,omitempty"`
+		IsImpersonatable bool      `json:"is_impersonatable"`
+		EmailLogin       bool      `json:"email_login"`
+		Provider         string    `json:"provider,omitempty"`
+		AvatarURL        string    `json:"avatar_url,omitempty"`
+		CreatedAt        string    `json:"created_at"`
+		Archived         bool      `json:"archived"`
+		ArchivedAt       string    `json:"archived_at,omitempty"`
+		ArchivedBy       string    `json:"archived_by,omitempty"`
+		ArchivedByName   string    `json:"archived_by_name,omitempty"`
+		Teams            []teamRef `json:"teams"`
 	}
 	out := []userRow{}
 	byID := map[string]*userRow{}
 	for rows.Next() {
 		var u userRow
-		var isAdmin, isOwner, emailLogin int
+		var isAdmin, isOwner, emailLogin, isImpTarget int
 		var archivedAt sql.NullString
 		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Timezone, &isAdmin, &isOwner, &emailLogin,
 			&u.Provider, &u.AvatarURL, &u.Handle, &u.CreatedAt, &archivedAt, &u.ArchivedBy, &u.ArchivedByName,
-			&u.CustomRoleID, &u.CustomRoleName); err != nil {
+			&u.CustomRoleID, &u.CustomRoleName, &isImpTarget); err != nil {
 			continue
 		}
 		u.IsAdmin = isAdmin != 0
 		u.IsOwner = isOwner != 0
+		u.IsImpersonatable = !u.IsOwner && isImpTarget != 0
 		u.EmailLogin = emailLogin != 0
 		u.Archived = archivedAt.Valid
 		u.ArchivedAt = archivedAt.String
@@ -221,4 +223,34 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// ListDirectoryUsers handles GET /v1/users/directory (any authenticated user).
+// Returns active members' id, name, and handle for OOO redirect teammate selection.
+func (h *Handler) ListDirectoryUsers(w http.ResponseWriter, r *http.Request) {
+	me, _ := userFromContext(r.Context())
+	rows, err := h.db.QueryContext(r.Context(), `
+		SELECT id, name, COALESCE(handle, '')
+		FROM users
+		WHERE archived_at IS NULL AND id != ?
+		ORDER BY name ASC`, me.ID)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer rows.Close()
+
+	type dirItem struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Handle string `json:"handle"`
+	}
+	items := []dirItem{}
+	for rows.Next() {
+		var it dirItem
+		if err := rows.Scan(&it.ID, &it.Name, &it.Handle); err == nil {
+			items = append(items, it)
+		}
+	}
+	h.writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }

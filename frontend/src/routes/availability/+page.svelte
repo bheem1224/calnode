@@ -11,6 +11,7 @@
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import * as Select from '$lib/components/ui/select';
 	import { DatePicker } from '$lib/components/ui/date-picker';
+	import { DateRangePicker } from '$lib/components/ui/date-range-picker';
 	import { toast } from 'svelte-sonner';
 
 	const DAY_NAMES = $derived(weekDays($t));
@@ -48,8 +49,16 @@
 
 	let schedules = $state<AvailabilitySchedule[]>([]);
 	let selectedScheduleId = $state('');
+	let inScheduleEditor = $state(false);
 	let newScheduleName = $state('');
 	let creatingSchedule = $state(false);
+
+	function openSchedule(id: string) {
+		selectedScheduleId = id;
+		inScheduleEditor = true;
+		loadRules();
+		loadOverrides();
+	}
 
 	async function loadSchedules() {
 		try {
@@ -236,7 +245,10 @@
 	async function loadOverrides() {
 		overridesError = '';
 		try {
-			const res = await api.get<{ items: AvailabilityOverride[] }>('/v1/availability-overrides');
+			const url = selectedScheduleId
+				? `/v1/availability-overrides?schedule_id=${encodeURIComponent(selectedScheduleId)}`
+				: '/v1/availability-overrides';
+			const res = await api.get<{ items: AvailabilityOverride[] }>(url);
 			overrides = (res.items ?? []).sort((a, b) => a.date.localeCompare(b.date));
 		} catch (e: any) {
 			overridesError = e.message;
@@ -547,18 +559,19 @@
 			const dates = [...ovSelectedDates].sort();
 			for (const date of dates) {
 				if (ovAllDayUnavailable) {
-					await api.post('/v1/availability-overrides', {
-						date,
-						reason: 'day_off'
-					});
+					const payload: Record<string, any> = { date, reason: 'day_off' };
+					if (selectedScheduleId) payload.schedule_id = selectedScheduleId;
+					await api.post('/v1/availability-overrides', payload);
 				} else {
 					for (const r of ovTimeRanges) {
-						await api.post('/v1/availability-overrides', {
+						const payload: Record<string, any> = {
 							date,
 							reason: 'custom_hours',
 							start_time: r.start_time,
 							end_time: r.end_time
-						});
+						};
+						if (selectedScheduleId) payload.schedule_id = selectedScheduleId;
+						await api.post('/v1/availability-overrides', payload);
 					}
 				}
 			}
@@ -573,43 +586,91 @@
 	}
 
 	// ── Out-of-Office & Holidays ─────────────────────────────────────────────────
+	type DirUser = { id: string; name: string; handle: string };
+	let directoryUsers = $state<DirUser[]>([]);
 	let oooEntries = $state<OOOEntry[]>([]);
-	let oooDates = $state<string[]>([]);
-	let oooDatePick = $state('');
+	let oooModalOpen = $state(false);
+	let oooEditingId = $state('');
+	let oooRangeStart = $state('');
+	let oooRangeEnd = $state('');
 	let oooReason = $state<OOOEntry['reason']>('ooo');
 	let oooPublicNote = $state('');
+	let oooShowPublicNote = $state(true);
+	let oooProvideRedirect = $state(false);
+	let oooRedirectUserId = $state('');
 	let oooSaving = $state(false);
 
 	async function loadOOO() {
 		try {
-			const res = await api.get<{ items: OOOEntry[] }>('/v1/ooo');
-			oooEntries = res.items ?? [];
+			const [oooRes, dirRes] = await Promise.all([
+				api.get<{ items: OOOEntry[] }>('/v1/ooo'),
+				api.get<{ items: DirUser[] }>('/v1/users/directory').catch(() => ({ items: [] }))
+			]);
+			oooEntries = oooRes.items ?? [];
+			directoryUsers = dirRes.items ?? [];
 		} catch {
 			oooEntries = [];
 		}
 	}
 
-	function addOOODate() {
-		const d = oooDatePick.trim();
-		if (!d || oooDates.includes(d)) return;
-		oooDates = [...oooDates, d].sort();
-		oooDatePick = '';
+	function expandRange(startIso: string, endIso: string): string[] {
+		if (!startIso) return [];
+		const hi = endIso && endIso >= startIso ? endIso : startIso;
+		const out: string[] = [];
+		const cur = parseIsoDateUTC(startIso);
+		const end = parseIsoDateUTC(hi);
+		while (cur <= end && out.length < 366) {
+			out.push(cur.toISOString().slice(0, 10));
+			cur.setUTCDate(cur.getUTCDate() + 1);
+		}
+		return out;
+	}
+
+	function openCreateOOO() {
+		oooEditingId = '';
+		oooRangeStart = '';
+		oooRangeEnd = '';
+		oooReason = 'ooo';
+		oooPublicNote = '';
+		oooShowPublicNote = true;
+		oooProvideRedirect = false;
+		oooRedirectUserId = '';
+		oooModalOpen = true;
+	}
+
+	function openEditOOO(entry: OOOEntry) {
+		oooEditingId = entry.id;
+		const sorted = [...entry.dates].sort();
+		oooRangeStart = sorted[0] ?? '';
+		oooRangeEnd = sorted[sorted.length - 1] ?? oooRangeStart;
+		oooReason = entry.reason;
+		oooPublicNote = entry.public_note ?? '';
+		oooShowPublicNote = !!entry.public_note;
+		oooProvideRedirect = !!entry.redirect_user_id;
+		oooRedirectUserId = entry.redirect_user_id ?? '';
+		oooModalOpen = true;
 	}
 
 	async function saveOOO() {
-		if (oooDates.length === 0) {
-			toast.error('Select at least one date');
+		const dates = expandRange(oooRangeStart, oooRangeEnd);
+		if (dates.length === 0) {
+			toast.error('Select a date range');
 			return;
 		}
 		oooSaving = true;
 		try {
-			await api.post('/v1/ooo', {
-				dates: oooDates,
+			const payload = {
+				dates,
 				reason: oooReason,
-				public_note: oooPublicNote.trim()
-			});
-			oooDates = [];
-			oooPublicNote = '';
+				public_note: oooShowPublicNote ? oooPublicNote.trim() : '',
+				redirect_user_id: oooProvideRedirect && oooRedirectUserId ? oooRedirectUserId : ''
+			};
+			if (oooEditingId) {
+				await api.patch(`/v1/ooo/${oooEditingId}`, payload);
+			} else {
+				await api.post('/v1/ooo', payload);
+			}
+			oooModalOpen = false;
 			await loadOOO();
 			toast.success('Out-of-office saved');
 		} catch (e: any) {
@@ -660,54 +721,119 @@
 	<p class="mt-1 text-sm text-muted-foreground">{$t('availability.subtitle')}</p>
 </div>
 
-<!-- Weekly Hours -->
-<div class="mb-8">
-	<div class="mb-3 flex flex-wrap items-center justify-between gap-3">
-		<h2 class="text-sm font-semibold uppercase tracking-wider text-muted-foreground">{$t('availability.weeklyHours')}</h2>
-		<div class="flex flex-wrap items-center gap-2">
-			<Select.Root
-				type="single"
-				value={selectedScheduleId}
-				onValueChange={(v) => {
-					selectedScheduleId = v ?? '';
-					loadRules();
-				}}
-			>
-				<Select.Trigger class="h-8 w-48 text-xs">
-					{selectedScheduleId
-						? (schedules.find((s) => s.id === selectedScheduleId)?.name ?? 'Schedule')
-						: 'Default schedule'}
-				</Select.Trigger>
-				<Select.Content>
-					<Select.Item value="" label="Default schedule">Default schedule</Select.Item>
-					{#each schedules as s}
-						<Select.Item value={s.id} label={s.name}>{s.name}</Select.Item>
-					{/each}
-				</Select.Content>
-			</Select.Root>
-			{#if selectedScheduleId}
-				<Button type="button" variant="ghost" size="sm" class="h-8 text-xs text-destructive" onclick={() => deleteSchedule(selectedScheduleId)}>
-					Delete schedule
+{#if !inScheduleEditor}
+	<!-- Schedules list (nested like Cal.com) -->
+	<div class="mb-8 space-y-3">
+		<div class="flex flex-wrap items-center justify-between gap-3">
+			<h2 class="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Schedules</h2>
+			<div class="flex items-center gap-2">
+				<input
+					type="text"
+					bind:value={newScheduleName}
+					placeholder="New schedule name..."
+					class="h-8 rounded-lg border bg-background px-2.5 text-xs"
+				/>
+				<Button type="button" variant="outline" size="sm" class="h-8 text-xs" disabled={creatingSchedule || !newScheduleName.trim()} onclick={createSchedule}>
+					+ New
 				</Button>
-			{/if}
-			<input
-				type="text"
-				bind:value={newScheduleName}
-				placeholder="New schedule name..."
-				class="h-8 rounded-md border bg-background px-2.5 text-xs"
-			/>
-			<Button type="button" variant="outline" size="sm" class="h-8 text-xs" disabled={creatingSchedule || !newScheduleName.trim()} onclick={createSchedule}>
-				+ Add schedule
-			</Button>
+			</div>
+		</div>
+
+		<div class="rounded-xl border bg-card divide-y overflow-hidden">
+			<div class="flex items-center justify-between px-4 py-3.5 hover:bg-muted/30 transition-colors">
+				<button type="button" class="flex-1 text-left" onclick={() => openSchedule('')}>
+					<div class="flex items-center gap-2">
+						<span class="font-medium text-sm">Working hours</span>
+						<Badge variant="secondary" class="text-[11px]">Default</Badge>
+					</div>
+					<p class="mt-0.5 text-xs text-muted-foreground">Default weekly hours &amp; overrides</p>
+				</button>
+				<Button type="button" variant="ghost" size="sm" class="text-xs" onclick={() => openSchedule('')}>Edit →</Button>
+			</div>
+			{#each schedules as s}
+				<div class="flex items-center justify-between px-4 py-3.5 hover:bg-muted/30 transition-colors">
+					<button type="button" class="flex-1 text-left" onclick={() => openSchedule(s.id)}>
+						<div class="flex items-center gap-2">
+							<span class="font-medium text-sm">{s.name}</span>
+							{#if s.timezone}<span class="text-xs text-muted-foreground">({s.timezone})</span>{/if}
+						</div>
+					</button>
+					<div class="flex items-center gap-1">
+						<Button type="button" variant="ghost" size="sm" class="text-xs" onclick={() => openSchedule(s.id)}>Edit →</Button>
+						<Button type="button" variant="ghost" size="sm" class="text-xs text-destructive" onclick={() => deleteSchedule(s.id)}>Delete</Button>
+					</div>
+				</div>
+			{/each}
 		</div>
 	</div>
+
+	<!-- Out-of-Office list + Go Out of Office modal trigger -->
+	<div class="mb-8 space-y-3">
+		<div class="flex items-center justify-between gap-3">
+			<div>
+				<h2 class="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Out of Office</h2>
+				<p class="mt-0.5 text-xs text-muted-foreground">Block holidays or time away and optionally redirect bookers to a teammate.</p>
+			</div>
+			<Button type="button" size="sm" onclick={openCreateOOO}>+ Go Out of Office</Button>
+		</div>
+
+		<div class="rounded-xl border bg-card divide-y overflow-hidden">
+			{#if oooEntries.length === 0}
+				<p class="px-4 py-5 text-sm text-muted-foreground">No upcoming out-of-office entries.</p>
+			{:else}
+				{#each oooEntries as entry}
+					{@const sorted = [...entry.dates].sort()}
+					{@const rangeLabel = sorted.length > 1 ? `${sorted[0]} – ${sorted[sorted.length - 1]}` : (sorted[0] ?? '')}
+					<div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3 hover:bg-muted/30 transition-colors">
+						<button type="button" class="flex-1 text-left" onclick={() => openEditOOO(entry)}>
+							<div class="flex items-center gap-2">
+								<span class="font-medium text-sm">{rangeLabel}</span>
+								<Badge variant="outline" class="text-[11px] capitalize">{entry.reason}</Badge>
+							</div>
+							{#if entry.public_note}
+								<p class="mt-0.5 text-xs text-muted-foreground">{entry.public_note}</p>
+							{/if}
+							{#if entry.redirect_user_name || entry.redirect_user_handle}
+								<p class="mt-0.5 text-xs text-primary">Redirects to: {entry.redirect_user_name || entry.redirect_user_handle}</p>
+							{/if}
+						</button>
+						<Button type="button" variant="ghost" size="sm" class="text-xs text-destructive" onclick={() => deleteOOO(entry.id)}>
+							{$t('common.remove')}
+						</Button>
+					</div>
+				{/each}
+			{/if}
+		</div>
+	</div>
+{:else}
+	<div class="mb-6 flex flex-wrap items-center justify-between gap-3">
+		<div class="flex items-center gap-3">
+			<Button type="button" variant="outline" size="sm" onclick={() => { inScheduleEditor = false; }}>
+				← Back
+			</Button>
+			<h2 class="text-lg font-semibold">
+				{selectedScheduleId
+					? (schedules.find((s) => s.id === selectedScheduleId)?.name ?? 'Schedule')
+					: 'Working hours'}
+			</h2>
+		</div>
+		{#if selectedScheduleId}
+			<Button type="button" variant="ghost" size="sm" class="text-xs text-destructive" onclick={() => { deleteSchedule(selectedScheduleId); inScheduleEditor = false; }}>
+				Delete schedule
+			</Button>
+		{/if}
+	</div>
+
+<!-- Weekly Hours -->
+<div class="mb-8">
+	<h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">{$t('availability.weeklyHours')}</h2>
 
 	{#if rulesError}<p class="mb-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{rulesError}</p>{/if}
 
 	{#if rulesLoading}
 		<p class="py-4 text-sm text-muted-foreground">{$t('common.loading')}</p>
 	{:else}
-		<div class="rounded-lg border bg-card">
+		<div class="rounded-xl border bg-card">
 			<Tooltip.Provider>
 				{#each orderedDays as day, i}
 					<div class="relative flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-start sm:gap-4 {i > 0 ? 'border-t' : ''}">
@@ -944,27 +1070,26 @@
 		{/if}
 	</div>
 </div>
+{/if}
 
-<!-- Out-of-Office & Holidays -->
-<div class="mb-8">
-	<h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Out-of-Office & Holidays</h2>
-	<div class="rounded-lg border bg-card p-4 space-y-4">
-		<div class="flex flex-wrap items-end gap-3">
-			<div class="space-y-1">
-				<span class="text-xs font-medium text-muted-foreground">Pick dates off (holidays / OOO)</span>
-				<div class="flex items-center gap-2">
-					<input type="date" bind:value={oooDatePick} class="h-9 rounded-md border bg-background px-2.5 text-sm" />
-					<Button type="button" variant="outline" size="sm" onclick={addOOODate} disabled={!oooDatePick}>+ Add date</Button>
-				</div>
+<Dialog.Root bind:open={oooModalOpen}>
+	<Dialog.Content class="max-w-md rounded-xl p-6">
+		<Dialog.Header>
+			<Dialog.Title>{oooEditingId ? 'Edit Out of Office' : 'Go Out of Office'}</Dialog.Title>
+		</Dialog.Header>
+		<div class="mt-3 space-y-4">
+			<div class="space-y-1.5">
+				<span class="text-xs font-medium text-muted-foreground">Date range</span>
+				<DateRangePicker bind:start={oooRangeStart} bind:end={oooRangeEnd} placeholder="Select start & end date" />
 			</div>
-			<div class="space-y-1">
+			<div class="space-y-1.5">
 				<span class="text-xs font-medium text-muted-foreground">Reason</span>
 				<Select.Root type="single" bind:value={oooReason}>
-					<Select.Trigger class="h-9 w-40 text-sm">
-						{oooReason === 'ooo' ? 'Out of office' : oooReason.charAt(0).toUpperCase() + oooReason.slice(1)}
+					<Select.Trigger class="w-full text-sm">
+						{oooReason === 'ooo' ? 'Unspecified' : oooReason.charAt(0).toUpperCase() + oooReason.slice(1)}
 					</Select.Trigger>
 					<Select.Content>
-						<Select.Item value="ooo" label="Out of office">Out of office</Select.Item>
+						<Select.Item value="ooo" label="Unspecified">Unspecified</Select.Item>
 						<Select.Item value="holiday" label="Holiday">Holiday</Select.Item>
 						<Select.Item value="vacation" label="Vacation">Vacation</Select.Item>
 						<Select.Item value="sick" label="Sick">Sick</Select.Item>
@@ -973,46 +1098,47 @@
 					</Select.Content>
 				</Select.Root>
 			</div>
-			<div class="min-w-[200px] flex-1 space-y-1">
-				<span class="text-xs font-medium text-muted-foreground">Public note (optional)</span>
-				<input type="text" bind:value={oooPublicNote} placeholder="e.g. Back Monday — reach out to..." class="h-9 w-full rounded-md border bg-background px-3 text-sm" />
+			<div class="space-y-1.5">
+				<span class="text-xs font-medium text-muted-foreground">Notes</span>
+				<textarea
+					bind:value={oooPublicNote}
+					rows={3}
+					placeholder="Additional notes"
+					class="w-full rounded-md border bg-background px-3 py-2 text-sm"
+				></textarea>
+				<label class="flex items-center gap-2 text-xs text-muted-foreground">
+					<input type="checkbox" bind:checked={oooShowPublicNote} /> Show note on public booking page
+				</label>
 			</div>
-			<Button type="button" size="sm" disabled={oooSaving || oooDates.length === 0} onclick={saveOOO}>
-				{oooSaving ? 'Saving...' : 'Save OOO'}
+			<div class="space-y-2 rounded-lg border p-3">
+				<div class="flex items-center justify-between gap-3">
+					<span class="text-xs font-medium">Provide a link to a team member when OOO</span>
+					<Switch bind:checked={oooProvideRedirect} />
+				</div>
+				{#if oooProvideRedirect}
+					<Select.Root type="single" bind:value={oooRedirectUserId}>
+						<Select.Trigger class="w-full text-xs">
+							{oooRedirectUserId
+								? (directoryUsers.find((u) => u.id === oooRedirectUserId)?.name ?? 'Select teammate')
+								: 'Select teammate...'}
+						</Select.Trigger>
+						<Select.Content>
+							{#each directoryUsers as u}
+								<Select.Item value={u.id} label={u.name}>{u.name}{u.handle ? ` (/${u.handle})` : ''}</Select.Item>
+							{/each}
+						</Select.Content>
+					</Select.Root>
+				{/if}
+			</div>
+		</div>
+		<div class="mt-5 flex justify-end gap-2">
+			<Button type="button" variant="ghost" onclick={() => { oooModalOpen = false; }}>Cancel</Button>
+			<Button type="button" disabled={oooSaving || !oooRangeStart} onclick={saveOOO}>
+				{oooSaving ? 'Saving...' : (oooEditingId ? 'Save' : 'Create')}
 			</Button>
 		</div>
-
-		{#if oooDates.length > 0}
-			<div class="flex flex-wrap gap-1.5">
-				{#each oooDates as d}
-					<span class="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs font-medium">
-						{d}
-						<button type="button" class="text-muted-foreground hover:text-foreground" onclick={() => { oooDates = oooDates.filter((x) => x !== d); }}>×</button>
-					</span>
-				{/each}
-			</div>
-		{/if}
-
-		{#if oooEntries.length > 0}
-			<div class="divide-y border-t pt-2">
-				{#each oooEntries as entry}
-					<div class="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-						<div>
-							<span class="font-medium capitalize">{entry.reason}</span>
-							<span class="ml-2 text-xs text-muted-foreground">{entry.dates.join(', ')}</span>
-							{#if entry.public_note}
-								<p class="text-xs text-muted-foreground">{entry.public_note}</p>
-							{/if}
-						</div>
-						<Button type="button" variant="ghost" size="sm" class="text-xs text-destructive" onclick={() => deleteOOO(entry.id)}>
-							{$t('common.remove')}
-						</Button>
-					</div>
-				{/each}
-			</div>
-		{/if}
-	</div>
-</div>
+	</Dialog.Content>
+</Dialog.Root>
 
 <Dialog.Root bind:open={ovModalOpen}>
 	<Dialog.Content class="w-[calc(100vw-1.5rem)] max-w-3xl sm:max-w-3xl max-h-[90dvh] overflow-y-auto p-0">

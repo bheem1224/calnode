@@ -95,7 +95,7 @@ func (h *Handler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 					&user.CustomRoleID, &user.CustomRoleName, &allowImp, &canUsers, &canSettings, &canTeams)
 			user.NotifyConfirmation, user.NotifyCancellation, user.NotifyReschedule, user.NotifyReminder = nc != 0, nca != 0, nr != 0, nrm != 0
 			user.NotifyHostBooking, user.NotifyHostCancel, user.NotifyHostReschedule = nhb != 0, nhc != 0, nhr != 0
-			user.CanImpersonate = allowImp.Valid && allowImp.Int64 != 0
+			user.CanImpersonate = user.IsOwner || user.IsAdmin || (allowImp.Valid && allowImp.Int64 != 0)
 			user.CanManageUsers = user.IsOwner || user.IsAdmin || (canUsers.Valid && canUsers.Int64 != 0)
 			user.CanManageSettings = user.IsOwner || user.IsAdmin || (canSettings.Valid && canSettings.Int64 != 0)
 			user.CanManageTeams = user.IsOwner || user.IsAdmin || (canTeams.Valid && canTeams.Int64 != 0)
@@ -134,7 +134,7 @@ func (h *Handler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 					&user.CustomRoleID, &user.CustomRoleName, &allowImp, &canUsers, &canSettings, &canTeams); err == nil {
 				user.NotifyConfirmation, user.NotifyCancellation, user.NotifyReschedule, user.NotifyReminder = nc != 0, nca != 0, nr != 0, nrm != 0
 				user.NotifyHostBooking, user.NotifyHostCancel, user.NotifyHostReschedule = nhb != 0, nhc != 0, nhr != 0
-				user.CanImpersonate = allowImp.Valid && allowImp.Int64 != 0
+				user.CanImpersonate = user.IsOwner || user.IsAdmin || (allowImp.Valid && allowImp.Int64 != 0)
 				user.CanManageUsers = user.IsOwner || user.IsAdmin || (canUsers.Valid && canUsers.Int64 != 0)
 				user.CanManageSettings = user.IsOwner || user.IsAdmin || (canSettings.Valid && canSettings.Int64 != 0)
 				user.CanManageTeams = user.IsOwner || user.IsAdmin || (canTeams.Valid && canTeams.Int64 != 0)

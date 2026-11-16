@@ -443,6 +443,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 
 	// Users
 	mux.HandleFunc("GET /v1/users", h.RequireAuth(h.ListUsers))
+	mux.HandleFunc("GET /v1/users/directory", h.RequireAuth(h.ListDirectoryUsers))
 	mux.HandleFunc("DELETE /v1/users/{id}", h.RequireAuth(h.DeleteUser))
 	mux.HandleFunc("PATCH /v1/users/{id}/role", h.RequireAuth(h.SetUserRole))
 	mux.HandleFunc("PATCH /v1/users/{id}/custom-role", h.RequireAuth(h.SetUserCustomRole))
@@ -545,6 +546,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("DELETE /v1/availability-schedules/{id}", h.RequireAuth(h.DeleteAvailabilitySchedule))
 	mux.HandleFunc("GET /v1/ooo", h.RequireAuth(h.ListOOOEntries))
 	mux.HandleFunc("POST /v1/ooo", h.RequireAuth(h.CreateOOOEntry))
+	mux.HandleFunc("PATCH /v1/ooo/{id}", h.RequireAuth(h.UpdateOOOEntry))
 	mux.HandleFunc("DELETE /v1/ooo/{id}", h.RequireAuth(h.DeleteOOOEntry))
 
 	// Slots — public, rate-limited per IP. Browsed more than booked (so a higher cap

@@ -17,7 +17,8 @@
 	let roles: RBACRole[] = $state([]);
 	let impLogs: ImpersonationLogEntry[] = $state([]);
 	let newRoleName = $state('');
-	let newRoleAllowImp = $state(false);
+	let newRoleCanImp = $state(false);
+	let newRoleIsImpersonatable = $state(true);
 	let newRoleManageUsers = $state(false);
 	let newRoleManageSettings = $state(false);
 	let newRoleManageTeams = $state(false);
@@ -92,13 +93,15 @@
 		try {
 			await api.post('/v1/roles', {
 				name,
-				allow_impersonation: newRoleAllowImp,
+				can_impersonate: newRoleCanImp,
+				is_impersonatable: newRoleIsImpersonatable,
 				can_manage_users: newRoleManageUsers,
 				can_manage_settings: newRoleManageSettings,
 				can_manage_teams: newRoleManageTeams
 			});
 			newRoleName = '';
-			newRoleAllowImp = false;
+			newRoleCanImp = false;
+			newRoleIsImpersonatable = true;
 			newRoleManageUsers = false;
 			newRoleManageSettings = false;
 			newRoleManageTeams = false;
@@ -623,7 +626,7 @@
 														<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={() => startReset(m.id)}>{$t('members.resetPassword')}</Button>
 														<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:text-destructive" onclick={() => startArchive(m)}>{$t('members.archive')}</Button>
 													{/if}
-													{#if $currentUser.can_impersonate && m.id !== $currentUser.id && (!m.is_owner || $currentUser.is_owner)}
+													{#if $currentUser.can_impersonate && m.id !== $currentUser.id && m.is_impersonatable !== false && (!m.is_owner || $currentUser.is_owner)}
 														<Button size="sm" variant="outline" class="h-7 text-xs" onclick={() => impersonateUser(m)}>
 															Impersonate
 														</Button>
@@ -689,7 +692,10 @@
 				<div class="flex flex-wrap items-center gap-3">
 					<Input bind:value={newRoleName} placeholder="Role name (e.g. Support Agent)" class="h-8 w-56 text-sm" />
 					<label class="flex items-center gap-1.5 text-xs">
-						<input type="checkbox" bind:checked={newRoleAllowImp} /> Allow user impersonation
+						<input type="checkbox" bind:checked={newRoleCanImp} /> Can impersonate users
+					</label>
+					<label class="flex items-center gap-1.5 text-xs">
+						<input type="checkbox" bind:checked={newRoleIsImpersonatable} /> Allow this role to be impersonated
 					</label>
 					<label class="flex items-center gap-1.5 text-xs">
 						<input type="checkbox" bind:checked={newRoleManageUsers} /> Manage users
@@ -711,7 +717,8 @@
 								<div class="flex flex-wrap items-center gap-2">
 									<span class="font-medium text-sm">{r.name}</span>
 									{#if r.is_system}<Badge variant="secondary">Built-in</Badge>{/if}
-									{#if r.allow_impersonation}<Badge variant="outline">Impersonation</Badge>{/if}
+									{#if r.can_impersonate}<Badge variant="outline">Can impersonate</Badge>{/if}
+									{#if !r.is_impersonatable}<Badge variant="outline">Protected (no impersonation)</Badge>{/if}
 									{#if r.can_manage_users}<Badge variant="outline">Users</Badge>{/if}
 									{#if r.can_manage_settings}<Badge variant="outline">Settings</Badge>{/if}
 									{#if r.can_manage_teams}<Badge variant="outline">Teams</Badge>{/if}

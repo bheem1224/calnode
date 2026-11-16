@@ -87,6 +87,9 @@ type bookPageData struct {
 	AllowMultipleDurations   bool
 	DurationOptions          []int
 	LocationOptions          []bookLocationOption
+	OOONote                  string
+	OOORedirectName          string
+	OOORedirectHandle        string
 	// AssistantEnabled shows the conversational-booking chat panel when the LLM layer is on.
 	AssistantEnabled bool
 	// AssistantDisclosure is the persistent AI-disclosure notice on the chat panel (Art. 50(1)).
@@ -504,9 +507,10 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		allowMultiDur  bool
 		durOptsRaw     sql.NullString
 		locOptsRaw     sql.NullString
+		ownerID        string
 	)
 	query := `
-		SELECT et.id, et.name, COALESCE(et.description, ''),
+		SELECT et.id, et.user_id, et.name, COALESCE(et.description, ''),
 		       et.duration_minutes, et.location_type, COALESCE(et.location_value, ''),
 		       et.max_future_days, et.min_notice_minutes, et.routing_mode, u.name, COALESCE(u.avatar_url, ''),
 		       et.price_cents, et.currency, et.msg_greeting, et.allow_phone_call, u.booking_accent,
@@ -519,7 +523,7 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		query += ` AND et.is_public = 1`
 	}
 	err := h.db.QueryRowContext(r.Context(), query, slug).
-		Scan(&etID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor, &redirectURL, &reqEmailVerify, &allowMultiDur, &durOptsRaw, &locOptsRaw)
+		Scan(&etID, &ownerID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor, &redirectURL, &reqEmailVerify, &allowMultiDur, &durOptsRaw, &locOptsRaw)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Page not found", http.StatusNotFound)
@@ -614,7 +618,12 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		}
 	}
 
+	oooNote, oooRedirName, oooRedirHandle := h.ActiveOOONoticeForUser(r.Context(), ownerID)
+
 	data := bookPageData{
+		OOONote:             oooNote,
+		OOORedirectName:     oooRedirName,
+		OOORedirectHandle:   oooRedirHandle,
 		PhoneChoice:         allowPhoneCall && onlineMeetingLocation(locType),
 		AccentColor:         accentColor,
 		AccentForeground:    accentForeground(accentColor),

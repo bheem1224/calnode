@@ -188,6 +188,82 @@ func (h *Handler) CreateOOOEntry(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// UpdateOOOEntry handles PATCH /v1/ooo/{id}.
+func (h *Handler) UpdateOOOEntry(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	id := r.PathValue("id")
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+
+	var ownerID string
+	err := h.db.QueryRowContext(r.Context(), `SELECT user_id FROM ooo_entries WHERE id = ?`, id).Scan(&ownerID)
+	if err == sql.ErrNoRows {
+		h.writeError(w, http.StatusNotFound, "OOO entry not found")
+		return
+	}
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if ownerID != user.ID && !user.IsAdmin && !user.IsOwner {
+		h.writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	var req struct {
+		Dates          []string `json:"dates"`
+		Reason         string   `json:"reason"`
+		PublicNote     string   `json:"public_note"`
+		RedirectUserID *string  `json:"redirect_user_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	dates, ok := normalizeOOODates(req.Dates)
+	if !ok {
+		h.writeError(w, http.StatusBadRequest, "dates must be a non-empty list of YYYY-MM-DD dates")
+		return
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = "ooo"
+	}
+	if !validOOOReason(reason) {
+		h.writeError(w, http.StatusBadRequest, "invalid reason")
+		return
+	}
+	var redirID *string
+	if req.RedirectUserID != nil && strings.TrimSpace(*req.RedirectUserID) != "" {
+		rid := strings.TrimSpace(*req.RedirectUserID)
+		if rid == user.ID {
+			h.writeError(w, http.StatusBadRequest, "cannot redirect OOO to yourself")
+			return
+		}
+		var exists int
+		if err := h.db.QueryRowContext(r.Context(),
+			`SELECT 1 FROM users WHERE id = ? AND archived_at IS NULL`, rid).Scan(&exists); err != nil {
+			h.writeError(w, http.StatusBadRequest, "invalid redirect_user_id")
+			return
+		}
+		redirID = &rid
+	}
+	datesBytes, _ := json.Marshal(dates)
+	if _, err := h.db.ExecContext(r.Context(), `
+		UPDATE ooo_entries SET dates_json = ?, reason = ?, public_note = ?, redirect_user_id = ?
+		WHERE id = ?`, string(datesBytes), reason, strings.TrimSpace(req.PublicNote), redirID, id); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	h.writeJSON(w, http.StatusOK, oooEntryJSON{
+		ID:             id,
+		UserID:         ownerID,
+		Dates:          dates,
+		Reason:         reason,
+		PublicNote:     strings.TrimSpace(req.PublicNote),
+		RedirectUserID: redirID,
+	})
+}
+
 // DeleteOOOEntry handles DELETE /v1/ooo/{id}.
 func (h *Handler) DeleteOOOEntry(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
@@ -239,4 +315,42 @@ func (h *Handler) loadUserOOODates(ctx context.Context, userID string) ([]time.T
 		}
 	}
 	return out, rows.Err()
+}
+
+// ActiveOOONoticeForUser returns the first active/upcoming OOO public note and optional
+// teammate redirect for a host (used on public booking pages).
+func (h *Handler) ActiveOOONoticeForUser(ctx context.Context, userID string) (note, redirectName, redirectHandle string) {
+	today := time.Now().UTC().Format("2006-01-02")
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT o.dates_json, o.public_note, COALESCE(ru.name, ''), COALESCE(ru.handle, '')
+		FROM ooo_entries o
+		LEFT JOIN users ru ON ru.id = o.redirect_user_id
+		WHERE o.user_id = ?
+		   OR (o.team_id IS NOT NULL AND o.team_id IN (SELECT team_id FROM team_members WHERE user_id = ?))
+		ORDER BY o.created_at DESC`, userID, userID)
+	if err != nil {
+		return "", "", ""
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw, pubNote, rName, rHandle string
+		if err := rows.Scan(&raw, &pubNote, &rName, &rHandle); err != nil {
+			continue
+		}
+		var dates []string
+		if err := json.Unmarshal([]byte(raw), &dates); err != nil {
+			continue
+		}
+		active := false
+		for _, d := range dates {
+			if d >= today {
+				active = true
+				break
+			}
+		}
+		if active && (pubNote != "" || rHandle != "") {
+			return pubNote, rName, rHandle
+		}
+	}
+	return "", "", ""
 }

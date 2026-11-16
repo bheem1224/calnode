@@ -18,6 +18,7 @@ type availOverrideJSON struct {
 	StartTime   *string `json:"start_time"`         // HH:MM; only when IsAvailable
 	EndTime     *string `json:"end_time"`           // HH:MM; only when IsAvailable
 	GroupID     *string `json:"group_id,omitempty"` // set on rows from a multi-day span
+	ScheduleID  *string `json:"schedule_id,omitempty"`
 }
 
 func validOverrideReason(r string) bool {
@@ -38,11 +39,12 @@ func (h *Handler) CreateAvailabilityOverride(w http.ResponseWriter, r *http.Requ
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 
 	var req struct {
-		Date      string  `json:"date"`
-		EndDate   *string `json:"end_date"` // set for a multi-day out-of-office span
-		Reason    string  `json:"reason"`
-		StartTime *string `json:"start_time"`
-		EndTime   *string `json:"end_time"`
+		Date       string  `json:"date"`
+		EndDate    *string `json:"end_date"` // set for a multi-day out-of-office span
+		Reason     string  `json:"reason"`
+		StartTime  *string `json:"start_time"`
+		EndTime    *string `json:"end_time"`
+		ScheduleID *string `json:"schedule_id"`
 		// Legacy field — ignored if reason is provided.
 		IsAvailable *bool `json:"is_available"`
 	}
@@ -58,6 +60,17 @@ func (h *Handler) CreateAvailabilityOverride(w http.ResponseWriter, r *http.Requ
 		h.writeError(w, http.StatusBadRequest, "date must be YYYY-MM-DD")
 		return
 	}
+	if req.ScheduleID != nil && *req.ScheduleID != "" {
+		var exists int
+		if err := h.db.QueryRowContext(r.Context(),
+			`SELECT 1 FROM availability_schedules WHERE id = ? AND user_id = ?`, *req.ScheduleID, user.ID).Scan(&exists); err != nil {
+			h.writeError(w, http.StatusBadRequest, "invalid schedule_id")
+			return
+		}
+	} else {
+		req.ScheduleID = nil
+	}
+
 	// Derive reason: prefer explicit reason field, fall back to is_available for old callers.
 	if req.Reason == "" {
 		if req.IsAvailable != nil && *req.IsAvailable {
@@ -179,17 +192,17 @@ func (h *Handler) CreateAvailabilityOverride(w http.ResponseWriter, r *http.Requ
 		}
 		defer tx.Rollback() //nolint:errcheck
 		if _, err := tx.ExecContext(r.Context(),
-			`DELETE FROM availability_overrides WHERE user_id = ? AND date = ?`,
-			user.ID, req.Date); err != nil {
+			`DELETE FROM availability_overrides WHERE user_id = ? AND date = ? AND COALESCE(schedule_id, '') = COALESCE(?, '')`,
+			user.ID, req.Date, req.ScheduleID); err != nil {
 			h.logger.ErrorContext(r.Context(), "override block: clear date", "error", err)
 			h.writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 		id := uid.New()
 		if _, err := tx.ExecContext(r.Context(), `
-			INSERT INTO availability_overrides (id, user_id, date, is_available, reason, start_time, end_time)
-			VALUES (?, ?, ?, 0, ?, NULL, NULL)`,
-			id, user.ID, req.Date, req.Reason); err != nil {
+			INSERT INTO availability_overrides (id, user_id, schedule_id, date, is_available, reason, start_time, end_time)
+			VALUES (?, ?, ?, ?, 0, ?, NULL, NULL)`,
+			id, user.ID, req.ScheduleID, req.Date, req.Reason); err != nil {
 			h.logger.ErrorContext(r.Context(), "override block: insert", "error", err)
 			h.writeError(w, http.StatusInternalServerError, "internal error")
 			return
@@ -200,7 +213,7 @@ func (h *Handler) CreateAvailabilityOverride(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		h.writeJSON(w, http.StatusCreated, availOverrideJSON{
-			ID: id, Date: req.Date, IsAvailable: false, Reason: req.Reason,
+			ID: id, Date: req.Date, IsAvailable: false, Reason: req.Reason, ScheduleID: req.ScheduleID,
 		})
 		return
 	}
@@ -209,9 +222,9 @@ func (h *Handler) CreateAvailabilityOverride(w http.ResponseWriter, r *http.Requ
 	// exact duplicate is rejected.
 	id := uid.New()
 	if _, err := h.db.ExecContext(r.Context(), `
-		INSERT INTO availability_overrides (id, user_id, date, is_available, reason, start_time, end_time)
-		VALUES (?, ?, ?, 1, 'custom_hours', ?, ?)`,
-		id, user.ID, req.Date, req.StartTime, req.EndTime); err != nil {
+		INSERT INTO availability_overrides (id, user_id, schedule_id, date, is_available, reason, start_time, end_time)
+		VALUES (?, ?, ?, ?, 1, 'custom_hours', ?, ?)`,
+		id, user.ID, req.ScheduleID, req.Date, req.StartTime, req.EndTime); err != nil {
 		if db.IsUniqueViolation(err) {
 			h.writeError(w, http.StatusConflict, "those exact hours already exist for this date")
 			return
@@ -223,7 +236,7 @@ func (h *Handler) CreateAvailabilityOverride(w http.ResponseWriter, r *http.Requ
 
 	h.writeJSON(w, http.StatusCreated, availOverrideJSON{
 		ID: id, Date: req.Date, IsAvailable: true, Reason: "custom_hours",
-		StartTime: req.StartTime, EndTime: req.EndTime,
+		StartTime: req.StartTime, EndTime: req.EndTime, ScheduleID: req.ScheduleID,
 	})
 }
 
@@ -231,12 +244,23 @@ func (h *Handler) CreateAvailabilityOverride(w http.ResponseWriter, r *http.Requ
 func (h *Handler) ListAvailabilityOverrides(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 
-	rows, err := h.db.QueryContext(r.Context(), `
-		SELECT id, date, is_available, COALESCE(reason,'day_off'),
-		       COALESCE(start_time,''), COALESCE(end_time,''), group_id
-		FROM availability_overrides
-		WHERE user_id = ?
-		ORDER BY date`, user.ID)
+	var rows *sql.Rows
+	var err error
+	if schedID := r.URL.Query().Get("schedule_id"); schedID != "" {
+		rows, err = h.db.QueryContext(r.Context(), `
+			SELECT id, date, is_available, COALESCE(reason,'day_off'),
+			       COALESCE(start_time,''), COALESCE(end_time,''), group_id
+			FROM availability_overrides
+			WHERE user_id = ? AND schedule_id = ?
+			ORDER BY date`, user.ID, schedID)
+	} else {
+		rows, err = h.db.QueryContext(r.Context(), `
+			SELECT id, date, is_available, COALESCE(reason,'day_off'),
+			       COALESCE(start_time,''), COALESCE(end_time,''), group_id
+			FROM availability_overrides
+			WHERE user_id = ? AND schedule_id IS NULL
+			ORDER BY date`, user.ID)
+	}
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list availability overrides", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")

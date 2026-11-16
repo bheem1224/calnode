@@ -340,6 +340,7 @@ export type TeamMember = {
 	role: 'owner' | 'admin' | 'member';
 	custom_role_id?: string;
 	custom_role_name?: string;
+	is_impersonatable?: boolean;
 	email_login: boolean;
 	provider?: string;
 	avatar_url?: string;
@@ -420,7 +421,8 @@ export type RBACRole = {
 	id: string;
 	name: string;
 	is_system: boolean;
-	allow_impersonation: boolean;
+	can_impersonate: boolean;
+	is_impersonatable: boolean;
 	can_manage_users: boolean;
 	can_manage_settings: boolean;
 	can_manage_teams: boolean;

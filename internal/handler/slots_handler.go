@@ -556,9 +556,16 @@ func (h *Handler) loadHostSchedule(ctx context.Context, userID, eventTypeID stri
 		return nil, nil, nil, err
 	}
 
-	ovRows, err := h.db.QueryContext(ctx, `
-		SELECT date, is_available, COALESCE(start_time,''), COALESCE(end_time,'')
-		FROM availability_overrides WHERE user_id = ?`, userID)
+	var ovRows *sql.Rows
+	if schedID != "" {
+		ovRows, err = h.db.QueryContext(ctx, `
+			SELECT date, is_available, COALESCE(start_time,''), COALESCE(end_time,'')
+			FROM availability_overrides WHERE user_id = ? AND (schedule_id IS NULL OR schedule_id = ?)`, userID, schedID)
+	} else {
+		ovRows, err = h.db.QueryContext(ctx, `
+			SELECT date, is_available, COALESCE(start_time,''), COALESCE(end_time,'')
+			FROM availability_overrides WHERE user_id = ? AND schedule_id IS NULL`, userID)
+	}
 	if err != nil {
 		return nil, nil, nil, err
 	}

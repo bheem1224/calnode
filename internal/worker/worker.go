@@ -139,6 +139,7 @@ func (w *Worker) Poll(ctx context.Context) {
 	}
 	w.sweepExpiredSingleUseLinks(ctx, now)
 	w.sweepScheduledTimezones(ctx, now)
+	w.sweepExpiredOOOEntries(ctx, now)
 	// Webhook deliveries are a log: the UI shows the 50 most recent and nothing reads
 	// them back for state. Nothing purged them, so on a busy instance they accumulated
 	// for its entire life, inside the SQLite file Litestream replicates offsite.
@@ -534,5 +535,39 @@ func (w *Worker) sweepScheduledTimezones(ctx context.Context, now string) {
 		  AND timezone_effective_at != ''
 		  AND timezone_effective_at <= ?`, now); err != nil {
 		w.logger.Error("worker: apply scheduled timezones", "error", err)
+	}
+}
+
+func (w *Worker) sweepExpiredOOOEntries(ctx context.Context, now string) {
+	today := now[:10] // YYYY-MM-DD in UTC
+	rows, err := w.db.QueryContext(ctx, `SELECT id, dates_json FROM ooo_entries`)
+	if err != nil {
+		return
+	}
+	var toDelete []string
+	for rows.Next() {
+		var id, raw string
+		if err := rows.Scan(&id, &raw); err != nil {
+			continue
+		}
+		var dates []string
+		if err := json.Unmarshal([]byte(raw), &dates); err != nil || len(dates) == 0 {
+			toDelete = append(toDelete, id)
+			continue
+		}
+		allPast := true
+		for _, d := range dates {
+			if d >= today {
+				allPast = false
+				break
+			}
+		}
+		if allPast {
+			toDelete = append(toDelete, id)
+		}
+	}
+	rows.Close() // #nosec G104
+	for _, id := range toDelete {
+		_, _ = w.db.ExecContext(ctx, `DELETE FROM ooo_entries WHERE id = ?`, id)
 	}
 }
