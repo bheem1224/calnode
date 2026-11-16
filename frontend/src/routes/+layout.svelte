@@ -277,6 +277,26 @@
 	{#if $authStatus.demo_mode}
 		<DemoBanner />
 	{/if}
+	{#if $currentUser?.impersonating}
+		<div class="flex items-center justify-between gap-3 bg-amber-500/15 border-b border-amber-500/30 px-4 py-2 text-xs text-amber-900 dark:text-amber-200">
+			<span>
+				Impersonating <strong>{$currentUser.name}</strong> ({$currentUser.email})
+				{#if $currentUser.impersonator_email}
+					— signed in as {$currentUser.impersonator_name || $currentUser.impersonator_email}
+				{/if}
+			</span>
+			<button
+				type="button"
+				class="rounded bg-amber-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-700"
+				onclick={async () => {
+					await api.post('/v1/admin/impersonate/stop');
+					window.location.reload();
+				}}
+			>
+				Exit impersonation
+			</button>
+		</div>
+	{/if}
 
 	<!-- Mobile chrome (§226 phase 1): a compact header with the nav trigger. Hidden from md
 	     up, where the sidebar is always visible instead. -->

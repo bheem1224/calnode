@@ -14,6 +14,12 @@ export type User = {
 	is_admin: boolean;
 	is_owner: boolean;
 	role: 'owner' | 'admin' | 'member';
+	custom_role_id?: string;
+	custom_role_name?: string;
+	can_impersonate?: boolean;
+	impersonating?: boolean;
+	impersonator_name?: string;
+	impersonator_email?: string;
 	notify_confirmation: boolean;
 	notify_cancellation: boolean;
 	notify_reschedule: boolean;
@@ -332,6 +338,8 @@ export type TeamMember = {
 	is_admin: boolean;
 	is_owner: boolean;
 	role: 'owner' | 'admin' | 'member';
+	custom_role_id?: string;
+	custom_role_name?: string;
 	email_login: boolean;
 	provider?: string;
 	avatar_url?: string;
@@ -405,6 +413,29 @@ export type OOOEntry = {
 	redirect_user_id?: string | null;
 	redirect_user_name?: string;
 	redirect_user_handle?: string;
+	created_at: string;
+};
+
+export type RBACRole = {
+	id: string;
+	name: string;
+	is_system: boolean;
+	allow_impersonation: boolean;
+	can_manage_users: boolean;
+	can_manage_settings: boolean;
+	can_manage_teams: boolean;
+	created_at: string;
+};
+
+export type ImpersonationLogEntry = {
+	id: string;
+	actor_user_id: string;
+	actor_name: string;
+	actor_email: string;
+	target_user_id: string;
+	target_name: string;
+	target_email: string;
+	action: 'start' | 'stop';
 	created_at: string;
 };
 

@@ -128,6 +128,10 @@ func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
 		"is_admin":              user.IsAdmin,
 		"is_owner":              user.IsOwner,
 		"role":                  user.Role(),
+		"custom_role_id":        user.CustomRoleID,
+		"custom_role_name":      user.CustomRoleName,
+		"can_impersonate":       user.CanImpersonate,
+		"impersonating":         user.ImpersonatorID != "",
 		// Notification preferences
 		"notify_confirmation":    user.NotifyConfirmation,
 		"notify_cancellation":    user.NotifyCancellation,
@@ -139,6 +143,14 @@ func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
 	}
 	if user.AvatarURL != "" {
 		out["avatar_url"] = user.AvatarURL
+	}
+	if user.ImpersonatorID != "" {
+		var impName, impEmail string
+		if err := h.db.QueryRowContext(r.Context(),
+			`SELECT name, email FROM users WHERE id = ?`, user.ImpersonatorID).Scan(&impName, &impEmail); err == nil {
+			out["impersonator_name"] = impName
+			out["impersonator_email"] = impEmail
+		}
 	}
 	h.writeJSON(w, http.StatusOK, out)
 }
@@ -369,6 +381,10 @@ func (h *Handler) PatchMe(w http.ResponseWriter, r *http.Request) {
 		"is_admin":              user.IsAdmin,
 		"is_owner":              user.IsOwner,
 		"role":                  user.Role(),
+		"custom_role_id":        user.CustomRoleID,
+		"custom_role_name":      user.CustomRoleName,
+		"can_impersonate":       user.CanImpersonate,
+		"impersonating":         user.ImpersonatorID != "",
 		// Notification preferences
 		"notify_confirmation":    current.NotifyConfirmation,
 		"notify_cancellation":    current.NotifyCancellation,
@@ -380,6 +396,14 @@ func (h *Handler) PatchMe(w http.ResponseWriter, r *http.Request) {
 	}
 	if user.AvatarURL != "" {
 		out["avatar_url"] = user.AvatarURL
+	}
+	if user.ImpersonatorID != "" {
+		var impName, impEmail string
+		if err := h.db.QueryRowContext(r.Context(),
+			`SELECT name, email FROM users WHERE id = ?`, user.ImpersonatorID).Scan(&impName, &impEmail); err == nil {
+			out["impersonator_name"] = impName
+			out["impersonator_email"] = impEmail
+		}
 	}
 	h.writeJSON(w, http.StatusOK, out)
 }

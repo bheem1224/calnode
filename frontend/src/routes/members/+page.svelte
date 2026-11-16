@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, type TeamMember, type Invite, type UpcomingBooking } from '$lib/api';
+	import { api, type TeamMember, type Invite, type UpcomingBooking, type RBACRole, type ImpersonationLogEntry } from '$lib/api';
 	import { currentUser } from '$lib/stores';
 	import { Button } from '$lib/components/ui/button';
 	import { ConfirmDialog } from '$lib/components/ui/confirm-dialog';
@@ -14,6 +14,14 @@
 
 	let members: TeamMember[] = $state([]);
 	let invites: Invite[] = $state([]);
+	let roles: RBACRole[] = $state([]);
+	let impLogs: ImpersonationLogEntry[] = $state([]);
+	let newRoleName = $state('');
+	let newRoleAllowImp = $state(false);
+	let newRoleManageUsers = $state(false);
+	let newRoleManageSettings = $state(false);
+	let newRoleManageTeams = $state(false);
+	let creatingRole = $state(false);
 	let loading = $state(true);
 	let error = $state('');
 	let showArchived = $state(false);
@@ -60,16 +68,75 @@
 
 	async function load() {
 		try {
-			const [membersRes, invitesRes] = await Promise.all([
+			const [membersRes, invitesRes, rolesRes, logsRes] = await Promise.all([
 				api.get<TeamMember[]>(showArchived ? '/v1/users?include_archived=true' : '/v1/users'),
-				api.get<Invite[]>('/v1/invites')
+				api.get<Invite[]>('/v1/invites'),
+				api.get<{ items: RBACRole[] }>('/v1/roles').catch(() => ({ items: [] })),
+				api.get<{ items: ImpersonationLogEntry[] }>('/v1/admin/impersonate/logs').catch(() => ({ items: [] }))
 			]);
 			members = membersRes;
 			invites = invitesRes;
+			roles = rolesRes.items ?? [];
+			impLogs = logsRes.items ?? [];
 		} catch (e: any) {
 			error = e.message;
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function createCustomRole() {
+		const name = newRoleName.trim();
+		if (!name) return;
+		creatingRole = true;
+		try {
+			await api.post('/v1/roles', {
+				name,
+				allow_impersonation: newRoleAllowImp,
+				can_manage_users: newRoleManageUsers,
+				can_manage_settings: newRoleManageSettings,
+				can_manage_teams: newRoleManageTeams
+			});
+			newRoleName = '';
+			newRoleAllowImp = false;
+			newRoleManageUsers = false;
+			newRoleManageSettings = false;
+			newRoleManageTeams = false;
+			await load();
+			toast.success('Custom role created');
+		} catch (e: any) {
+			toast.error(e.message || 'Failed to create role');
+		} finally {
+			creatingRole = false;
+		}
+	}
+
+	async function deleteCustomRole(id: string) {
+		try {
+			await api.del(`/v1/roles/${id}`);
+			await load();
+			toast.success('Role deleted');
+		} catch (e: any) {
+			toast.error(e.message || 'Failed to delete role');
+		}
+	}
+
+	async function assignCustomRole(m: TeamMember, customRoleId: string) {
+		try {
+			await api.patch(`/v1/users/${m.id}/custom-role`, { custom_role_id: customRoleId });
+			await load();
+			toast.success('Custom role updated');
+		} catch (e: any) {
+			toast.error(e.message || 'Failed to assign custom role');
+		}
+	}
+
+	async function impersonateUser(m: TeamMember) {
+		try {
+			await api.post('/v1/admin/impersonate', { user_id: m.id });
+			window.location.href = '/';
+		} catch (e: any) {
+			toast.error(e.message || 'Failed to impersonate user');
 		}
 	}
 
@@ -536,8 +603,30 @@
 													<!-- Reset password + Archive only on members this viewer may manage:
 													     never the owner; another admin only if the viewer is the owner. -->
 													{#if !m.is_owner && (!m.is_admin || $currentUser.is_owner)}
+														{#if roles.filter((r) => !r.is_system).length > 0}
+															<Select.Root
+																type="single"
+																value={m.custom_role_id ?? ''}
+																onValueChange={(v) => assignCustomRole(m, v ?? '')}
+															>
+																<Select.Trigger class="h-7 w-36 text-xs">
+																	{m.custom_role_name || 'No custom role'}
+																</Select.Trigger>
+																<Select.Content>
+																	<Select.Item value="" label="No custom role">No custom role</Select.Item>
+																	{#each roles.filter((r) => !r.is_system) as r}
+																		<Select.Item value={r.id} label={r.name}>{r.name}</Select.Item>
+																	{/each}
+																</Select.Content>
+															</Select.Root>
+														{/if}
 														<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={() => startReset(m.id)}>{$t('members.resetPassword')}</Button>
 														<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:text-destructive" onclick={() => startArchive(m)}>{$t('members.archive')}</Button>
+													{/if}
+													{#if $currentUser.can_impersonate && m.id !== $currentUser.id && (!m.is_owner || $currentUser.is_owner)}
+														<Button size="sm" variant="outline" class="h-7 text-xs" onclick={() => impersonateUser(m)}>
+															Impersonate
+														</Button>
 													{/if}
 												{/if}
 											{/if}
@@ -590,5 +679,71 @@
 				{$t('members.resendHint')}
 			</p>
 		</div>
+	{/if}
+
+	<!-- Custom RBAC Roles -->
+	{#if $currentUser?.is_admin}
+		<div class="mt-8 space-y-4">
+			<h2 class="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Custom Roles & Permissions</h2>
+			<div class="rounded-lg border bg-card p-4 space-y-3">
+				<div class="flex flex-wrap items-center gap-3">
+					<Input bind:value={newRoleName} placeholder="Role name (e.g. Support Agent)" class="h-8 w-56 text-sm" />
+					<label class="flex items-center gap-1.5 text-xs">
+						<input type="checkbox" bind:checked={newRoleAllowImp} /> Allow user impersonation
+					</label>
+					<label class="flex items-center gap-1.5 text-xs">
+						<input type="checkbox" bind:checked={newRoleManageUsers} /> Manage users
+					</label>
+					<label class="flex items-center gap-1.5 text-xs">
+						<input type="checkbox" bind:checked={newRoleManageSettings} /> Manage settings
+					</label>
+					<label class="flex items-center gap-1.5 text-xs">
+						<input type="checkbox" bind:checked={newRoleManageTeams} /> Manage teams
+					</label>
+					<Button size="sm" class="h-8 text-xs" disabled={creatingRole || !newRoleName.trim()} onclick={createCustomRole}>
+						{creatingRole ? 'Creating...' : '+ Create role'}
+					</Button>
+				</div>
+				{#if roles.length > 0}
+					<div class="divide-y border-t pt-2">
+						{#each roles as r}
+							<div class="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
+								<div class="flex flex-wrap items-center gap-2">
+									<span class="font-medium text-sm">{r.name}</span>
+									{#if r.is_system}<Badge variant="secondary">Built-in</Badge>{/if}
+									{#if r.allow_impersonation}<Badge variant="outline">Impersonation</Badge>{/if}
+									{#if r.can_manage_users}<Badge variant="outline">Users</Badge>{/if}
+									{#if r.can_manage_settings}<Badge variant="outline">Settings</Badge>{/if}
+									{#if r.can_manage_teams}<Badge variant="outline">Teams</Badge>{/if}
+								</div>
+								{#if !r.is_system}
+									<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive" onclick={() => deleteCustomRole(r.id)}>
+										Delete
+									</Button>
+								{/if}
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		</div>
+
+		{#if impLogs.length > 0}
+			<div class="mt-8 space-y-3">
+				<h2 class="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Impersonation Audit Log</h2>
+				<div class="rounded-lg border bg-card divide-y">
+					{#each impLogs as log}
+						<div class="flex items-center justify-between px-4 py-2 text-xs">
+							<span>
+								<strong>{log.actor_name || log.actor_email}</strong>
+								{log.action === 'start' ? 'started impersonating' : 'stopped impersonating'}
+								<strong>{log.target_name || log.target_email}</strong>
+							</span>
+							<span class="text-muted-foreground">{fmtDate(log.created_at)}</span>
+						</div>
+					{/each}
+				</div>
+			</div>
+		{/if}
 	{/if}
 {/if}

@@ -23,8 +23,11 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.QueryContext(r.Context(), `
 		SELECT u.id, u.email, u.name, u.iana_timezone, u.is_admin, u.is_owner, u.email_login,
 		       COALESCE(u.provider,''), COALESCE(u.avatar_url,''), COALESCE(u.handle,''), u.created_at,
-		       u.archived_at, COALESCE(u.archived_by,''), COALESCE(ab.name,'')
-		FROM users u LEFT JOIN users ab ON ab.id = u.archived_by
+		       u.archived_at, COALESCE(u.archived_by,''), COALESCE(ab.name,''),
+		       COALESCE(u.custom_role_id,''), COALESCE(r.name,'')
+		FROM users u
+		LEFT JOIN users ab ON ab.id = u.archived_by
+		LEFT JOIN roles r ON r.id = u.custom_role_id
 		`+where+` ORDER BY u.created_at ASC`)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list users: query", "error", err)
@@ -46,6 +49,8 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		IsAdmin        bool      `json:"is_admin"`
 		IsOwner        bool      `json:"is_owner"`
 		Role           string    `json:"role"` // "owner" | "admin" | "member"
+		CustomRoleID   string    `json:"custom_role_id,omitempty"`
+		CustomRoleName string    `json:"custom_role_name,omitempty"`
 		EmailLogin     bool      `json:"email_login"`
 		Provider       string    `json:"provider,omitempty"`
 		AvatarURL      string    `json:"avatar_url,omitempty"`
@@ -63,7 +68,8 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		var isAdmin, isOwner, emailLogin int
 		var archivedAt sql.NullString
 		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Timezone, &isAdmin, &isOwner, &emailLogin,
-			&u.Provider, &u.AvatarURL, &u.Handle, &u.CreatedAt, &archivedAt, &u.ArchivedBy, &u.ArchivedByName); err != nil {
+			&u.Provider, &u.AvatarURL, &u.Handle, &u.CreatedAt, &archivedAt, &u.ArchivedBy, &u.ArchivedByName,
+			&u.CustomRoleID, &u.CustomRoleName); err != nil {
 			continue
 		}
 		u.IsAdmin = isAdmin != 0

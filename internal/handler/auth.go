@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"net/http"
 	"strings"
@@ -25,6 +26,16 @@ type AuthUser struct {
 	AvatarURL  string
 	IsAdmin    bool
 	IsOwner    bool
+
+	// Granular RBAC & impersonation state
+	CustomRoleID      string
+	CustomRoleName    string
+	CanImpersonate    bool
+	CanManageUsers    bool
+	CanManageSettings bool
+	CanManageTeams    bool
+	SessionID         string
+	ImpersonatorID    string
 
 	// Notification preferences (all default true).
 	NotifyConfirmation   bool
@@ -68,16 +79,26 @@ func (h *Handler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 			var user AuthUser
 			var keyID string
 			var nc, nca, nr, nrm, nhb, nhc, nhr int
+			var allowImp, canUsers, canSettings, canTeams sql.NullInt64
 			err := h.db.QueryRowContext(r.Context(), `
 				SELECT ak.id, u.id, u.email, u.name, u.iana_timezone, u.time_format, u.week_start, u.date_format, COALESCE(u.avatar_url,''), u.is_admin, u.is_owner,
 				       COALESCE(u.notify_confirmation,1), COALESCE(u.notify_cancellation,1), COALESCE(u.notify_reschedule,1), COALESCE(u.notify_reminder,1),
-				       COALESCE(u.notify_host_booking,1), COALESCE(u.notify_host_cancel,1), COALESCE(u.notify_host_reschedule,1)
-				FROM api_keys ak JOIN users u ON u.id = ak.user_id
+				       COALESCE(u.notify_host_booking,1), COALESCE(u.notify_host_cancel,1), COALESCE(u.notify_host_reschedule,1),
+				       COALESCE(u.custom_role_id,''), COALESCE(r.name,''),
+				       r.allow_impersonation, r.can_manage_users, r.can_manage_settings, r.can_manage_teams
+				FROM api_keys ak
+				JOIN users u ON u.id = ak.user_id
+				LEFT JOIN roles r ON r.id = u.custom_role_id
 				WHERE ak.key_hash = ? AND u.archived_at IS NULL`, hash).
 				Scan(&keyID, &user.ID, &user.Email, &user.Name, &user.IANATZ, &user.TimeFormat, &user.WeekStart, &user.DateFormat, &user.AvatarURL, &user.IsAdmin, &user.IsOwner,
-					&nc, &nca, &nr, &nrm, &nhb, &nhc, &nhr)
+					&nc, &nca, &nr, &nrm, &nhb, &nhc, &nhr,
+					&user.CustomRoleID, &user.CustomRoleName, &allowImp, &canUsers, &canSettings, &canTeams)
 			user.NotifyConfirmation, user.NotifyCancellation, user.NotifyReschedule, user.NotifyReminder = nc != 0, nca != 0, nr != 0, nrm != 0
 			user.NotifyHostBooking, user.NotifyHostCancel, user.NotifyHostReschedule = nhb != 0, nhc != 0, nhr != 0
+			user.CanImpersonate = allowImp.Valid && allowImp.Int64 != 0
+			user.CanManageUsers = user.IsOwner || user.IsAdmin || (canUsers.Valid && canUsers.Int64 != 0)
+			user.CanManageSettings = user.IsOwner || user.IsAdmin || (canSettings.Valid && canSettings.Int64 != 0)
+			user.CanManageTeams = user.IsOwner || user.IsAdmin || (canTeams.Valid && canTeams.Int64 != 0)
 			if err != nil {
 				h.writeError(w, http.StatusUnauthorized, "invalid API key")
 				return
@@ -94,18 +115,29 @@ func (h *Handler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 			now := time.Now().UTC().Format(time.RFC3339)
 			var user AuthUser
 			var nc, nca, nr, nrm, nhb, nhc, nhr int
+			var allowImp, canUsers, canSettings, canTeams sql.NullInt64
 			if err := h.db.QueryRowContext(r.Context(), `
-				SELECT u.id, u.email, u.name, u.iana_timezone, u.time_format, u.week_start, u.date_format, COALESCE(u.avatar_url,''), u.is_admin, u.is_owner,
+				SELECT s.id, COALESCE(s.impersonator_user_id,''),
+				       u.id, u.email, u.name, u.iana_timezone, u.time_format, u.week_start, u.date_format, COALESCE(u.avatar_url,''), u.is_admin, u.is_owner,
 				       COALESCE(u.notify_confirmation,1), COALESCE(u.notify_cancellation,1), COALESCE(u.notify_reschedule,1), COALESCE(u.notify_reminder,1),
-				       COALESCE(u.notify_host_booking,1), COALESCE(u.notify_host_cancel,1), COALESCE(u.notify_host_reschedule,1)
+				       COALESCE(u.notify_host_booking,1), COALESCE(u.notify_host_cancel,1), COALESCE(u.notify_host_reschedule,1),
+				       COALESCE(u.custom_role_id,''), COALESCE(r.name,''),
+				       r.allow_impersonation, r.can_manage_users, r.can_manage_settings, r.can_manage_teams
 				FROM sessions s
 				JOIN users u ON u.id = s.user_id
+				LEFT JOIN roles r ON r.id = u.custom_role_id
 				WHERE s.id = ? AND s.expires_at > ? AND u.archived_at IS NULL`,
 				cookie.Value, now).
-				Scan(&user.ID, &user.Email, &user.Name, &user.IANATZ, &user.TimeFormat, &user.WeekStart, &user.DateFormat, &user.AvatarURL, &user.IsAdmin, &user.IsOwner,
-					&nc, &nca, &nr, &nrm, &nhb, &nhc, &nhr); err == nil {
+				Scan(&user.SessionID, &user.ImpersonatorID,
+					&user.ID, &user.Email, &user.Name, &user.IANATZ, &user.TimeFormat, &user.WeekStart, &user.DateFormat, &user.AvatarURL, &user.IsAdmin, &user.IsOwner,
+					&nc, &nca, &nr, &nrm, &nhb, &nhc, &nhr,
+					&user.CustomRoleID, &user.CustomRoleName, &allowImp, &canUsers, &canSettings, &canTeams); err == nil {
 				user.NotifyConfirmation, user.NotifyCancellation, user.NotifyReschedule, user.NotifyReminder = nc != 0, nca != 0, nr != 0, nrm != 0
 				user.NotifyHostBooking, user.NotifyHostCancel, user.NotifyHostReschedule = nhb != 0, nhc != 0, nhr != 0
+				user.CanImpersonate = allowImp.Valid && allowImp.Int64 != 0
+				user.CanManageUsers = user.IsOwner || user.IsAdmin || (canUsers.Valid && canUsers.Int64 != 0)
+				user.CanManageSettings = user.IsOwner || user.IsAdmin || (canSettings.Valid && canSettings.Int64 != 0)
+				user.CanManageTeams = user.IsOwner || user.IsAdmin || (canTeams.Valid && canTeams.Int64 != 0)
 				next(w, r.WithContext(context.WithValue(r.Context(), ctxKeyUser, user)))
 				return
 			}
