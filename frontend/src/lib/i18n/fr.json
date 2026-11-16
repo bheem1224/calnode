@@ -216,7 +216,10 @@
 			"title": "Annuler cette réservation ?",
 			"description": "Le participant sera informé et le créneau sera libéré. Cette action est irréversible.",
 			"confirm": "Annuler la réservation",
-			"cancel": "Conserver la réservation"
+			"cancel": "Conserver la réservation",
+			"reasonLabel": "Motif d'annulation (optionnel)",
+			"reasonRequiredLabel": "Motif d'annulation *",
+			"reasonPlaceholder": "Indiquez la raison de l'annulation..."
 		},
 		"status": {
 			"confirmed": "confirmée",
@@ -1590,7 +1593,11 @@
 			"disableCancelHint": "Masque l'option d'annulation sur la page de gestion de l'invité.",
 			"disableReschedule": "Désactiver la reprogrammation",
 			"disableRescheduleHint": "Masque l'option de reprogrammation sur la page de gestion de l'invité.",
-			"cancelReason": "Motif d'annulation",
+			"cancelReason": "Exiger un motif d'annulation",
+			"cancelReasonHint": "Demander un motif lorsqu'une personne annule une réservation.",
+			"cancelReasonBoth": "Obligatoire pour les deux",
+			"cancelReasonHostOnly": "Obligatoire pour l'hôte uniquement",
+			"cancelReasonAttendeeOnly": "Obligatoire pour le participant uniquement",
 			"cancelReasonNone": "Masqué (aucun champ)",
 			"cancelReasonOptional": "Optionnel",
 			"cancelReasonRequired": "Obligatoire",

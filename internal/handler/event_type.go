@@ -737,10 +737,10 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.RequireCancelReason != nil {
 		switch *req.RequireCancelReason {
-		case "none", "optional", "required":
+		case "none", "optional", "required", "both", "host_only", "attendee_only":
 			set("require_cancel_reason", *req.RequireCancelReason)
 		default:
-			h.writeError(w, http.StatusBadRequest, "require_cancel_reason must be none, optional, or required")
+			h.writeError(w, http.StatusBadRequest, "require_cancel_reason must be none, optional, required, both, host_only, or attendee_only")
 			return
 		}
 	}

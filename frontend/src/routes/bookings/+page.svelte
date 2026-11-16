@@ -9,7 +9,8 @@
   import * as Tooltip from "$lib/components/ui/tooltip";
   import * as Select from "$lib/components/ui/select";
   import { DatePicker } from "$lib/components/ui/date-picker";
-  import { ConfirmDialog } from "$lib/components/ui/confirm-dialog";
+  import { Label } from "$lib/components/ui/label";
+  import { Textarea } from "$lib/components/ui/textarea";
   import * as Dialog from "$lib/components/ui/dialog";
 
   let items: Booking[] = $state([]);
@@ -37,7 +38,7 @@
   let counts = $state({ upcoming: 0, past: 0 });
 
   // Options for the filter selects, fetched once.
-  let eventTypes = $state<{ slug: string; name: string }[]>([]);
+  let eventTypes = $state<{ slug: string; name: string; require_cancel_reason?: string }[]>([]);
   let members = $state<{ id: string; name: string }[]>([]);
   let teams = $state<{ id: string; name: string }[]>([]);
 
@@ -218,23 +219,45 @@
 
   let confirmOpen = $state(false);
   let pendingCancelId = $state<string | null>(null);
+  let cancelReason = $state("");
+  let cancelling = $state(false);
+
+  const pendingCancelPolicy = $derived.by(() => {
+    if (!pendingCancelId) return "optional";
+    const b = items.find((i) => i.id === pendingCancelId);
+    if (!b?.event_type_slug) return "optional";
+    return (
+      eventTypes.find((e) => e.slug === b.event_type_slug)?.require_cancel_reason ??
+      "optional"
+    );
+  });
+  const cancelReasonRequired = $derived(
+    pendingCancelPolicy === "both" || pendingCancelPolicy === "host_only"
+  );
 
   function requestCancel(id: string) {
     pendingCancelId = id;
+    cancelReason = "";
     confirmOpen = true;
   }
 
   async function cancel() {
     const id = pendingCancelId;
     if (!id) return;
+    if (cancelReasonRequired && !cancelReason.trim()) return;
+    cancelling = true;
     try {
-      await api.post(`/v1/bookings/${id}/cancel`, {});
+      await api.post(`/v1/bookings/${id}/cancel`, {
+        reason: cancelReason.trim(),
+      });
       await load();
     } catch (e: any) {
       error = e.message;
     } finally {
+      cancelling = false;
       confirmOpen = false;
       pendingCancelId = null;
+      cancelReason = "";
     }
   }
 
@@ -1741,12 +1764,41 @@
   </Dialog.Content>
 </Dialog.Root>
 
-<ConfirmDialog
-  bind:open={confirmOpen}
-  title={$t("bookings.confirmCancel.title")}
-  description={$t("bookings.confirmCancel.description")}
-  confirmText={$t("bookings.confirmCancel.confirm")}
-  cancelText={$t("bookings.confirmCancel.cancel")}
-  destructive
-  onConfirm={cancel}
-/>
+<Dialog.Root bind:open={confirmOpen}>
+  <Dialog.Content>
+    <Dialog.Header>
+      <Dialog.Title>{$t("bookings.confirmCancel.title")}</Dialog.Title>
+      <Dialog.Description
+        >{$t("bookings.confirmCancel.description")}</Dialog.Description
+      >
+    </Dialog.Header>
+    {#if pendingCancelPolicy !== "none"}
+      <div class="space-y-2 py-2">
+        <Label for="host-cancel-reason">
+          {cancelReasonRequired
+            ? $t("bookings.confirmCancel.reasonRequiredLabel")
+            : $t("bookings.confirmCancel.reasonLabel")}
+        </Label>
+        <Textarea
+          id="host-cancel-reason"
+          rows={3}
+          bind:value={cancelReason}
+          placeholder={$t("bookings.confirmCancel.reasonPlaceholder")}
+        />
+      </div>
+    {/if}
+    <Dialog.Footer>
+      <Button
+        variant="outline"
+        onclick={() => (confirmOpen = false)}
+        disabled={cancelling}>{$t("bookings.confirmCancel.cancel")}</Button
+      >
+      <Button
+        variant="destructive"
+        onclick={cancel}
+        disabled={cancelling || (cancelReasonRequired && !cancelReason.trim())}
+        >{$t("bookings.confirmCancel.confirm")}</Button
+      >
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>

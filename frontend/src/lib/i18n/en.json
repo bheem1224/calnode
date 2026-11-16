@@ -216,7 +216,10 @@
 			"title": "Cancel this booking?",
 			"description": "The attendee will be notified and the slot will free up. This can't be undone.",
 			"confirm": "Cancel booking",
-			"cancel": "Keep booking"
+			"cancel": "Keep booking",
+			"reasonLabel": "Cancellation reason (optional)",
+			"reasonRequiredLabel": "Cancellation reason *",
+			"reasonPlaceholder": "Share why this booking is being cancelled..."
 		},
 		"status": {
 			"confirmed": "confirmed",
@@ -1590,7 +1593,11 @@
 			"disableCancelHint": "Hide the cancel option on the invitee manage page.",
 			"disableReschedule": "Disable rescheduling",
 			"disableRescheduleHint": "Hide the reschedule option on the invitee manage page.",
-			"cancelReason": "Cancellation reason",
+			"cancelReason": "Require cancellation reason",
+			"cancelReasonHint": "Ask for a reason when someone cancels a booking.",
+			"cancelReasonBoth": "Mandatory for both",
+			"cancelReasonHostOnly": "Mandatory for host only",
+			"cancelReasonAttendeeOnly": "Mandatory for attendee only",
 			"cancelReasonNone": "Hidden (no reason field)",
 			"cancelReasonOptional": "Optional",
 			"cancelReasonRequired": "Required",

@@ -1822,9 +1822,21 @@ func (h *Handler) CancelBooking(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Reason string `json:"reason"`
 	}
-	// Ignore decode errors — the client reason is accepted for backward
-	// compatibility but never trusted (see below).
+	// Ignore decode errors — the client reason is optional unless the event type
+	// policy requires one, and actor attribution is always set server-side below.
 	_ = json.NewDecoder(r.Body).Decode(&req)
+	clientReason := strings.TrimSpace(req.Reason)
+
+	var requireCancelReason string
+	_ = h.db.QueryRowContext(r.Context(),
+		`SELECT et.require_cancel_reason
+		 FROM bookings b
+		 JOIN event_types et ON et.id = b.event_type_id
+		 WHERE b.id = ?`, id).Scan(&requireCancelReason)
+	if (requireCancelReason == "both" || requireCancelReason == "host_only") && clientReason == "" {
+		h.writeError(w, http.StatusBadRequest, "cancellation reason is required")
+		return
+	}
 
 	// Attribute server-side: the cancellation email names who cancelled, and a
 	// client-supplied string once hardcoded "cancelled by admin" for every
@@ -1836,6 +1848,9 @@ func (h *Handler) CancelBooking(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(user.Name) == "" && strings.TrimSpace(user.Email) == "" {
 		attribution = "Cancelled by host"
+	}
+	if (requireCancelReason == "both" || requireCancelReason == "host_only") && clientReason != "" {
+		attribution += ": " + clientReason
 	}
 
 	// Admins (and the owner) may cancel any booking — needed to resolve a
