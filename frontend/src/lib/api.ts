@@ -126,14 +126,30 @@ export type CreateSingleUseLinkPayload = {
 	expires_in_hours?: number;
 };
 
+export type QuestionType =
+	| 'text'
+	| 'number'
+	| 'phone'
+	| 'address'
+	| 'url'
+	| 'select'
+	| 'multiselect'
+	| 'checkbox'
+	| 'checkbox_group'
+	| 'radio_group'
+	| 'multiple_emails';
+
 export type Question = {
 	id: string;
 	event_type_id: string;
 	label: string;
-	type: 'text' | 'select' | 'checkbox';
+	type: QuestionType;
 	options?: string[];
 	required: boolean;
 	position: number;
+	identifier?: string;
+	hidden?: boolean;
+	lock_if_prefilled?: boolean;
 };
 
 export type Booking = {

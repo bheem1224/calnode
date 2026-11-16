@@ -216,7 +216,7 @@ body {
         </div>
         {{end}}
         {{range .Questions}}
-        <div class="field" data-qid="{{.ID}}" data-required="{{if .Required}}true{{else}}false{{end}}">
+        <div class="field{{if .Hidden}} hidden{{end}}" data-qid="{{.ID}}" data-qtype="{{.QType}}" data-identifier="{{.Identifier}}" data-lock-if-prefilled="{{if .LockIfPrefilled}}true{{else}}false{{end}}" data-required="{{if .Required}}true{{else}}false{{end}}">
           {{if eq .QType "checkbox"}}
           <div class="field-checkbox">
             <input id="ans-{{.ID}}" name="ans-{{.ID}}" type="checkbox">
@@ -224,7 +224,7 @@ body {
           </div>
           {{else if eq .QType "select"}}
           <label for="ans-{{.ID}}">{{.Label}}{{if .Required}} <span class="required-star">*</span>{{end}}</label>
-          <select id="ans-{{.ID}}" name="ans-{{.ID}}"{{if .Required}} required{{end}}>  <!-- nosemgrep: generic.html-templates.security.unquoted-attribute-var.unquoted-attribute-var -->
+          <select id="ans-{{.ID}}" name="ans-{{.ID}}"{{if and .Required (not .Hidden)}} required{{end}}>  <!-- nosemgrep: generic.html-templates.security.unquoted-attribute-var.unquoted-attribute-var -->
             <!-- $.T, not .T: inside the questions range the dot is the question, which has
                  no T method, and html/template aborts the page mid-write when it hits that,
                  truncating the response before the calendar and scripts are emitted. Note
@@ -233,9 +233,44 @@ body {
             <option value="">{{call $.T "choose_option"}}</option>
             {{range .Options}}<option value="{{.}}">{{.}}</option>{{end}}
           </select>
+          {{else if eq .QType "radio_group"}}
+          <label>{{.Label}}{{if .Required}} <span class="required-star">*</span>{{end}}</label>
+          <div class="field-choice-group" style="display:flex;flex-direction:column;gap:0.4rem;margin-top:0.25rem">
+            {{range .Options}}
+            <label class="field-checkbox" style="font-weight:400">
+              <input type="radio" name="ans-{{$.ID}}" value="{{.}}">
+              <span>{{.}}</span>
+            </label>
+            {{end}}
+          </div>
+          {{else if or (eq .QType "checkbox_group") (eq .QType "multiselect")}}
+          <label>{{.Label}}{{if .Required}} <span class="required-star">*</span>{{end}}</label>
+          <div class="field-choice-group" style="display:flex;flex-direction:column;gap:0.4rem;margin-top:0.25rem">
+            {{range .Options}}
+            <label class="field-checkbox" style="font-weight:400">
+              <input type="checkbox" name="ans-{{$.ID}}" value="{{.}}">
+              <span>{{.}}</span>
+            </label>
+            {{end}}
+          </div>
+          {{else if eq .QType "number"}}
+          <label for="ans-{{.ID}}">{{.Label}}{{if .Required}} <span class="required-star">*</span>{{end}}</label>
+          <input id="ans-{{.ID}}" name="ans-{{.ID}}" type="number" step="any"{{if and .Required (not .Hidden)}} required{{end}}>  <!-- nosemgrep: generic.html-templates.security.unquoted-attribute-var.unquoted-attribute-var -->
+          {{else if eq .QType "phone"}}
+          <label for="ans-{{.ID}}">{{.Label}}{{if .Required}} <span class="required-star">*</span>{{end}}</label>
+          <input id="ans-{{.ID}}" name="ans-{{.ID}}" type="tel" autocomplete="tel"{{if and .Required (not .Hidden)}} required{{end}}>  <!-- nosemgrep: generic.html-templates.security.unquoted-attribute-var.unquoted-attribute-var -->
+          {{else if eq .QType "url"}}
+          <label for="ans-{{.ID}}">{{.Label}}{{if .Required}} <span class="required-star">*</span>{{end}}</label>
+          <input id="ans-{{.ID}}" name="ans-{{.ID}}" type="url" placeholder="https://..."{{if and .Required (not .Hidden)}} required{{end}}>  <!-- nosemgrep: generic.html-templates.security.unquoted-attribute-var.unquoted-attribute-var -->
+          {{else if eq .QType "address"}}
+          <label for="ans-{{.ID}}">{{.Label}}{{if .Required}} <span class="required-star">*</span>{{end}}</label>
+          <input id="ans-{{.ID}}" name="ans-{{.ID}}" type="text" autocomplete="street-address"{{if and .Required (not .Hidden)}} required{{end}}>  <!-- nosemgrep: generic.html-templates.security.unquoted-attribute-var.unquoted-attribute-var -->
+          {{else if eq .QType "multiple_emails"}}
+          <label for="ans-{{.ID}}">{{.Label}}{{if .Required}} <span class="required-star">*</span>{{end}}</label>
+          <input id="ans-{{.ID}}" name="ans-{{.ID}}" type="text" placeholder="a@example.com, b@example.com"{{if and .Required (not .Hidden)}} required{{end}}>  <!-- nosemgrep: generic.html-templates.security.unquoted-attribute-var.unquoted-attribute-var -->
           {{else}}
           <label for="ans-{{.ID}}">{{.Label}}{{if .Required}} <span class="required-star">*</span>{{end}}</label>
-          <textarea id="ans-{{.ID}}" name="ans-{{.ID}}" rows="3"{{if .Required}} required{{end}}></textarea>  <!-- nosemgrep: generic.html-templates.security.unquoted-attribute-var.unquoted-attribute-var -->
+          <textarea id="ans-{{.ID}}" name="ans-{{.ID}}" rows="3"{{if and .Required (not .Hidden)}} required{{end}}></textarea>  <!-- nosemgrep: generic.html-templates.security.unquoted-attribute-var.unquoted-attribute-var -->
           {{end}}
         </div>
         {{end}}
@@ -686,6 +721,42 @@ body {
     const fEmail = $('f-email');
     if (fName && qp.has('name')) fName.value = qp.get('name') || '';
     if (fEmail && qp.has('email')) fEmail.value = qp.get('email') || '';
+
+    // Prefill intake questions from URL query parameters (?identifier=value).
+    document.querySelectorAll('[data-qid][data-identifier]').forEach(function (el) {
+      const key = el.dataset.identifier;
+      if (!key || !qp.has(key)) return;
+      const pre = qp.get(key) ?? '';
+      const qtype = el.dataset.qtype || 'text';
+      const lock = el.dataset.lockIfPrefilled === 'true';
+      if (qtype === 'radio_group') {
+        el.querySelectorAll('input[type="radio"]').forEach(function (r) {
+          r.checked = r.value === pre;
+          if (lock) r.disabled = true;
+        });
+        return;
+      }
+      if (qtype === 'checkbox_group' || qtype === 'multiselect') {
+        const wanted = new Set(pre.split(',').map(function (s) { return s.trim(); }).filter(Boolean));
+        el.querySelectorAll('input[type="checkbox"]').forEach(function (c) {
+          c.checked = wanted.has(c.value);
+          if (lock) c.disabled = true;
+        });
+        return;
+      }
+      const input = el.querySelector('input, select, textarea');
+      if (!input) return;
+      if (input.type === 'checkbox') {
+        input.checked = ['yes', 'true', '1', 'on', 'checked'].includes(pre.trim().toLowerCase());
+        if (lock) input.disabled = true;
+      } else {
+        input.value = pre;
+        if (lock) {
+          if (input.tagName === 'SELECT') input.disabled = true;
+          else input.readOnly = true;
+        }
+      }
+    });
   })();
 
   // ── Booking form ──────────────────────────────────────────────────────────
@@ -706,18 +777,28 @@ body {
     const qEls = document.querySelectorAll('[data-qid]');
     for (let i = 0; i < qEls.length; i++) {
       const el = qEls[i];
-      const input = el.querySelector('input, select, textarea');
-      if (!input) continue;
-      let value;
-      if (input.type === 'checkbox') {
-        value = input.checked ? 'yes' : 'no';
+      const qtype = el.dataset.qtype || 'text';
+      let value = '';
+      let missing = false;
+      if (qtype === 'radio_group') {
+        const checked = el.querySelector('input[type="radio"]:checked');
+        value = checked ? checked.value.trim() : '';
+        missing = !value;
+      } else if (qtype === 'checkbox_group' || qtype === 'multiselect') {
+        const checked = Array.from(el.querySelectorAll('input[type="checkbox"]:checked')).map(function (c) { return c.value.trim(); });
+        value = checked.join(', ');
+        missing = checked.length === 0;
       } else {
-        value = input.value.trim();
+        const input = el.querySelector('input, select, textarea');
+        if (!input) continue;
+        if (input.type === 'checkbox') {
+          value = input.checked ? 'yes' : 'no';
+          missing = !input.checked;
+        } else {
+          value = input.value.trim();
+          missing = !value;
+        }
       }
-      // A checkbox's value is 'no' when unticked — non-empty, so `!value` never catches
-      // it. Test .checked instead; this used to skip checkboxes entirely, which let a
-      // required consent box through unticked.
-      const missing = input.type === 'checkbox' ? !input.checked : !value;
       if (el.dataset.required === 'true' && missing) {
         errEl.textContent = t('required_fields_error');
         return;

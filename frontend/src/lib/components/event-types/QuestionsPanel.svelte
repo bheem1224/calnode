@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type Question } from "$lib/api";
+  import { api, type Question, type QuestionType } from "$lib/api";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { ConfirmDialog } from "$lib/components/ui/confirm-dialog";
   import { Input } from "$lib/components/ui/input";
@@ -23,13 +23,29 @@
     onQuestionsChange?: (items: Question[]) => void;
   } = $props();
 
-  const QUESTION_TYPES = $derived([
+  const OPTION_TYPES = new Set<QuestionType>([
+    "select",
+    "multiselect",
+    "checkbox_group",
+    "radio_group",
+  ]);
+  const needsOptions = (t: QuestionType) => OPTION_TYPES.has(t);
+
+  const QUESTION_TYPES = $derived<{ value: QuestionType; label: string }[]>([
     { value: "text", label: $t("eventTypeEditor.questions.types.text") },
+    { value: "number", label: $t("eventTypeEditor.questions.types.number") },
+    { value: "phone", label: $t("eventTypeEditor.questions.types.phone") },
+    { value: "address", label: $t("eventTypeEditor.questions.types.address") },
+    { value: "url", label: $t("eventTypeEditor.questions.types.url") },
+    { value: "select", label: $t("eventTypeEditor.questions.types.select") },
+    { value: "multiselect", label: $t("eventTypeEditor.questions.types.multiselect") },
     {
       value: "checkbox",
       label: $t("eventTypeEditor.questions.types.checkbox"),
     },
-    { value: "select", label: $t("eventTypeEditor.questions.types.select") },
+    { value: "checkbox_group", label: $t("eventTypeEditor.questions.types.checkboxGroup") },
+    { value: "radio_group", label: $t("eventTypeEditor.questions.types.radioGroup") },
+    { value: "multiple_emails", label: $t("eventTypeEditor.questions.types.multipleEmails") },
   ]);
 
   let questions: Question[] = $state([]);
@@ -37,9 +53,12 @@
 
   let qForm = $state({
     label: "",
-    type: "text" as "text" | "select" | "checkbox",
+    type: "text" as QuestionType,
     options: "",
     required: false,
+    identifier: "",
+    hidden: false,
+    lock_if_prefilled: false,
   });
   let qAdding = $state(false);
   let addQOpen = $state(false);
@@ -49,9 +68,12 @@
   let pendingQ = $state<Question | null>(null);
   let editQForm = $state({
     label: "",
-    type: "text" as "text" | "select" | "checkbox",
+    type: "text" as QuestionType,
     options: "",
     required: false,
+    identifier: "",
+    hidden: false,
+    lock_if_prefilled: false,
   });
   let qSaving = $state(false);
 
@@ -92,7 +114,7 @@
       toast.error(tr("eventTypeEditor.questions.validation.label"));
       return false;
     }
-    if (qForm.type === "select" && optionsArray(qForm.options).length === 0) {
+    if (needsOptions(qForm.type) && optionsArray(qForm.options).length === 0) {
       toast.error(tr("eventTypeEditor.questions.validation.options"));
       return false;
     }
@@ -101,11 +123,23 @@
       await api.post(`/v1/event-types/${slug}/questions`, {
         label: qForm.label.trim(),
         type: qForm.type,
-        options:
-          qForm.type === "select" ? optionsArray(qForm.options) : undefined,
+        options: needsOptions(qForm.type)
+          ? optionsArray(qForm.options)
+          : undefined,
         required: qForm.required,
+        identifier: qForm.identifier.trim(),
+        hidden: qForm.hidden,
+        lock_if_prefilled: qForm.lock_if_prefilled,
       });
-      qForm = { label: "", type: "text", options: "", required: false };
+      qForm = {
+        label: "",
+        type: "text",
+        options: "",
+        required: false,
+        identifier: "",
+        hidden: false,
+        lock_if_prefilled: false,
+      };
       await loadQuestions();
       return true;
     } catch (e: any) {
@@ -123,6 +157,9 @@
       type: q.type,
       options: (q.options ?? []).join("\n"),
       required: q.required,
+      identifier: q.identifier ?? "",
+      hidden: !!q.hidden,
+      lock_if_prefilled: !!q.lock_if_prefilled,
     };
   }
 
@@ -136,7 +173,7 @@
       return;
     }
     if (
-      editQForm.type === "select" &&
+      needsOptions(editQForm.type) &&
       optionsArray(editQForm.options).length === 0
     ) {
       toast.error(tr("eventTypeEditor.questions.validation.optionsShort"));
@@ -147,9 +184,13 @@
       await api.patch(`/v1/event-types/${slug}/questions/${q.id}`, {
         label: editQForm.label.trim(),
         type: editQForm.type,
-        options:
-          editQForm.type === "select" ? optionsArray(editQForm.options) : [],
+        options: needsOptions(editQForm.type)
+          ? optionsArray(editQForm.options)
+          : [],
         required: editQForm.required,
+        identifier: editQForm.identifier.trim(),
+        hidden: editQForm.hidden,
+        lock_if_prefilled: editQForm.lock_if_prefilled,
       });
       editingQId = null;
       await loadQuestions();
@@ -470,11 +511,7 @@
                         type="single"
                         value={editQForm.type}
                         onValueChange={(v) => {
-                          if (v)
-                            editQForm.type = v as
-                              | "text"
-                              | "select"
-                              | "checkbox";
+                          if (v) editQForm.type = v as QuestionType;
                         }}
                       >
                         <Select.Trigger id="eq-type-{q.id}" class="w-full">
@@ -491,7 +528,7 @@
                         </Select.Content>
                       </Select.Root>
                     </div>
-                    {#if editQForm.type === "select"}
+                    {#if needsOptions(editQForm.type)}
                       <div class="col-span-2 space-y-1.5">
                         <Label
                           for="eq-options-{q.id}"
@@ -505,6 +542,18 @@
                         />
                       </div>
                     {/if}
+                    <div class="col-span-2 space-y-1.5">
+                      <Label
+                        for="eq-identifier-{q.id}"
+                        class="text-xs text-muted-foreground"
+                        >{$t("eventTypeEditor.questions.identifierLabel")}</Label
+                      >
+                      <Input
+                        id="eq-identifier-{q.id}"
+                        bind:value={editQForm.identifier}
+                        placeholder={$t("eventTypeEditor.questions.identifierPlaceholder")}
+                      />
+                    </div>
                     <div
                       class="col-span-2 flex items-center justify-between rounded-md border px-3 py-2"
                     >
@@ -516,6 +565,32 @@
                       <Switch
                         id="eq-required-{q.id}"
                         bind:checked={editQForm.required}
+                      />
+                    </div>
+                    <div
+                      class="flex items-center justify-between rounded-md border px-3 py-2"
+                    >
+                      <Label
+                        for="eq-hidden-{q.id}"
+                        class="cursor-pointer font-normal"
+                        >{$t("eventTypeEditor.questions.hiddenLabel")}</Label
+                      >
+                      <Switch
+                        id="eq-hidden-{q.id}"
+                        bind:checked={editQForm.hidden}
+                      />
+                    </div>
+                    <div
+                      class="flex items-center justify-between rounded-md border px-3 py-2"
+                    >
+                      <Label
+                        for="eq-lock-{q.id}"
+                        class="cursor-pointer font-normal"
+                        >{$t("eventTypeEditor.questions.lockLabel")}</Label
+                      >
+                      <Switch
+                        id="eq-lock-{q.id}"
+                        bind:checked={editQForm.lock_if_prefilled}
                       />
                     </div>
                   </div>
@@ -585,8 +660,20 @@
                   </div>
                 </td>
                 <td class="px-4 py-3">
-                  <div class="font-medium">{q.label}</div>
-                  {#if q.type === "select" && q.options?.length}
+                  <div class="flex flex-wrap items-center gap-1.5 font-medium">
+                    <span>{q.label}</span>
+                    {#if q.hidden}
+                      <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        {$t("eventTypeEditor.questions.hiddenBadge")}
+                      </span>
+                    {/if}
+                    {#if q.identifier}
+                      <span class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                        ?{q.identifier}
+                      </span>
+                    {/if}
+                  </div>
+                  {#if needsOptions(q.type) && q.options?.length}
                     <div class="mt-0.5 text-xs text-muted-foreground">
                       {q.options.join(", ")}
                     </div>
@@ -754,7 +841,7 @@
           type="single"
           value={qForm.type}
           onValueChange={(v) => {
-            if (v) qForm.type = v as "text" | "select" | "checkbox";
+            if (v) qForm.type = v as QuestionType;
           }}
         >
           <Select.Trigger id="q-type" class="w-full">
@@ -778,7 +865,7 @@
           placeholder={$t("eventTypeEditor.questions.labelPlaceholder")}
         />
       </div>
-      {#if qForm.type === "select"}
+      {#if needsOptions(qForm.type)}
         <div class="space-y-1.5">
           <Label for="q-options"
             >{$t("eventTypeEditor.questions.options")}</Label
@@ -791,6 +878,14 @@
           />
         </div>
       {/if}
+      <div class="space-y-1.5">
+        <Label for="q-identifier">{$t("eventTypeEditor.questions.identifierLabel")}</Label>
+        <Input
+          id="q-identifier"
+          bind:value={qForm.identifier}
+          placeholder={$t("eventTypeEditor.questions.identifierPlaceholder")}
+        />
+      </div>
       <div
         class="flex items-center justify-between rounded-md border px-3 py-2.5"
       >
@@ -798,6 +893,22 @@
           >{$t("eventTypeEditor.questions.table.required")}</Label
         >
         <Switch id="q-required" bind:checked={qForm.required} />
+      </div>
+      <div
+        class="flex items-center justify-between rounded-md border px-3 py-2.5"
+      >
+        <Label for="q-hidden" class="cursor-pointer font-normal"
+          >{$t("eventTypeEditor.questions.hiddenLabel")}</Label
+        >
+        <Switch id="q-hidden" bind:checked={qForm.hidden} />
+      </div>
+      <div
+        class="flex items-center justify-between rounded-md border px-3 py-2.5"
+      >
+        <Label for="q-lock" class="cursor-pointer font-normal"
+          >{$t("eventTypeEditor.questions.lockLabel")}</Label
+        >
+        <Switch id="q-lock" bind:checked={qForm.lock_if_prefilled} />
       </div>
     </div>
     <Dialog.Footer>

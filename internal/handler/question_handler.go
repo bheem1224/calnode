@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/mail"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/calnode/calnode/internal/booking"
@@ -14,15 +17,37 @@ import (
 	"github.com/calnode/calnode/internal/uid"
 )
 
+func isOptionQuestionType(t string) bool {
+	switch t {
+	case "select", "multiselect", "checkbox_group", "radio_group":
+		return true
+	}
+	return false
+}
+
+func isValidQuestionType(t string) bool {
+	if isOptionQuestionType(t) {
+		return true
+	}
+	switch t {
+	case "text", "checkbox", "number", "phone", "address", "url", "multiple_emails":
+		return true
+	}
+	return false
+}
+
 // questionJSON is the API representation of an event-type intake question.
 type questionJSON struct {
-	ID          string   `json:"id"`
-	EventTypeID string   `json:"event_type_id"`
-	Label       string   `json:"label"`
-	Type        string   `json:"type"`
-	Options     []string `json:"options,omitempty"`
-	Required    bool     `json:"required"`
-	Position    int      `json:"position"`
+	ID              string   `json:"id"`
+	EventTypeID     string   `json:"event_type_id"`
+	Label           string   `json:"label"`
+	Type            string   `json:"type"`
+	Options         []string `json:"options,omitempty"`
+	Required        bool     `json:"required"`
+	Position        int      `json:"position"`
+	Identifier      string   `json:"identifier,omitempty"`
+	Hidden          bool     `json:"hidden,omitempty"`
+	LockIfPrefilled bool     `json:"lock_if_prefilled,omitempty"`
 }
 
 // answerJSON is the API representation of a booking answer.
@@ -53,7 +78,8 @@ func (h *Handler) ListQuestions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.db.QueryContext(r.Context(), `
-		SELECT id, event_type_id, label, type, options, required, position
+		SELECT id, event_type_id, label, type, options, required, position,
+		       COALESCE(identifier, ''), hidden, lock_if_prefilled
 		FROM event_type_questions
 		WHERE event_type_id = ?
 		ORDER BY position, id`, etID)
@@ -93,7 +119,8 @@ func (h *Handler) ListQuestionsAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.db.QueryContext(r.Context(), `
-		SELECT id, event_type_id, label, type, options, required, position
+		SELECT id, event_type_id, label, type, options, required, position,
+		       COALESCE(identifier, ''), hidden, lock_if_prefilled
 		FROM event_type_questions
 		WHERE event_type_id = ?
 		ORDER BY position, id`, etID)
@@ -129,11 +156,14 @@ func (h *Handler) CreateQuestion(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 
 	var req struct {
-		Label    string   `json:"label"`
-		Type     string   `json:"type"`
-		Options  []string `json:"options"`
-		Required bool     `json:"required"`
-		Position *int     `json:"position"`
+		Label           string   `json:"label"`
+		Type            string   `json:"type"`
+		Options         []string `json:"options"`
+		Required        bool     `json:"required"`
+		Position        *int     `json:"position"`
+		Identifier      string   `json:"identifier"`
+		Hidden          bool     `json:"hidden"`
+		LockIfPrefilled bool     `json:"lock_if_prefilled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -141,19 +171,17 @@ func (h *Handler) CreateQuestion(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Label = strings.TrimSpace(req.Label)
 	req.Type = strings.TrimSpace(req.Type)
+	req.Identifier = strings.TrimSpace(req.Identifier)
 	if req.Label == "" {
 		h.writeError(w, http.StatusBadRequest, "label is required")
 		return
 	}
-	switch req.Type {
-	case "text", "checkbox":
-	case "select":
-		if len(req.Options) == 0 {
-			h.writeError(w, http.StatusBadRequest, "options is required for type 'select'")
-			return
-		}
-	default:
-		h.writeError(w, http.StatusBadRequest, "type must be one of: text, select, checkbox")
+	if !isValidQuestionType(req.Type) {
+		h.writeError(w, http.StatusBadRequest, "invalid question type")
+		return
+	}
+	if isOptionQuestionType(req.Type) && len(req.Options) == 0 {
+		h.writeError(w, http.StatusBadRequest, fmt.Sprintf("options is required for type '%s'", req.Type))
 		return
 	}
 
@@ -163,9 +191,9 @@ func (h *Handler) CreateQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Serialise options for select type.
+	// Serialise options for option-based types.
 	var optJSON *string
-	if req.Type == "select" {
+	if isOptionQuestionType(req.Type) {
 		b, _ := json.Marshal(req.Options)
 		s := string(b)
 		optJSON = &s
@@ -176,14 +204,22 @@ func (h *Handler) CreateQuestion(w http.ResponseWriter, r *http.Request) {
 	if req.Required {
 		requiredInt = 1
 	}
+	hiddenInt := 0
+	if req.Hidden {
+		hiddenInt = 1
+	}
+	lockInt := 0
+	if req.LockIfPrefilled {
+		lockInt = 1
+	}
 
 	var position int
 	if req.Position != nil {
 		position = *req.Position
 		if _, err := h.db.ExecContext(r.Context(), `
-			INSERT INTO event_type_questions (id, event_type_id, label, type, options, required, position)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			id, etID, req.Label, req.Type, optJSON, requiredInt, position); err != nil {
+			INSERT INTO event_type_questions (id, event_type_id, label, type, options, required, position, identifier, hidden, lock_if_prefilled)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, etID, req.Label, req.Type, optJSON, requiredInt, position, req.Identifier, hiddenInt, lockInt); err != nil {
 			h.logger.ErrorContext(r.Context(), "create question: insert", "error", err)
 			h.writeError(w, http.StatusInternalServerError, "internal error")
 			return
@@ -192,11 +228,12 @@ func (h *Handler) CreateQuestion(w http.ResponseWriter, r *http.Request) {
 		// Compute position atomically in the INSERT to avoid a SELECT+INSERT race
 		// when two requests arrive concurrently for the same event type.
 		row := h.db.QueryRowContext(r.Context(), `
-			INSERT INTO event_type_questions (id, event_type_id, label, type, options, required, position)
+			INSERT INTO event_type_questions (id, event_type_id, label, type, options, required, position, identifier, hidden, lock_if_prefilled)
 			VALUES (?, ?, ?, ?, ?, ?,
-				(SELECT COALESCE(MAX(position)+1, 0) FROM event_type_questions WHERE event_type_id = ?))
+				(SELECT COALESCE(MAX(position)+1, 0) FROM event_type_questions WHERE event_type_id = ?),
+				?, ?, ?)
 			RETURNING position`,
-			id, etID, req.Label, req.Type, optJSON, requiredInt, etID)
+			id, etID, req.Label, req.Type, optJSON, requiredInt, etID, req.Identifier, hiddenInt, lockInt)
 		if err := row.Scan(&position); err != nil {
 			h.logger.ErrorContext(r.Context(), "create question: insert", "error", err)
 			h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -205,13 +242,16 @@ func (h *Handler) CreateQuestion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := &questionJSON{
-		ID:          id,
-		EventTypeID: etID,
-		Label:       req.Label,
-		Type:        req.Type,
-		Options:     req.Options,
-		Required:    req.Required,
-		Position:    position,
+		ID:              id,
+		EventTypeID:     etID,
+		Label:           req.Label,
+		Type:            req.Type,
+		Options:         req.Options,
+		Required:        req.Required,
+		Position:        position,
+		Identifier:      req.Identifier,
+		Hidden:          req.Hidden,
+		LockIfPrefilled: req.LockIfPrefilled,
 	}
 	h.logForeignEventTypeChange(r.Context(), "create_question", etID, ownerID, user)
 	h.writeJSON(w, http.StatusCreated, q)
@@ -225,11 +265,14 @@ func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 
 	var req struct {
-		Label    *string  `json:"label"`
-		Type     *string  `json:"type"`
-		Options  []string `json:"options"`
-		Required *bool    `json:"required"`
-		Position *int     `json:"position"`
+		Label           *string  `json:"label"`
+		Type            *string  `json:"type"`
+		Options         []string `json:"options"`
+		Required        *bool    `json:"required"`
+		Position        *int     `json:"position"`
+		Identifier      *string  `json:"identifier"`
+		Hidden          *bool    `json:"hidden"`
+		LockIfPrefilled *bool    `json:"lock_if_prefilled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -243,13 +286,15 @@ func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
 	}
 	var current questionJSON
 	var optRaw sql.NullString
-	var requiredInt int
+	var requiredInt, hiddenInt, lockInt int
 	err := h.db.QueryRowContext(r.Context(), `
-		SELECT id, event_type_id, label, type, options, required, position
+		SELECT id, event_type_id, label, type, options, required, position,
+		       COALESCE(identifier, ''), hidden, lock_if_prefilled
 		FROM event_type_questions
 		WHERE id = ? AND event_type_id = ?`, qID, etID).
 		Scan(&current.ID, &current.EventTypeID, &current.Label, &current.Type,
-			&optRaw, &requiredInt, &current.Position)
+			&optRaw, &requiredInt, &current.Position,
+			&current.Identifier, &hiddenInt, &lockInt)
 	if errors.Is(err, sql.ErrNoRows) {
 		h.writeError(w, http.StatusNotFound, "question not found")
 		return
@@ -260,6 +305,8 @@ func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current.Required = requiredInt != 0
+	current.Hidden = hiddenInt != 0
+	current.LockIfPrefilled = lockInt != 0
 	if optRaw.Valid {
 		_ = json.Unmarshal([]byte(optRaw.String), &current.Options)
 	}
@@ -273,19 +320,17 @@ func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.Type != nil {
-		switch *req.Type {
-		case "text", "checkbox", "select":
-			current.Type = *req.Type
-		default:
-			h.writeError(w, http.StatusBadRequest, "type must be one of: text, select, checkbox")
+		if !isValidQuestionType(*req.Type) {
+			h.writeError(w, http.StatusBadRequest, "invalid question type")
 			return
 		}
+		current.Type = *req.Type
 	}
 	if req.Options != nil {
 		current.Options = req.Options
 	}
-	if current.Type == "select" && len(current.Options) == 0 {
-		h.writeError(w, http.StatusBadRequest, "options is required for type 'select'")
+	if isOptionQuestionType(current.Type) && len(current.Options) == 0 {
+		h.writeError(w, http.StatusBadRequest, fmt.Sprintf("options is required for type '%s'", current.Type))
 		return
 	}
 	if req.Required != nil {
@@ -294,9 +339,18 @@ func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
 	if req.Position != nil {
 		current.Position = *req.Position
 	}
+	if req.Identifier != nil {
+		current.Identifier = strings.TrimSpace(*req.Identifier)
+	}
+	if req.Hidden != nil {
+		current.Hidden = *req.Hidden
+	}
+	if req.LockIfPrefilled != nil {
+		current.LockIfPrefilled = *req.LockIfPrefilled
+	}
 
 	var optJSON *string
-	if current.Type == "select" {
+	if isOptionQuestionType(current.Type) {
 		b, _ := json.Marshal(current.Options)
 		s := string(b)
 		optJSON = &s
@@ -305,11 +359,21 @@ func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
 	if current.Required {
 		requiredSave = 1
 	}
+	hiddenSave := 0
+	if current.Hidden {
+		hiddenSave = 1
+	}
+	lockSave := 0
+	if current.LockIfPrefilled {
+		lockSave = 1
+	}
 	if _, err := h.db.ExecContext(r.Context(), `
 		UPDATE event_type_questions
-		SET label = ?, type = ?, options = ?, required = ?, position = ?
+		SET label = ?, type = ?, options = ?, required = ?, position = ?,
+		    identifier = ?, hidden = ?, lock_if_prefilled = ?
 		WHERE id = ?`,
-		current.Label, current.Type, optJSON, requiredSave, current.Position, qID); err != nil {
+		current.Label, current.Type, optJSON, requiredSave, current.Position,
+		current.Identifier, hiddenSave, lockSave, qID); err != nil {
 		h.logger.ErrorContext(r.Context(), "update question: save", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -406,11 +470,13 @@ type questionScanner interface {
 func scanQuestion(s questionScanner) (*questionJSON, error) {
 	var q questionJSON
 	var optRaw sql.NullString
-	var requiredInt int
-	if err := s.Scan(&q.ID, &q.EventTypeID, &q.Label, &q.Type, &optRaw, &requiredInt, &q.Position); err != nil {
+	var requiredInt, hiddenInt, lockInt int
+	if err := s.Scan(&q.ID, &q.EventTypeID, &q.Label, &q.Type, &optRaw, &requiredInt, &q.Position, &q.Identifier, &hiddenInt, &lockInt); err != nil {
 		return nil, err
 	}
 	q.Required = requiredInt != 0
+	q.Hidden = hiddenInt != 0
+	q.LockIfPrefilled = lockInt != 0
 	if optRaw.Valid && optRaw.String != "" {
 		_ = json.Unmarshal([]byte(optRaw.String), &q.Options)
 	}
@@ -552,16 +618,55 @@ func (h *Handler) validateAnswersCore(ctx context.Context, eventTypeID string, r
 		if q.required && (!answered || strings.TrimSpace(val) == "") {
 			return nil, &answerError{loc.Tf("err_required_field", q.label)}
 		}
-		if q.qtype == "select" && answered && val != "" {
-			valid := false
-			for _, opt := range q.options {
-				if opt == val {
-					valid = true
-					break
+		if answered && strings.TrimSpace(val) != "" {
+			switch q.qtype {
+			case "select", "radio_group":
+				valid := false
+				for _, opt := range q.options {
+					if opt == val {
+						valid = true
+						break
+					}
 				}
-			}
-			if !valid {
-				return nil, &answerError{loc.Tf("err_invalid_option", q.label, val)}
+				if !valid {
+					return nil, &answerError{loc.Tf("err_invalid_option", q.label, val)}
+				}
+			case "multiselect", "checkbox_group":
+				for _, part := range strings.Split(val, ",") {
+					item := strings.TrimSpace(part)
+					if item == "" {
+						continue
+					}
+					valid := false
+					for _, opt := range q.options {
+						if opt == item {
+							valid = true
+							break
+						}
+					}
+					if !valid {
+						return nil, &answerError{loc.Tf("err_invalid_option", q.label, item)}
+					}
+				}
+			case "number":
+				if _, err := strconv.ParseFloat(strings.TrimSpace(val), 64); err != nil {
+					return nil, &answerError{fmt.Sprintf("%s must be a valid number", q.label)}
+				}
+			case "url":
+				u, err := url.ParseRequestURI(strings.TrimSpace(val))
+				if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+					return nil, &answerError{fmt.Sprintf("%s must be a valid http or https URL", q.label)}
+				}
+			case "multiple_emails":
+				for _, part := range strings.Split(val, ",") {
+					addr := strings.TrimSpace(part)
+					if addr == "" {
+						continue
+					}
+					if _, err := mail.ParseAddress(addr); err != nil {
+						return nil, &answerError{fmt.Sprintf("%s contains an invalid email address %q", q.label, addr)}
+					}
+				}
 			}
 		}
 		if answered {

@@ -36,11 +36,14 @@ var bookTmpl = template.Must(template.Must(template.New("book").Funcs(template.F
 }).Parse(sharedPartialsSrc)).Parse(bookTmplSrc))
 
 type bookQuestion struct {
-	ID       string
-	Label    string
-	QType    string
-	Options  []string
-	Required bool
+	ID              string
+	Label           string
+	QType           string
+	Options         []string
+	Required        bool
+	Identifier      string
+	Hidden          bool
+	LockIfPrefilled bool
 }
 
 type bookPageData struct {
@@ -516,7 +519,8 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 	// Load active intake questions.
 	var questions []bookQuestion
 	qRows, qErr := h.db.QueryContext(r.Context(), `
-		SELECT id, label, type, COALESCE(options, '[]'), required
+		SELECT id, label, type, COALESCE(options, '[]'), required,
+		       COALESCE(identifier, ''), hidden, lock_if_prefilled
 		FROM event_type_questions
 		WHERE event_type_id = ?
 		ORDER BY position`, etID)
@@ -525,12 +529,14 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		for qRows.Next() {
 			var q bookQuestion
 			var optJSON string
-			var req int
-			if err := qRows.Scan(&q.ID, &q.Label, &q.QType, &optJSON, &req); err != nil {
+			var req, hiddenInt, lockInt int
+			if err := qRows.Scan(&q.ID, &q.Label, &q.QType, &optJSON, &req, &q.Identifier, &hiddenInt, &lockInt); err != nil {
 				h.logger.ErrorContext(r.Context(), "book page: scan question", "error", err)
 				continue
 			}
 			q.Required = req != 0
+			q.Hidden = hiddenInt != 0
+			q.LockIfPrefilled = lockInt != 0
 			if err := json.Unmarshal([]byte(optJSON), &q.Options); err != nil || q.Options == nil {
 				q.Options = []string{}
 			}

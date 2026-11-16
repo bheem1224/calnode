@@ -24,11 +24,14 @@ var errNoFreeCopySlug = errors.New("no free copy slug")
 
 // questionCopy is one intake question, without its id (the copy gets a fresh one).
 type questionCopy struct {
-	label    string
-	qType    string
-	options  sql.NullString // JSON array for type='select'; NULL otherwise
-	required int
-	position int
+	label           string
+	qType           string
+	options         sql.NullString // JSON array for option-based types; NULL otherwise
+	required        int
+	position        int
+	identifier      string
+	hidden          int
+	lockIfPrefilled int
 }
 
 // hostCopy is one host assignment, without its id.
@@ -242,14 +245,14 @@ func loadEventTypeChildren(ctx context.Context, tx *sql.Tx, srcID string) (*even
 	var c eventTypeChildren
 
 	qRows, err := tx.QueryContext(ctx, `
-		SELECT label, type, options, required, position
+		SELECT label, type, options, required, position, COALESCE(identifier, ''), hidden, lock_if_prefilled
 		FROM event_type_questions WHERE event_type_id = ? ORDER BY position`, srcID)
 	if err != nil {
 		return nil, err
 	}
 	for qRows.Next() {
 		var q questionCopy
-		if err := qRows.Scan(&q.label, &q.qType, &q.options, &q.required, &q.position); err != nil {
+		if err := qRows.Scan(&q.label, &q.qType, &q.options, &q.required, &q.position, &q.identifier, &q.hidden, &q.lockIfPrefilled); err != nil {
 			qRows.Close() // #nosec G104 -- already returning the scan error; nothing more actionable
 			return nil, err
 		}
@@ -331,9 +334,9 @@ func loadEventTypeChildren(ctx context.Context, tx *sql.Tx, srcID string) (*even
 func insertEventTypeChildren(ctx context.Context, tx *sql.Tx, newID string, c *eventTypeChildren) error {
 	for _, q := range c.questions {
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO event_type_questions (id, event_type_id, label, type, options, required, position)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			uid.New(), newID, q.label, q.qType, q.options, q.required, q.position); err != nil {
+			INSERT INTO event_type_questions (id, event_type_id, label, type, options, required, position, identifier, hidden, lock_if_prefilled)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			uid.New(), newID, q.label, q.qType, q.options, q.required, q.position, q.identifier, q.hidden, q.lockIfPrefilled); err != nil {
 			return fmt.Errorf("copy question: %w", err)
 		}
 	}

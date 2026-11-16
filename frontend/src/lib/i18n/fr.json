@@ -1886,9 +1886,22 @@
 			},
 			"types": {
 				"text": "Texte",
+				"number": "Nombre",
+				"phone": "Téléphone",
+				"address": "Adresse",
+				"url": "URL",
+				"select": "Liste déroulante",
+				"multiselect": "Sélection multiple",
 				"checkbox": "Case à cocher (oui/non)",
-				"select": "Liste déroulante"
+				"checkboxGroup": "Groupe de cases",
+				"radioGroup": "Boutons radio",
+				"multipleEmails": "E-mails multiples"
 			},
+			"identifierLabel": "Identifiant de paramètre URL (optionnel)",
+			"identifierPlaceholder": "ex. dealId",
+			"hiddenLabel": "Masquer sur le formulaire",
+			"hiddenBadge": "Masqué",
+			"lockLabel": "Verrouiller si prérempli par URL",
 			"label": "Libellé",
 			"options": "Options (une par ligne)",
 			"optionsPlaceholder": "Option A\nOption B\nOption C",

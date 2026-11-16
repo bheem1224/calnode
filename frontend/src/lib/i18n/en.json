@@ -1886,9 +1886,22 @@
 			},
 			"types": {
 				"text": "Text",
+				"number": "Number",
+				"phone": "Phone",
+				"address": "Address",
+				"url": "URL",
+				"select": "Dropdown",
+				"multiselect": "Multi-select",
 				"checkbox": "Checkbox (yes/no)",
-				"select": "Dropdown"
+				"checkboxGroup": "Checkbox group",
+				"radioGroup": "Radio group",
+				"multipleEmails": "Multiple emails"
 			},
+			"identifierLabel": "URL parameter identifier (optional)",
+			"identifierPlaceholder": "e.g. dealId",
+			"hiddenLabel": "Hide on booking form",
+			"hiddenBadge": "Hidden",
+			"lockLabel": "Lock when prefilled from URL",
 			"label": "Label",
 			"options": "Options (one per line)",
 			"optionsPlaceholder": "Option A\nOption B\nOption C",

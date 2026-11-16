@@ -150,7 +150,7 @@
               </div>
             </div>
           {/if}
-          {#each questions as q (q.id)}
+          {#each questions.filter((q) => !q.hidden) as q (q.id)}
             <div>
               {#if q.type === "checkbox"}
                 <div class="flex items-center gap-1.5 py-0.5">
