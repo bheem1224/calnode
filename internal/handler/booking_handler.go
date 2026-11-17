@@ -559,6 +559,11 @@ func (h *Handler) loadBookableEventType(ctx context.Context, slug string) (*book
 }
 
 func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug string, allowPrivate bool) (*bookableEventType, error) {
+	return h.loadEventTypeForBooking(ctx, slug, allowPrivate, false)
+}
+
+// allowInactive is reserved for the authenticated, read-only editor preview.
+func (h *Handler) loadEventTypeForBooking(ctx context.Context, slug string, allowPrivate, allowInactive bool) (*bookableEventType, error) {
 	var et bookableEventType
 	var isActive, isPublic, showTaken, showFirst int
 	var reqConfirm, reqEmailVerify, allowMultiDur, optimizedSlots int
@@ -588,7 +593,7 @@ func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug 
 			&et.OwnerTimezone,
 			&reqConfirm, &et.ConfirmMode, &et.ConfirmNoticeMinutes, &reqEmailVerify,
 			&allowMultiDur, &durOptsRaw, &locOptsRaw, &optimizedSlots)
-	if err != nil || isActive == 0 || (!allowPrivate && isPublic == 0) {
+	if err != nil || (!allowInactive && isActive == 0) || (!allowPrivate && isPublic == 0) {
 		return nil, errEventTypeNotFound
 	}
 	et.ShowTakenSlots = showTaken != 0

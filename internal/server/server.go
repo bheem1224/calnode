@@ -526,6 +526,8 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	testEmailRL := RateLimit(10, time.Minute)
 	mux.HandleFunc("POST /v1/event-types/{slug}/test-email", testEmailRL(h.RequireAuth(h.SendTestEmail)))
 	mux.HandleFunc("POST /v1/event-types/{slug}/email-preview", h.RequireAuth(h.PreviewEmailTemplate))
+	mux.HandleFunc("POST /v1/event-types/{slug}/preview", h.RequireAuth(h.PreviewBookingPage))
+	mux.HandleFunc("POST /v1/event-types/{slug}/preview/slots", h.RequireAuth(h.PreviewBookingSlots))
 	mux.HandleFunc("GET /v1/email-templates", h.RequireAuth(h.ListEmailTemplates))
 	mux.HandleFunc("POST /v1/email-templates", h.RequireAuth(h.CreateEmailTemplate))
 	mux.HandleFunc("DELETE /v1/email-templates/{id}", h.RequireAuth(h.DeleteEmailTemplate))

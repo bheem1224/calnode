@@ -2027,6 +2027,16 @@
 			"loadTeamMembers": "Impossible de charger les membres de l'équipe"
 		}
 	},
+	"bookingPreview": {
+		"title": "Aperçu en direct",
+		"calendar": "Page de réservation",
+		"form": "Formulaire de réservation",
+		"confirmation": "Page de confirmation",
+		"frameTitle": "Aperçu de réservation en lecture seule",
+		"loading": "Mise à jour de l’aperçu…",
+		"error": "Impossible de charger l’aperçu de réservation.",
+		"readOnly": "Aperçu uniquement — les réservations sont désactivées."
+	},
 	"quickLink": {
 		"title": "Liens rapides",
 		"description": "Entrée copie un lien ; Maj+Entrée crée un lien à usage unique.",

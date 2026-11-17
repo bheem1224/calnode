@@ -107,6 +107,10 @@ func (h *Handler) GetSlots(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	h.writeSlotsResult(w, res)
+}
+
+func (h *Handler) writeSlotsResult(w http.ResponseWriter, res slotsResult) {
 	body := map[string]any{"slots": res.Slots, "hosts": res.Hosts}
 	// Present only when an external calendar check failed mid-computation: the
 	// slots may include times a busy calendar would have removed. Surfaces show
@@ -173,6 +177,8 @@ func (h *Handler) GetSlots(w http.ResponseWriter, r *http.Request) {
 var errInvalidDuration = errors.New("invalid duration")
 
 type slotsWanted struct {
+	// Preview is supplied only by the authenticated preview handler, never public input.
+	Preview *bookingPreview
 	// Taken asks for the starts a booking or calendar conflict removed. Still subject
 	// to the event type's own show_taken_slots opt-in.
 	Taken bool
@@ -190,7 +196,14 @@ type slotsWanted struct {
 // tool. tzName "" → UTC; fromStr/toStr "" → today / the max-future cap. Returns one
 // of the sentinel errors above on bad input, or a wrapped error on internal failure.
 func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr string, want slotsWanted) (slotsResult, error) {
-	et, err := h.loadBookableEventType(ctx, slug)
+	var et *bookableEventType
+	var err error
+	if want.Preview != nil {
+		copy := *want.Preview.Event
+		et = &copy
+	} else {
+		et, err = h.loadBookableEventType(ctx, slug)
+	}
 	if errors.Is(err, errEventTypeNotFound) && strings.TrimSpace(want.SingleUseToken) != "" {
 		if candidate, cErr := h.loadBookableEventTypeWithVisibility(ctx, slug, true); cErr == nil {
 			var dummy string
@@ -238,7 +251,12 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 	// Resolve the host pool for this event type by routing mode. Round-robin
 	// offers a slot if any rotation host is free; fixed/collective gate on the
 	// required hosts. Archived hosts are already excluded by resolveEventTypeHosts.
-	hosts, err := h.resolveEventTypeHosts(ctx, et.ID)
+	var hosts []EventHost
+	if want.Preview != nil {
+		hosts = want.Preview.Hosts
+	} else {
+		hosts, err = h.resolveEventTypeHosts(ctx, et.ID)
+	}
 	if err != nil {
 		return slotsResult{}, fmt.Errorf("resolve event-type hosts: %w", err)
 	}
@@ -294,7 +312,15 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 		wg.Add(1)
 		go func(i int, ph poolHost) {
 			defer wg.Done()
-			ha, degraded, err := h.hostAvailability(ctx, ph.id, et.ID, busyDateFrom, busyDateTo)
+			var scheduleID *string
+			if want.Preview != nil {
+				sid := ""
+				if want.Preview.Draft.ScheduleID != nil {
+					sid = *want.Preview.Draft.ScheduleID
+				}
+				scheduleID = &sid
+			}
+			ha, degraded, err := h.hostAvailabilityWithSchedule(ctx, ph.id, et.ID, busyDateFrom, busyDateTo, scheduleID)
 			if err != nil {
 				errsByHost[i] = err
 				return
@@ -572,6 +598,10 @@ func (h *Handler) hostDisplayMap(ctx context.Context, ids []string) map[string]m
 // drift. Returns materialized slices, closing each cursor before opening the next — the
 // MaxOpenConns(1) pool can't hold two open cursors at once (see [[sqlite-single-connection]]).
 func (h *Handler) loadHostSchedule(ctx context.Context, userID, eventTypeID string) (*time.Location, []slots.AvailabilityRule, []slots.AvailabilityOverride, error) {
+	return h.loadHostScheduleWithOverride(ctx, userID, eventTypeID, nil)
+}
+
+func (h *Handler) loadHostScheduleWithOverride(ctx context.Context, userID, eventTypeID string, scheduleOverride *string) (*time.Location, []slots.AvailabilityRule, []slots.AvailabilityOverride, error) {
 	var hostTZName string
 	if err := h.db.QueryRowContext(ctx,
 		`SELECT iana_timezone FROM users WHERE id = ?`, userID).Scan(&hostTZName); err != nil {
@@ -582,6 +612,9 @@ func (h *Handler) loadHostSchedule(ctx context.Context, userID, eventTypeID stri
 	if eventTypeID != "" {
 		_ = h.db.QueryRowContext(ctx,
 			`SELECT COALESCE(schedule_id, '') FROM event_types WHERE id = ?`, eventTypeID).Scan(&schedID)
+	}
+	if scheduleOverride != nil {
+		schedID = *scheduleOverride
 	}
 	if schedID != "" {
 		var schedTZ string
@@ -673,7 +706,11 @@ func (h *Handler) loadHostSchedule(ctx context.Context, userID, eventTypeID stri
 }
 
 func (h *Handler) hostAvailability(ctx context.Context, userID, eventTypeID string, dateFrom, dateTo time.Time) (slots.HostAvailability, bool, error) {
-	hostLoc, rules, overrides, err := h.loadHostSchedule(ctx, userID, eventTypeID)
+	return h.hostAvailabilityWithSchedule(ctx, userID, eventTypeID, dateFrom, dateTo, nil)
+}
+
+func (h *Handler) hostAvailabilityWithSchedule(ctx context.Context, userID, eventTypeID string, dateFrom, dateTo time.Time, scheduleOverride *string) (slots.HostAvailability, bool, error) {
+	hostLoc, rules, overrides, err := h.loadHostScheduleWithOverride(ctx, userID, eventTypeID, scheduleOverride)
 	if err != nil {
 		return slots.HostAvailability{}, false, err
 	}

@@ -22,7 +22,7 @@ import (
 var bookTmplSrc string
 
 // bookingLogicJS is the shared pure date/slot/format module (booking-logic.js), inlined into the
-// book + manage pages and prepended to embed.js so all three booking surfaces share one tested copy.
+// book + manage pages. The standalone embed widget deliberately mirrors its helpers.
 //
 //go:embed assets/booking-logic.js
 var bookingLogicJS string
@@ -139,6 +139,9 @@ func buildBookFormItems(raw string, questions []bookQuestion, phoneChoice bool) 
 }
 
 type bookPageData struct {
+	Preview          bool
+	PreviewJSON      template.JS
+	PreviewNotice    string
 	PhoneChoice      bool
 	AccentColor      string
 	AccentForeground string
@@ -220,6 +223,7 @@ type bookPageData struct {
 }
 
 type bookPrefill struct {
+	Preview        *bookingPreview
 	SingleUseToken string
 	Name           string
 	Email          string
@@ -612,6 +616,9 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		JOIN users u ON u.id = et.user_id
 		LEFT JOIN teams tm ON tm.id = et.team_id
 		WHERE et.slug = ? AND et.is_active = 1`
+	if prefill.Preview != nil {
+		query = strings.Replace(query, " AND et.is_active = 1", "", 1)
+	}
 	err := h.db.QueryRowContext(r.Context(), query, slug).
 		Scan(&etID, &ownerID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor, &redirectURL, &reqEmailVerify, &allowMultiDur, &durOptsRaw, &locOptsRaw, &teamID, &teamName, &bookingFormConfig)
 
@@ -623,6 +630,25 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		h.logger.ErrorContext(r.Context(), "book page: db query", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
+	}
+	if preview := prefill.Preview; preview != nil {
+		d := preview.Draft
+		name, description = d.Name, stringOrEmpty(d.Description)
+		durMins, locType, locValue = d.DurationMinutes, d.LocationType, stringOrEmpty(d.LocationValue)
+		maxDays, minNotice, routingMode = d.MaxFutureDays, d.MinNoticeMinutes, d.RoutingMode
+		priceCents, currency, allowPhoneCall = d.PriceCents, d.Currency, d.AllowPhoneCall
+		reqEmailVerify, allowMultiDur = d.RequireEmailVerification, d.AllowMultipleDurations
+		durJSON, _ := json.Marshal(d.DurationOptions)
+		locJSON, _ := json.Marshal(d.LocationOptions)
+		durOptsRaw, locOptsRaw = sql.NullString{String: string(durJSON), Valid: true}, sql.NullString{String: string(locJSON), Valid: true}
+		bookingFormConfig = d.BookingFormConfig
+		teamID = stringOrEmpty(d.TeamID)
+		teamName = ""
+		if teamID != "" {
+			_ = h.db.QueryRowContext(r.Context(), `SELECT name FROM teams WHERE id = ?`, teamID).Scan(&teamName)
+		}
+		// Redirects, assistant calls, and tracking are deliberately absent in preview.
+		redirectURL = ""
 	}
 	accentColor = accentOrDefault(accentColor)
 
@@ -657,9 +683,30 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		}
 	}
 
+	if preview := prefill.Preview; preview != nil && preview.Request.Questions != nil {
+		questions = nil
+		for _, q := range *preview.Request.Questions {
+			questions = append(questions, bookQuestion{ID: q.ID, Label: q.Label, QType: q.Type, Options: q.Options, Required: q.Required, Identifier: q.Identifier, Hidden: q.Hidden, LockIfPrefilled: q.LockIfPrefilled})
+		}
+	}
+
 	// Resolve the host face(s) by routing mode; fall back to the event-type owner
 	// if no hosts are configured (shouldn't happen post-backfill).
 	hosts := h.displayHosts(r.Context(), etID, routingMode)
+	if preview := prefill.Preview; preview != nil {
+		hosts = nil
+		var ids []string
+		for _, host := range preview.Hosts {
+			if host.Role == "required" || (routingMode == "round_robin" && host.Role == "rotation") {
+				ids = append(ids, host.UserID)
+			}
+		}
+		meta := h.hostDisplayMap(r.Context(), ids)
+		for _, id := range ids {
+			m := meta[id]
+			hosts = append(hosts, hostDisplay{ID: id, Name: m["name"], Initial: firstRune(m["name"]), AvatarURL: m["avatar_url"]})
+		}
+	}
 	if len(hosts) == 0 {
 		hosts = []hostDisplay{{Name: hostName, Initial: firstRune(hostName), AvatarURL: avatarURL}}
 	}
@@ -667,6 +714,9 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		hosts[i].Z = (len(hosts) - i) * 10
 	}
 	track := h.loadTrackingSettings(r.Context())
+	if prefill.Preview != nil {
+		track = trackingSettings{}
+	}
 	brand := h.loadBranding(r.Context())
 	dlFields, _ := json.Marshal(track.DataLayerFields)
 	qmap := make(map[string]string, len(questions))
@@ -780,11 +830,23 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		DurationOptions:          durOptions,
 		LocationOptions:          locOptions,
 	}
+	if preview := prefill.Preview; preview != nil {
+		data.Preview, data.PreviewJSON, data.PreviewNotice = true, preview.configJSON(slug), preview.Request.Notice
+		data.AssistantEnabled, data.DemoMode = false, false
+	}
 
-	h.persistLangOverride(w, r)
+	if prefill.Preview == nil {
+		h.persistLangOverride(w, r)
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", publicCSP(track))
 	w.Header().Set("X-Frame-Options", "DENY")
+	if prefill.Preview != nil {
+		w.Header().Set("Content-Security-Policy", h.previewCSP(r, slug))
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// The body varies by resolved locale (Accept-Language, or the calnode_lang override
 	// cookie) — without this, a shared cache/CDN in front of a self-hosted instance would

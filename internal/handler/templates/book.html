@@ -79,15 +79,21 @@ body {
   .cal-back { display: inline-flex; }
 }
 </style>
+{{if .Preview}}
+<meta name="robots" content="noindex,nofollow">
+<style>
+  html body { min-height: 0; padding: 0; gap: 0; background: transparent; }
+  .card, .card.has-day, .card.is-confirm { min-height: 0; max-width: none; border-radius: 0; box-shadow: none; }
+</style>
+{{end}}
 </head>
 <body style="--booking-accent:{{.AccentColor}};--booking-accent-text:{{.AccentForeground}}">
-{{template "themeSwitcher"}}
-{{template "demoBanner" .}}
+{{if not .Preview}}{{template "themeSwitcher"}}{{template "demoBanner" .}}{{end}}
 {{/* GTM <noscript> fallback intentionally omitted — it would load GTM without consent for no-JS visitors, bypassing the cookie gate. */}}
 
-{{template "businessHeader" .}}
+{{if not .Preview}}{{template "businessHeader" .}}{{end}}
 
-{{if .BannerURL}}
+{{if and .BannerURL (not .Preview)}}
 <img class="brand-banner" src="{{.BannerURL}}" alt="" style="opacity:{{.BannerOpacity}};">
 {{end}}
 
@@ -370,7 +376,7 @@ body {
         {{end}}
         {{end}}
         <p id="form-error" class="form-error" role="alert"></p>
-        <button type="submit" id="submit-btn" class="btn-primary">{{call .T "confirm_booking"}}</button>
+        <button type="submit" id="submit-btn" class="btn-primary"{{if .Preview}} disabled title="{{.PreviewNotice}}"{{end}}>{{call .T "confirm_booking"}}</button>
       </form>
     </div>
 
@@ -382,14 +388,14 @@ body {
       <div class="confirm-view">
         <h3>{{call .T "booking_confirmed"}}</h3>
         <p class="when" id="confirm-time"></p>
-        <p class="sub">{{call .T "confirmation_email_sent"}}</p>
+        <p class="sub">{{if .Preview}}{{.PreviewNotice}}{{else}}{{call .T "confirmation_email_sent"}}{{end}}</p>
       </div>
     </div>
 
   </section>
 </div>
 
-{{template "legalFooter" .}}
+{{if not .Preview}}{{template "legalFooter" .}}{{end}}
 
 <!-- Shared booking-calendar logic (booking-logic.js), inlined ahead of the page script -->
 {{/* SAFE (generic.html-templates.security.var-in-script-tag): .BookingLogicJS is the static,
@@ -400,6 +406,8 @@ body {
 (function () {
   'use strict';
 
+  const PREVIEW = {{if .Preview}}{{.PreviewJSON}}{{else}}null{{end}};
+  let previewMode = PREVIEW?.mode || 'calendar';
   const SLUG             = "{{.Slug}}";
   const SINGLE_USE_TOKEN = "{{.SingleUseToken}}";
   const REDIRECT_URL     = "{{.RedirectURL}}";
@@ -419,11 +427,18 @@ body {
   const I18N     = window.__CALNODE_I18N || {};
   function t(key) { return I18N[key] || key; } // key itself as a last-resort fallback, matching Locale.T server-side
   let TZ         = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (PREVIEW?.timezone) TZ = PREVIEW.timezone;
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const maxDate = MAX_DAYS > 0 ? new Date(today.getTime() + MAX_DAYS * 86400000) : null;
 
   let navYear = today.getFullYear(), navMonth = today.getMonth();
+  if (PREVIEW?.date && /^\d{4}-\d{2}-\d{2}$/.test(PREVIEW.date)) {
+    const initial = new Date(PREVIEW.date + 'T12:00:00');
+    if (!Number.isNaN(initial.valueOf()) && initial >= today) {
+      navYear = initial.getFullYear(); navMonth = initial.getMonth();
+    }
+  }
   let pickedDate = null, slotsCache = [], pickedSlot = null;
   let availableDates = new Set(); // "YYYY-MM-DD" strings the booker may open this nav month
   let availabilityLoaded = false; // false = render optimistically (assume all days open)
@@ -590,6 +605,19 @@ body {
 
   function dowIndex(date) { return BookingLogic.dowIndex(date); } // 0=Mon…6=Sun
 
+  function fetchSlots(from, to) {
+    const params = new URLSearchParams({ from, to, tz: TZ });
+    if (selectedDuration > 0) params.set('duration', selectedDuration);
+    if (PREVIEW) {
+      return fetch(PREVIEW.slotsURL + '?' + params, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(PREVIEW.draft),
+      });
+    }
+    if (SINGLE_USE_TOKEN) params.set('single_use_token', SINGLE_USE_TOKEN);
+    return fetch(`/v1/event-types/${SLUG}/slots?${params}`);
+  }
+
   async function loadMonthAvailability(y, m) {
     // Render immediately, treating every in-window day as available, so the
     // calendar paints without waiting on the (network-bound) slots fetch; refine
@@ -600,9 +628,7 @@ body {
     const lastDay = new Date(y, m + 1, 0).getDate();
     const to   = toDateStr(y, m, lastDay);
     try {
-      const tokenParam = SINGLE_USE_TOKEN ? `&single_use_token=${encodeURIComponent(SINGLE_USE_TOKEN)}` : '';
-      const durParam = selectedDuration > 0 ? `&duration=${selectedDuration}` : '';
-      const r = await fetch(`/v1/event-types/${SLUG}/slots?from=${from}&to=${to}&tz=${encodeURIComponent(TZ)}${tokenParam}${durParam}`);
+      const r = await fetchSlots(from, to);
       if (!r.ok) throw new Error(r.status);
       const data = await r.json();
       Object.assign(hostMeta, data.hosts || {});
@@ -634,6 +660,7 @@ body {
     availabilityLoaded = true;
     renderCal();
     renderNoticeHint();
+    if (PREVIEW) await syncPreviewMode();
   }
 
   function renderCal() {
@@ -764,6 +791,7 @@ body {
   async function pickDate(ds, y, m, d) {
     pickedDate = new Date(y, m, d);
     pickedSlot = null;
+    if (PREVIEW) window.parent.postMessage({ type: 'calnode-preview-state', date: ds, timezone: TZ }, window.location.origin);
     restoreDefaultHosts();
     renderCal();
     $('empty-hint').classList.add('hidden');
@@ -782,9 +810,7 @@ body {
     // Fallback (clicked before the month load finished): fetch just this day.
     list.innerHTML = `<p class="hint">${t('loading')}</p>`;
     try {
-      const tokenParam = SINGLE_USE_TOKEN ? `&single_use_token=${encodeURIComponent(SINGLE_USE_TOKEN)}` : '';
-      const durParam = selectedDuration > 0 ? `&duration=${selectedDuration}` : '';
-      const r = await fetch(`/v1/event-types/${SLUG}/slots?from=${ds}&to=${ds}&tz=${encodeURIComponent(TZ)}${tokenParam}${durParam}`);
+      const r = await fetchSlots(ds, ds);
       if (!r.ok) throw new Error(r.status);
       const data = await r.json();
       Object.assign(hostMeta, data.hosts || {});
@@ -895,7 +921,7 @@ body {
   });
 
   // ── Email verification (when enabled) ───────────────────────────────────
-  if (REQUIRE_EMAIL_VERIFY) {
+  if (REQUIRE_EMAIL_VERIFY && !PREVIEW) {
     const sendBtn = $('send-code-btn');
     const codeInput = $('verify-code-input');
     const checkBtn = $('check-code-btn');
@@ -967,6 +993,7 @@ body {
   // ── Booking form ──────────────────────────────────────────────────────────
   $('booking-form').addEventListener('submit', async e => {
     e.preventDefault();
+    if (PREVIEW) return; // No email verification, payment, or booking writes in preview.
     if (!pickedSlot) return;
     const form  = e.target;
     const btn   = $('submit-btn');
@@ -1265,6 +1292,58 @@ body {
   });
 
   // ── Init ──────────────────────────────────────────────────────────────────
+  let previewSyncVersion = 0;
+  async function syncPreviewMode() {
+    if (!PREVIEW || !availabilityLoaded) return;
+    const version = ++previewSyncVersion;
+    const keys = Object.keys(slotsByDay).sort();
+    const current = pickedDate && toDateStr(pickedDate.getFullYear(), pickedDate.getMonth(), pickedDate.getDate());
+    const day = (current && slotsByDay[current] ? current : null) ||
+      (PREVIEW.date && slotsByDay[PREVIEW.date] ? PREVIEW.date : null) || keys[0];
+    if (day) {
+      const [y, m, d] = day.split('-').map(Number);
+      await pickDate(day, y, m - 1, d);
+      if (version !== previewSyncVersion) return;
+    } else {
+      slotsCache = []; pickedSlot = null;
+    }
+    if (previewMode === 'form' || previewMode === 'confirmation') {
+      const first = slotsCache.findIndex(s => !s.taken);
+      if (first >= 0) pickSlot(first);
+      else { $('form-slot-label').textContent = ''; showView('form-view'); }
+      if (previewMode === 'confirmation') {
+        $('confirm-time').textContent = pickedSlot ? `${fmtDate(pickedDate)} · ${fmtTime(pickedSlot.start)}` : '';
+        showView('confirm-view');
+      }
+    } else {
+      $('summary-selected')?.classList.add('hidden');
+      showView('slots-view');
+      if (window.innerWidth <= 700) setStep('cal');
+    }
+  }
+  if (PREVIEW) {
+    // The frame is same-origin but connects only to the read-only preview path
+    // (also enforced by its response CSP). Messages are accepted only from its parent.
+    window.addEventListener('message', event => {
+      if (event.source !== window.parent || event.origin !== window.location.origin) return;
+      if (event.data?.type !== 'calnode-preview-view') return;
+      if (['calendar', 'form', 'confirmation'].includes(event.data.mode)) previewMode = event.data.mode;
+      document.documentElement.classList.toggle('dark', !!event.data.dark);
+      document.documentElement.style.colorScheme = event.data.dark ? 'dark' : 'light';
+      syncPreviewMode();
+    });
+    ['send-code-btn', 'check-code-btn'].forEach(id => { if ($(id)) $(id).disabled = true; });
+    let sentHeight = 0;
+    const resize = () => {
+      const height = Math.ceil(cardEl.getBoundingClientRect().height);
+      if (height !== sentHeight) {
+        sentHeight = height;
+        window.parent.postMessage({ type: 'calnode-preview-size', height }, window.location.origin);
+      }
+    };
+    new ResizeObserver(() => requestAnimationFrame(resize)).observe(cardEl);
+    window.parent.postMessage({ type: 'calnode-preview-ready' }, window.location.origin);
+  }
   populateTzSelect();
   loadMonthAvailability(navYear, navMonth);
 

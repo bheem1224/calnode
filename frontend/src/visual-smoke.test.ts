@@ -55,18 +55,23 @@ describe('email template modal layout', () => {
 });
 
 describe('booking preview sizing', () => {
-	test.each([440, 612])('keeps calendar days readable in a %ipx preview', async (width) => {
-		const { container } = await render(BookingPreviewCard, { props: { name: 'Preview event' } });
+	test.each([440, 612])('scales the public document inside a %ipx preview', async (width) => {
+		vi.spyOn(HTMLFormElement.prototype, 'requestSubmit').mockImplementation(() => {});
+		const { container } = await render(BookingPreviewCard, { props: { slug: 'preview-event', draft: { event_type: { name: 'Unsaved name', slot_interval_minutes: 45 } } } });
 		container.style.width = `${width}px`;
-		const days = [...container.querySelectorAll('button')].filter((b) => /^\d{1,2}$/.test(b.textContent!.trim()));
-		expect(days).toHaveLength(30);
-		await expect.poll(() => Math.min(...days.map((day) => day.getBoundingClientRect().width))).toBeGreaterThanOrEqual(18);
+		const form = container.querySelector('form')!;
+		const payload = form.querySelector('input')!;
+		await expect.poll(() => payload.value).toContain('"slot_interval_minutes":45');
+		await expect.poll(() => vi.mocked(HTMLFormElement.prototype.requestSubmit).mock.calls.length).toBeGreaterThan(0);
+		const frame = container.querySelector('iframe')!;
+		expect(frame.isConnected).toBe(true);
+		expect(form.action).toContain('/v1/event-types/preview-event/preview');
+		expect(form.target).toBe(frame.name);
+		expect(frame.style.width).toBe('860px');
 		const bounds = container.getBoundingClientRect();
-		for (const button of container.querySelectorAll('button')) {
-			const rect = button.getBoundingClientRect();
-			expect(rect.left).toBeGreaterThanOrEqual(bounds.left);
-			expect(rect.right).toBeLessThanOrEqual(bounds.right);
-		}
+		expect(frame.getBoundingClientRect().width).toBeGreaterThan(400);
+		await expect.poll(() => frame.getBoundingClientRect().right).toBeLessThanOrEqual(bounds.right);
+		expect(container.querySelectorAll('button')).toHaveLength(0);
 	});
 });
 

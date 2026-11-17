@@ -2027,6 +2027,16 @@
 			"loadTeamMembers": "Could not load team members"
 		}
 	},
+	"bookingPreview": {
+		"title": "Live preview",
+		"calendar": "Booking page",
+		"form": "Booking form",
+		"confirmation": "Confirmation page",
+		"frameTitle": "Read-only booking preview",
+		"loading": "Updating preview…",
+		"error": "Could not load the booking preview.",
+		"readOnly": "Preview only — bookings are disabled."
+	},
 	"quickLink": {
 		"title": "Quick links",
 		"description": "Enter copies a link; Shift+Enter creates a one-time link.",

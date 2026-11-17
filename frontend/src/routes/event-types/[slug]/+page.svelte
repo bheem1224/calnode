@@ -103,6 +103,8 @@
   let durationMenuOpen = $state(false);
   const DURATION_PRESETS = [5, 10, 15, 20, 25, 30, 45, 60, 90, 120];
   let previewQuestions = $state<Question[]>([]);
+  let previewQuestionsLoaded = $state(false);
+  let fullPreviewOpen = $state(false);
   let bookingFormConfig = $state("");
   let availRules = $state<AvailabilityRule[]>([]);
   let availabilityError = $state("");
@@ -1149,6 +1151,35 @@
       mintingOneTime = false;
     }
   }
+  const bookingPreviewDraft = $derived({
+    event_type: {
+      ...form,
+      duration_minutes: Number(form.duration_minutes),
+      slot_interval_minutes: Number(form.slot_interval_minutes),
+      buffer_before_minutes: Number(form.buffer_before_minutes),
+      buffer_after_minutes: Number(form.buffer_after_minutes),
+      min_notice_minutes: Number(form.min_notice_minutes),
+      max_future_days: Number(form.max_future_days),
+      max_per_day: Number(form.max_per_day) || null,
+      max_per_week: Number(form.max_per_week) || null,
+      max_per_month: Number(form.max_per_month) || null,
+      max_per_year: Number(form.max_per_year) || null,
+      max_duration_per_day: Number(form.max_duration_per_day) || null,
+      max_duration_per_week: Number(form.max_duration_per_week) || null,
+      price_cents: Math.max(0, Math.round(Number(priceMajor) * 100)) || 0,
+      allow_phone_call: allowPhoneCall,
+      routing_mode: routingMode,
+      rr_strategy: rrStrategy,
+      booking_form_config: bookingFormConfig,
+    },
+    ...(previewQuestionsLoaded ? { questions: previewQuestions } : {}),
+    ...(hostsLoaded ? { hosts: routingMode === 'round_robin'
+      ? rotationHosts.map((host, priority) => ({ user_id: host.user_id, role: 'rotation', priority }))
+      : routingMode === 'collective'
+        ? togetherHosts.map((host, priority) => ({ user_id: host.user_id, role: host.optional ? 'optional' : 'required', priority }))
+        : [{ user_id: et?.owner_id ?? $currentUser?.id, role: 'required', priority: 0 }]
+    } : {}),
+  });
 </script>
 
 {#snippet hostPickers(target: Target, idPrefix: string)}
@@ -1267,7 +1298,7 @@
           type="button"
           variant="ghost"
           size="icon"
-          onclick={() => window.open(`/book/${form.slug || slug}`, "_blank")}
+          onclick={() => (fullPreviewOpen = true)}
           title={$t("eventTypeEditor.previewTooltip")}
         >
           <svg
@@ -3533,7 +3564,7 @@
           slug={slug ?? ""}
           allowPhoneCall={allowPhoneCall && isOnlineMeeting(form.location_type)}
           {bookingFormConfig}
-          onQuestionsChange={(items) => (previewQuestions = items)}
+          onQuestionsChange={(items) => { previewQuestions = items; previewQuestionsLoaded = true; }}
           onFormConfigChange={(cfg) => (bookingFormConfig = cfg)}
         />
       {/if}
@@ -3609,25 +3640,26 @@
     <aside class="hidden xl:sticky xl:top-6 xl:flex xl:min-h-[calc(100vh-9rem)] xl:items-center xl:justify-center">
       <div class="w-full">
         <BookingPreviewCard
-          name={form.name}
-          description={form.description}
-          duration={form.duration_minutes}
-          locationType={form.location_type}
-          locationValue={form.location_value}
-          hostName={$currentUser?.name ?? "Host"}
-          hostAvatar={$currentUser?.avatar_url ?? ""}
+          slug={slug ?? ''}
+          draft={bookingPreviewDraft}
           mode={activeTab === "questions" ? "form" : activeTab === "confirmation" ? "confirmation" : "calendar"}
-          allowPhoneCall={allowPhoneCall && isOnlineMeeting(form.location_type)}
-          allowMultipleDurations={form.allow_multiple_durations}
-          durationOptions={form.duration_options}
-          calendarEventTitle={form.calendar_event_title}
-          redirectUrl={form.redirect_url}
-          questions={previewQuestions}
-          {bookingFormConfig}
         />
       </div>
     </aside>
   </div>
+
+  <Dialog.Root bind:open={fullPreviewOpen}>
+    <Dialog.Content class="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-5xl overflow-y-auto">
+      <Dialog.Header>
+        <Dialog.Title>{$t('bookingPreview.title')}</Dialog.Title>
+        <Dialog.Description class="sr-only">{$t('bookingPreview.readOnly')}</Dialog.Description>
+      </Dialog.Header>
+      {#if fullPreviewOpen}
+        <BookingPreviewCard slug={slug ?? ''} draft={bookingPreviewDraft} minWidth={0}
+          mode={activeTab === 'questions' ? 'form' : activeTab === 'confirmation' ? 'confirmation' : 'calendar'} />
+      {/if}
+    </Dialog.Content>
+  </Dialog.Root>
 
   <EmailTemplateModal
     bind:open={emailBuilderOpen}
