@@ -198,7 +198,7 @@
     </div>
   {:else}
     <!-- Mirrors /book/[slug] 2-3 column booking card -->
-    <div class="grid md:grid-cols-[200px_1fr]">
+    <div class="w-full max-w-[860px] grid grid-cols-1 md:grid-cols-[210px_1fr]">
       <!-- Left info panel -->
       <div class="border-b p-5 md:border-b-0 md:border-r">
         <div class="mb-3">
@@ -357,7 +357,7 @@
           </div>
         </div>
       {:else}
-        <div class="grid sm:grid-cols-[1fr_140px]">
+        <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_148px]">
           <div class="p-5">
             <div class="mb-3 flex items-center justify-between text-xs font-semibold">
               <span>November 2026</span>
@@ -392,7 +392,7 @@
           </div>
           <div class="border-t p-4 sm:border-l sm:border-t-0">
             <p class="mb-2 text-[11px] font-medium text-muted-foreground">Wed, Nov {selectedDay ?? 18}</p>
-            <div class="space-y-1.5">
+            <div class="max-h-[380px] space-y-1.5 overflow-y-auto">
               {#each slots as s}
                 <button
                   type="button"

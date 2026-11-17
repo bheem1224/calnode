@@ -1390,7 +1390,7 @@
   {/if}
 
   <div
-    class="grid grid-cols-1 gap-8 items-start pb-16 lg:grid-cols-[200px_minmax(460px,1fr)] xl:grid-cols-[200px_minmax(460px,1fr)_420px]"
+    class="grid grid-cols-1 gap-8 items-start pb-16 lg:grid-cols-[184px_minmax(360px,460px)] xl:grid-cols-[184px_minmax(360px,460px)_1fr]"
   >
     <!-- Sub-Navigation Rail (Left) -->
     <nav
@@ -3591,7 +3591,7 @@
     </div>
 
     <!-- Live Interactive Booking Preview (Right, vertically centered, scales with viewport, hidden on < 1280px) -->
-    <aside class="hidden w-full xl:sticky xl:top-6 xl:block">
+    <aside class="hidden xl:sticky xl:top-6 xl:flex xl:min-h-[calc(100vh-9rem)] xl:items-center xl:justify-center">
       <div class="w-full">
         <BookingPreviewCard
           name={form.name}
