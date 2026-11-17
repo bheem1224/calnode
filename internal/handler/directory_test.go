@@ -116,8 +116,8 @@ func TestPersonPage_archivedAndUnknown404(t *testing.T) {
 func TestTeamPage_listsMembersAndEventTypes(t *testing.T) {
 	h, database, key, _ := setupWorkspaceWithDB(t)
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin,handle) VALUES ('u2','miri@example.com','Miri','UTC',0,'miri')`) //nolint:errcheck
-	database.Exec(`INSERT INTO teams (id,name,slug) VALUES ('t1','Design','design')`) //nolint:errcheck
-	database.Exec(`INSERT INTO team_members (id,team_id,user_id) VALUES ('tm1','t1','u2')`) //nolint:errcheck
+	database.Exec(`INSERT INTO teams (id,name,slug) VALUES ('t1','Design','design')`)                                                       //nolint:errcheck
+	database.Exec(`INSERT INTO team_members (id,team_id,user_id) VALUES ('tm1','t1','u2')`)                                                 //nolint:errcheck
 
 	// Team-owned event type.
 	slug, etID := seedEventTypeHTTP(t, h, key)
