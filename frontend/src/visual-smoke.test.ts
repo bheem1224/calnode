@@ -1,10 +1,14 @@
-import { describe, test, expect, afterEach } from 'vitest';
+import { describe, test, expect, afterEach, vi } from 'vitest';
 import { render, cleanup } from 'vitest-browser-svelte';
 import { today, getLocalTimeZone } from '@internationalized/date';
 import Switch from '$lib/components/ui/switch/switch.svelte';
 import Checkbox from '$lib/components/ui/checkbox/checkbox.svelte';
 import Calendar from '$lib/components/ui/calendar/calendar.svelte';
 import { timezoneOptions } from '$lib/timezones';
+import EmailTemplateModal from '$lib/components/event-types/EmailTemplateModal.svelte';
+import BookingPreviewCard from '$lib/components/event-types/BookingPreviewCard.svelte';
+import QuickLinkPalette from '$lib/components/QuickLinkPalette.svelte';
+import { api } from '$lib/api';
 
 // Resolve a CSS value (e.g. `var(--primary)`) to the browser's computed color
 // string, so comparisons are exact and color-space-agnostic (same engine, same
@@ -18,7 +22,72 @@ function resolveColor(value: string): string {
 	return c;
 }
 
-afterEach(cleanup);
+afterEach(() => {
+	cleanup();
+	vi.restoreAllMocks();
+});
+
+describe('email template modal layout', () => {
+	test.each(['light', 'dark'])('long HTML stays editable inside the %s modal', async (mode) => {
+		const wasDark = document.documentElement.classList.contains('dark');
+		document.documentElement.classList.toggle('dark', mode === 'dark');
+		vi.spyOn(api, 'get').mockResolvedValue({ items: [] });
+		vi.spyOn(api, 'post').mockResolvedValue({ subject: 'Preview', html: '<p>Preview</p>', default_html: '' });
+		try {
+			await render(EmailTemplateModal, { props: {
+				open: true, slug: 'review', kind: 'confirmation', subject: '', noteBody: '',
+				htmlBody: '<p>A long email template with many lines of source.</p>\n'.repeat(200),
+				onApply: () => {},
+			} });
+			const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+			const editor = dialog.querySelector<HTMLTextAreaElement>('textarea')!;
+			await expect.poll(() => editor.scrollHeight > editor.clientHeight).toBe(true);
+			expect(editor.getBoundingClientRect().height).toBeLessThan(400);
+			await expect.poll(() => dialog.getBoundingClientRect().top).toBeGreaterThanOrEqual(0);
+			expect(dialog.getBoundingClientRect().height).toBeLessThanOrEqual(innerHeight);
+			const apply = [...dialog.querySelectorAll('button')].find((b) => b.textContent?.includes('Apply to event'))!;
+			apply.scrollIntoView({ block: 'nearest' });
+			expect(apply.getBoundingClientRect().bottom).toBeLessThanOrEqual(innerHeight);
+		} finally {
+			document.documentElement.classList.toggle('dark', wasDark);
+		}
+	});
+});
+
+describe('booking preview sizing', () => {
+	test.each([440, 612])('keeps calendar days readable in a %ipx preview', async (width) => {
+		const { container } = await render(BookingPreviewCard, { props: { name: 'Preview event' } });
+		container.style.width = `${width}px`;
+		const days = [...container.querySelectorAll('button')].filter((b) => /^\d{1,2}$/.test(b.textContent!.trim()));
+		expect(days).toHaveLength(30);
+		await expect.poll(() => Math.min(...days.map((day) => day.getBoundingClientRect().width))).toBeGreaterThanOrEqual(18);
+		const bounds = container.getBoundingClientRect();
+		for (const button of container.querySelectorAll('button')) {
+			const rect = button.getBoundingClientRect();
+			expect(rect.left).toBeGreaterThanOrEqual(bounds.left);
+			expect(rect.right).toBeLessThanOrEqual(bounds.right);
+		}
+	});
+});
+
+test('quick-link actions fit a narrow dialog without hiding the event name', async () => {
+	vi.spyOn(api, 'get').mockResolvedValue({ items: [{
+		id: 'review', slug: 'intro-call', name: 'A longer event type name',
+		is_active: true, archived: false, duration_minutes: 30,
+	}] });
+	await render(QuickLinkPalette, { props: { open: true } });
+	const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+	dialog.style.width = '358px';
+	await expect.poll(() => dialog.textContent).toContain('A longer event type name');
+	const name = [...dialog.querySelectorAll('p')].find((p) => p.textContent === 'A longer event type name')!;
+	expect(name.getBoundingClientRect().width).toBeGreaterThan(100);
+	const bounds = dialog.getBoundingClientRect();
+	for (const button of dialog.querySelectorAll('button')) {
+		const rect = button.getBoundingClientRect();
+		expect(rect.left).toBeGreaterThanOrEqual(bounds.left);
+		expect(rect.right).toBeLessThanOrEqual(bounds.right);
+	}
+});
 
 // These tests guard the silent bug class where a shadcn-svelte component renders
 // with NO state styling because its custom Tailwind variant (data-checked,

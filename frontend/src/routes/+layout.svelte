@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { page } from '$app/stores';
 	import { base } from '$app/paths';
 	import '../app.css';
@@ -15,6 +15,10 @@
 	import DemoBanner from '$lib/components/demo-banner.svelte';
 	import QuickLinkPalette from '$lib/components/QuickLinkPalette.svelte';
 	import { Button } from '$lib/components/ui/button';
+	import Sun from '@lucide/svelte/icons/sun';
+	import Moon from '@lucide/svelte/icons/moon';
+	import Monitor from '@lucide/svelte/icons/monitor';
+	import Search from '@lucide/svelte/icons/search';
 	import type { Snippet } from 'svelte';
 
 	let { children }: { children: Snippet } = $props();
@@ -27,6 +31,11 @@
 	// always false at desktop widths — which is what makes `inert` on <main> safe.
 	let sidebarOpen = $state(false);
 	let quickLinkOpen = $state(false);
+	async function openQuickLinks() {
+		sidebarOpen = false;
+		await tick();
+		quickLinkOpen = true;
+	}
 	let sidebarHovered = $state(false);
 	const isCompactNav = $derived(
 		$page.route.id === '/event-types/[slug]' || ($page.route.id?.startsWith('/settings') ?? false)
@@ -246,7 +255,7 @@
 <svelte:window
 	onkeydown={(e) => {
 		if (e.key === 'Escape' && sidebarOpen) sidebarOpen = false;
-		if (!isPublicRoute && !checking && $currentUser && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); quickLinkOpen = true; }
+		if (!isPublicRoute && !checking && $currentUser && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); void openQuickLinks(); }
 	}}
 />
 
@@ -363,7 +372,10 @@
 				</div>
 			</a>
 
-			<Button variant="ghost" size="sm" class="mx-2 mt-2 justify-center text-muted-foreground" onclick={() => quickLinkOpen = true} aria-label={$t('quickLink.title')} title={$t('quickLink.title')}>?K</Button>
+			<Button type="button" variant="ghost" size="sm" class="mx-2 mt-2 justify-center gap-2 text-muted-foreground" onclick={openQuickLinks} aria-label={$t('quickLink.title')} title={$t('quickLink.title')}>
+				<Search class="size-3.5 shrink-0" />
+				<kbd class="text-xs {isCompactNav && !sidebarHovered ? 'md:hidden' : ''}">Ctrl / ⌘ K</kbd>
+			</Button>
 			<!-- Nav -->
 			<nav class="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
 				{#each visibleNavItems as item, i}
@@ -396,43 +408,49 @@
 			<!-- Footer -->
 			<div class="border-t border-sidebar-border p-2 space-y-1">
 				{#if $currentUser}
-					{@const myHandle = $currentUser.handle || $currentUser.email.split('@')[0]}
-					{@const myBookingUrl = `/u/${myHandle}`}
+					{@const myHandle = $currentUser.handle}
+					{@const myBookingUrl = myHandle ? `/u/${myHandle}` : `${base}/settings/profile`}
 					<div class="flex items-center gap-1 {isCompactNav && !sidebarHovered ? 'md:justify-center' : ''}">
 						<a
 							href={myBookingUrl}
-							target="_blank"
+							target={myHandle ? '_blank' : undefined}
 							rel="noopener noreferrer"
-							title="Open my booking page"
+							title={myHandle ? $t('layout.openBookingPage') : $t('layout.setupBookingPage')}
 							class="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-sidebar-foreground/75 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground {isCompactNav && !sidebarHovered ? 'md:flex-none md:justify-center md:px-2' : ''}"
 						>
 							<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
 								<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
 							</svg>
-							<span class="truncate {isCompactNav && !sidebarHovered ? 'md:hidden' : ''}">My booking page</span>
+							<span class="truncate {isCompactNav && !sidebarHovered ? 'md:hidden' : ''}">{myHandle ? $t('layout.bookingPage') : $t('layout.setupBookingPage')}</span>
 						</a>
-						<button
+						{#if myHandle}
+						<Button variant="ghost" size="icon"
 							type="button"
-							title="Copy my booking page link"
-							aria-label="Copy my booking page link"
-							onclick={() => {
+							title={$t('layout.copyBookingPage')}
+							aria-label={$t('layout.copyBookingPage')}
+							onclick={async () => {
 								const full = `${window.location.origin}${myBookingUrl}`;
-								navigator.clipboard?.writeText(full);
-								toast.success(`Copied ${full}`);
+								try {
+									await navigator.clipboard.writeText(full);
+									toast.success($t('common.copied'));
+								} catch {
+									toast.error($t('common.copyClipboardError'));
+								}
 							}}
 							class="shrink-0 rounded-md p-1.5 text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground {isCompactNav && !sidebarHovered ? 'md:hidden' : ''}"
 						>
 							<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-						</button>
+						</Button>
+						{/if}
 					</div>
 				{/if}
 
-				{#if isCompactNav && !sidebarHovered}
-					<button type="button" title="Theme: {theme.mode}. Change theme" aria-label="Theme: {theme.mode}. Change theme" onclick={() => theme.set(theme.mode === 'light' ? 'dark' : theme.mode === 'dark' ? 'system' : 'light')} class="hidden w-full justify-center rounded-md p-2 text-sidebar-foreground/70 hover:bg-sidebar-accent/60 md:flex">
-						{#if theme.mode === 'light'}?{:else if theme.mode === 'dark'}?{:else}?{/if}
-					</button>
+				{#if isCompactNav}
+					<Button type="button" variant="ghost" size="icon" title="Theme: {theme.mode}. Change theme" aria-label="Theme: {theme.mode}. Change theme" onclick={() => theme.set(theme.mode === 'light' ? 'dark' : theme.mode === 'dark' ? 'system' : 'light')} class="hidden w-full text-sidebar-foreground/70 md:flex">
+						{#if theme.mode === 'light'}<Sun class="size-4" />{:else if theme.mode === 'dark'}<Moon class="size-4" />{:else}<Monitor class="size-4" />{/if}
+					</Button>
 				{/if}
-				<div class="mb-1 px-1 {isCompactNav && !sidebarHovered ? 'md:hidden' : ''}" role="radiogroup" aria-label="Theme">
+				<div class="mb-1 px-1 {isCompactNav ? 'md:hidden' : ''}" role="radiogroup" aria-label="Theme">
 					<div class="grid grid-cols-3 gap-0.5 rounded-md border border-sidebar-border bg-sidebar-accent/40 p-0.5">
 						{#each (['light', 'dark', 'system'] as ThemeMode[]) as modeOption}
 							<button

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
 	import { api, type User, type AvailabilityRule, type AvailabilityOverride, type AvailabilitySchedule, type OOOEntry } from '$lib/api';
 	import { prefs, prefsFromUser, fmtDate, weekDays } from '$lib/prefs';
 	import { t, tr, localeTag } from '$lib/i18n';
@@ -80,8 +81,7 @@
 			const created = await api.post<AvailabilitySchedule>('/v1/availability-schedules', { name });
 			schedules = [...schedules, created];
 			newScheduleName = '';
-			selectedScheduleId = created.id;
-			await loadRules();
+			openSchedule(created.id);
 			toast.success('Schedule created');
 		} catch (e: any) {
 			toast.error(e.message || 'Failed to create schedule');
@@ -358,8 +358,9 @@
 	}
 
 	onMount(() => {
-		loadRules();
-		loadOverrides();
+		const schedule = $page.url.searchParams.get('schedule');
+		if (schedule !== null) openSchedule(schedule === 'default' ? '' : schedule);
+		else { loadRules(); loadOverrides(); }
 	});
 
 	const REASON_OPTIONS = $derived<{ value: OverrideReason; label: string }[]>([
@@ -846,7 +847,7 @@
 	</div>
 
 <!-- Weekly Hours -->
-<div class="mb-8">
+<div class="mb-8 max-w-4xl">
 	<h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">{$t('availability.weeklyHours')}</h2>
 
 	{#if rulesError}<p class="mb-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{rulesError}</p>{/if}
@@ -889,7 +890,7 @@
 											onValueChange={() => updateBlock(block)}
 											disabled={block.saving || !block.id}
 										>
-											<Select.Trigger class=" w-full justify-between">{timeLabel(block.start_time)}</Select.Trigger>
+											<Select.Trigger class="w-28 shrink-0 justify-between">{timeLabel(block.start_time)}</Select.Trigger>
 											<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
 												{#each timeOptions as opt}<Select.Item value={opt.value} label={opt.label}>{opt.label}</Select.Item>{/each}
 											</Select.Content>
@@ -901,7 +902,7 @@
 											onValueChange={() => updateBlock(block)}
 											disabled={block.saving || !block.id}
 										>
-											<Select.Trigger class=" w-full justify-between">{timeLabel(block.end_time)}</Select.Trigger>
+											<Select.Trigger class="w-28 shrink-0 justify-between">{timeLabel(block.end_time)}</Select.Trigger>
 											<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
 												{#each timeOptions as opt}<Select.Item value={opt.value} label={opt.label}>{opt.label}</Select.Item>{/each}
 											</Select.Content>
@@ -922,7 +923,7 @@
 											<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
 										</Button>
 										{#if bi === 0}
-											<div class="ml-auto flex items-center gap-1">
+											<div class="flex items-center gap-1">
 												<Button
 													variant="ghost"
 													size="icon"
@@ -993,7 +994,7 @@
 </div>
 
 <!-- Date Overrides -->
-<div>
+<div class="max-w-4xl">
 	<div class="mb-3 flex flex-wrap items-center justify-between gap-3">
 		<div>
 			<h2 class="text-sm font-semibold uppercase tracking-wider text-muted-foreground">{$t('availability.overrides.title')}</h2>
@@ -1219,14 +1220,14 @@
 							{#each ovTimeRanges as range, idx}
 								<div class="flex flex-wrap items-center gap-2">
 									<Select.Root type="single" bind:value={range.start_time}>
-										<Select.Trigger class=" w-full justify-between">{timeLabel(range.start_time)}</Select.Trigger>
+										<Select.Trigger class="w-28 shrink-0 justify-between">{timeLabel(range.start_time)}</Select.Trigger>
 										<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
 											{#each timeOptions as opt}<Select.Item value={opt.value} label={opt.label}>{opt.label}</Select.Item>{/each}
 										</Select.Content>
 									</Select.Root>
 									<span class="text-muted-foreground">–</span>
 									<Select.Root type="single" bind:value={range.end_time}>
-										<Select.Trigger class=" w-full justify-between">{timeLabel(range.end_time)}</Select.Trigger>
+										<Select.Trigger class="w-28 shrink-0 justify-between">{timeLabel(range.end_time)}</Select.Trigger>
 										<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
 											{#each timeOptions as opt}<Select.Item value={opt.value} label={opt.label}>{opt.label}</Select.Item>{/each}
 										</Select.Content>

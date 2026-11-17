@@ -11,6 +11,9 @@ import { fileURLToPath } from 'node:url';
 // is the only thing that catches a missing/wrong @custom-variant.
 export default defineConfig({
 	plugins: [tailwindcss(), svelte()],
+	optimizeDeps: {
+		include: ['@lucide/svelte/icons/chevron-down', '@lucide/svelte/icons/chevron-up', 'svelte-sonner', 'tailwind-variants']
+	},
 	resolve: {
 		alias: {
 			$lib: fileURLToPath(new URL('./src/lib', import.meta.url))

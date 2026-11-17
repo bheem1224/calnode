@@ -55,6 +55,11 @@
 		"testing": "Testing…"
 	},
 	"layout": {
+		"bookingPage": "My booking page",
+		"openBookingPage": "Open my booking page",
+		"copyBookingPage": "Copy my booking page link",
+		"setupBookingPage": "Set up booking page",
+		"saveBookingPage": "Save your profile to publish this link.",
 		"loading": "Loading…",
 		"signOut": "Sign out",
 		"reportIssue": "Report an issue",
@@ -232,6 +237,7 @@
 		}
 	},
 	"availability": {
+		"summaryLoadError": "Could not load availability. Please try again.",
 		"headTitle": "Availability — Calnode",
 		"title": "Availability",
 		"subtitle": "Set your weekly hours and block off specific dates.",

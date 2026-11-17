@@ -250,15 +250,12 @@
 	<div class="space-y-3">
 		{#each teams as team (team.id)}
 			<div class="rounded-xl border bg-card transition-colors hover:border-foreground/20">
-				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 				<div
-					class="flex cursor-pointer flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
-					onclick={() => { if (renamingId !== team.id) toggleExpand(team); }}
+					class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
 				>
 					<div class="min-w-0">
 						{#if renamingId === team.id}
-							<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-							<div class="flex items-center gap-2" onclick={(e) => e.stopPropagation()}>
+							<div class="flex flex-wrap items-center gap-2">
 								<Input bind:value={renameValue} class="h-8 w-56" onkeydown={(e) => e.key === 'Enter' && saveRename(team)} />
 								<Button size="sm" class="h-8" onclick={() => saveRename(team)}>{$t('common.save')}</Button>
 								<Button size="sm" variant="ghost" class="h-8" onclick={cancelRename}>{$t('common.cancel')}</Button>
@@ -278,8 +275,7 @@
 							<p class="mt-0.5 text-xs text-muted-foreground">{$t('teams.memberCount', { count: team.member_count })}</p>
 						{/if}
 					</div>
-					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-					<div class="flex shrink-0 items-center gap-1" onclick={(e) => e.stopPropagation()}>
+					<div class="flex shrink-0 flex-wrap items-center gap-1">
 						<Button size="sm" variant="ghost" class="h-8 text-xs" onclick={() => copyTeamUrl(team.slug)}>Copy link</Button>
 						<Button size="sm" variant="outline" class="h-8 text-xs" onclick={() => toggleExpand(team)}>
 							{expanded[team.id] ? $t('teams.close') : $t('teams.manage')}

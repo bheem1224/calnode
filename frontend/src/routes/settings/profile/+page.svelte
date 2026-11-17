@@ -232,6 +232,7 @@
 					{#if handleSlug}
 						<p class="text-xs text-muted-foreground">
 							{$t('settings.profile.handle.publicPage')}
+							{#if handleSlug === user?.handle}
 							<a
 								href={`/u/${handleSlug}`}
 								target="_blank"
@@ -240,6 +241,10 @@
 							>
 								/u/{handleSlug}
 							</a>
+							{:else}
+								<span class="font-mono">/u/{handleSlug}</span>
+								<span class="block mt-1">{$t('layout.saveBookingPage')}</span>
+							{/if}
 						</p>
 					{:else}
 						<p class="text-xs text-muted-foreground">{$t('settings.profile.handle.noPage')}</p>
@@ -258,7 +263,7 @@
 				<div class="space-y-1.5">
 					<Label for="ui-locale">{$t('settings.profile.language.label')}</Label>
 					<Select.Root type="single" value={$locale} onValueChange={(v) => { if (isAdminLocale(v)) setLocale(v); }}>
-						<Select.Trigger id="ui-locale" class=" w-full justify-between">
+						<Select.Trigger id="ui-locale" class=" w-fit max-w-full justify-between">
 							{ADMIN_LOCALES.find((l) => l.code === $locale)?.name ?? $t('common.select')}
 						</Select.Trigger>
 						<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
@@ -320,7 +325,7 @@
 				<div class="space-y-1.5">
 					<Label for="week-start">{$t('settings.profile.weekStart.label')}</Label>
 					<Select.Root type="single" value={String(week_start)} onValueChange={(v) => { if (v) week_start = Number(v); }}>
-						<Select.Trigger id="week-start" class=" w-full justify-between">
+						<Select.Trigger id="week-start" class=" w-fit max-w-full justify-between">
 							{weekdayLabels[week_start]}
 						</Select.Trigger>
 						<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
@@ -334,7 +339,7 @@
 				<div class="space-y-1.5">
 					<Label for="date-format">{$t('settings.profile.dateFormat.label')}</Label>
 					<Select.Root type="single" value={date_format} onValueChange={(v) => { if (v) date_format = v as 'dmy' | 'mdy' | 'ymd'; }}>
-						<Select.Trigger id="date-format" class=" w-full justify-between">
+						<Select.Trigger id="date-format" class=" w-fit max-w-full justify-between">
 							{DATE_FORMATS.find((f) => f.value === date_format)?.label ?? $t('common.select')}
 						</Select.Trigger>
 						<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">

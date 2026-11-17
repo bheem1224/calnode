@@ -1406,6 +1406,8 @@
                           size: "icon",
                         })}
                         onclick={() => toggleExpand(b.id)}
+                        type="button"
+                        aria-label={expandedId === b.id ? $t("bookings.tooltip.hideResponses") : $t("bookings.tooltip.showResponses")}
                         aria-expanded={expandedId === b.id}
                       >
                         <svg
@@ -1466,6 +1468,8 @@
                               size: "icon",
                             })}
                             onclick={() => startReschedule(b)}
+                            type="button"
+                            aria-label={$t("bookings.tooltip.reschedule")}
                           >
                             <svg
                               xmlns="http://www.w3.org/2000/svg"
@@ -1506,6 +1510,8 @@
                               size: "icon",
                             })}
                             onclick={() => requestCancel(b.id)}
+                            type="button"
+                            aria-label={$t("bookings.tooltip.cancel")}
                           >
                             <svg
                               xmlns="http://www.w3.org/2000/svg"

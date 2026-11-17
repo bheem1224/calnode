@@ -15,6 +15,7 @@
     type SingleUseLink,
     type Question,
     type AvailabilitySchedule,
+    type AvailabilityRule,
   } from "$lib/api";
   import { currentUser } from "$lib/stores";
   import { Button, buttonVariants } from "$lib/components/ui/button";
@@ -103,7 +104,10 @@
   const DURATION_PRESETS = [5, 10, 15, 20, 25, 30, 45, 60, 90, 120];
   let previewQuestions = $state<Question[]>([]);
   let bookingFormConfig = $state("");
-  let availRules = $state<{ schedule_id?: string | null; day_of_week: number; start_time: string; end_time: string }[]>([]);
+  let availRules = $state<AvailabilityRule[]>([]);
+  let availabilityError = $state("");
+  let availabilityLoading = $state(false);
+  let availabilityRequest = 0;
   let etLoading = $state(true);
   let etError = $state("");
   let etSaving = $state(false);
@@ -710,21 +714,36 @@
   let availSchedules = $state<AvailabilitySchedule[]>([]);
 
   let allowPhoneCall = $state(false);
+  $effect(() => {
+    if (et) void loadAvailabilitySummary(form.schedule_id, availSchedules.find(s => s.is_default)?.id ?? "", et.id);
+  });
+
+  async function loadAvailabilitySummary(scheduleID: string, defaultID: string, eventID: string) {
+    const request = ++availabilityRequest;
+    availabilityLoading = true;
+    availabilityError = "";
+    try {
+      const urls = scheduleID ? [`/v1/availability-rules?schedule_id=${encodeURIComponent(scheduleID)}`] : ["/v1/availability-rules", ...(defaultID ? [`/v1/availability-rules?schedule_id=${encodeURIComponent(defaultID)}`] : [])];
+      const results = await Promise.all(urls.map(url => api.get<{ items: AvailabilityRule[] }>(url)));
+      if (request === availabilityRequest) availRules = results.flatMap(r => r.items).filter(r => scheduleID || !r.event_type_id || r.event_type_id === eventID);
+    } catch (error) {
+      if (request === availabilityRequest) { availRules = []; availabilityError = error instanceof Error ? error.message : tr("availability.summaryLoadError"); }
+    } finally { if (request === availabilityRequest) availabilityLoading = false; }
+  }
+
   const slug = $page.params.slug;
 
   async function loadET() {
     etError = "";
     try {
-      const [etRes, calRes, schedRes, rulesRes] = await Promise.all([
+      const [etRes, calRes, schedRes] = await Promise.all([
         api.get<EventType>(`/v1/event-types/${slug}`),
         api.get<{ items: ConnectedCalendarItem[] }>("/v1/calendar/calendars").catch(() => ({ items: [] })),
         api.get<{ items: AvailabilitySchedule[] }>("/v1/availability-schedules").catch(() => ({ items: [] })),
-        api.get<{ rules: { schedule_id?: string | null; day_of_week: number; start_time: string; end_time: string }[] }>("/v1/availability").catch(() => ({ rules: [] })),
       ]);
       et = etRes;
       connectedCalendars = calRes.items ?? [];
       availSchedules = schedRes.items ?? [];
-      availRules = rulesRes.rules ?? [];
       bookingFormConfig = et.booking_form_config ?? "";
       allowPhoneCall = et.allow_phone_call;
       form = {
@@ -1143,7 +1162,7 @@
         value=""
         onValueChange={(v) => addMember(target, v)}
       >
-        <Select.Trigger id="{idPrefix}-add-member" class=" w-full justify-between"
+        <Select.Trigger id="{idPrefix}-add-member" class=" w-fit max-w-full justify-between"
           >{$t("eventTypeEditor.hosts.selectMember")}</Select.Trigger
         >
         <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
@@ -1170,7 +1189,7 @@
         value=""
         onValueChange={(v) => addTeam(target, v)}
       >
-        <Select.Trigger id="{idPrefix}-add-team" class=" w-full justify-between"
+        <Select.Trigger id="{idPrefix}-add-team" class=" w-fit max-w-full justify-between"
           >{$t("eventTypeEditor.hosts.selectTeam")}</Select.Trigger
         >
         <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
@@ -1570,7 +1589,7 @@
                   >
                     <Select.Trigger
                       id="et-dur-default"
-                      class="min- overflow-hidden w-full justify-between"
+                      class="min-w-0 overflow-hidden w-fit max-w-full justify-between"
                     >
                       <span class="truncate">{form.duration_minutes} mins</span>
                     </Select.Trigger>
@@ -1616,7 +1635,7 @@
                 >
                   <Select.Trigger
                     id="et-slot"
-                    class="min- overflow-hidden w-full justify-between"
+                    class="min-w-0 overflow-hidden w-fit max-w-full justify-between"
                   >
                     <span class="truncate"
                       >{form.slot_interval_minutes === form.duration_minutes
@@ -1715,7 +1734,7 @@
                   <Select.Root type="single" bind:value={form.location_type}>
                     <Select.Trigger
                       id="et-loc"
-                      class="min- overflow-hidden w-full justify-between"
+                      class="min-w-0 overflow-hidden w-fit max-w-full justify-between"
                     >
                       <span class="truncate"
                         >{LOCATION_TYPES.find(
@@ -1891,7 +1910,7 @@
                             }
                           }}
                         >
-                          <Select.Trigger class=" w-full justify-between">
+                          <Select.Trigger class=" w-fit max-w-full justify-between">
                             {LOCATION_TYPES.find((lt) => lt.value === opt.type)?.label ?? opt.type}
                           </Select.Trigger>
                           <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
@@ -1942,7 +1961,7 @@
                       value={form.invite_delivery}
                       onValueChange={requestInviteDelivery}
                     >
-                      <Select.Trigger id="et-invite" class=" w-full justify-between">
+                      <Select.Trigger id="et-invite" class=" w-fit max-w-full justify-between">
                         {INVITE_DELIVERY.find(
                           (o) => o.value === form.invite_delivery,
                         )?.label ?? $t("common.select")}
@@ -2010,10 +2029,8 @@
       {#if activeTab === "availability"}
         {@const activeSched = form.schedule_id
           ? availSchedules.find((s) => s.id === form.schedule_id)
-          : availSchedules.find((s) => s.is_default) ?? availSchedules[0]}
-        {@const schedRules = availRules.filter((r) =>
-          activeSched ? (!r.schedule_id && activeSched.is_default) || r.schedule_id === activeSched.id : !r.schedule_id
-        )}
+          : availSchedules.find((s) => s.is_default)}
+        {@const schedRules = availRules}
         {@const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]}
         <div class="mb-8 space-y-6">
           <div class="rounded-lg border bg-card p-5">
@@ -2038,7 +2055,7 @@
                   form.schedule_id = v ?? "";
                 }}
               >
-                <Select.Trigger class="min- overflow-hidden w-full justify-between">
+                <Select.Trigger class="min-w-0 overflow-hidden w-fit max-w-full justify-between">
                   <span class="truncate">
                     {form.schedule_id
                       ? (availSchedules.find((s) => s.id === form.schedule_id)?.name ?? form.schedule_id)
@@ -2056,6 +2073,7 @@
               </Select.Root>
             </div>
 
+            {#if availabilityError}<p role="alert" class="text-xs text-destructive">{availabilityError}</p>{:else if availabilityLoading}<p class="text-xs text-muted-foreground">{$t("common.loading")}</p>{:else}
             <div class="divide-y rounded-md border bg-muted/20 px-3 text-xs">
               {#each dayNames as dayName, dow}
                 {@const dayRanges = schedRules.filter((r) => r.day_of_week === dow)}
@@ -2072,9 +2090,10 @@
               {/each}
             </div>
 
+            {/if}
             <div class="flex items-center justify-between text-xs text-muted-foreground pt-1">
-              <span>{activeSched?.timezone || "UTC"}</span>
-              <a href="/availability" class="inline-flex items-center gap-1 font-medium text-foreground hover:underline">
+              <span>{form.schedule_id ? activeSched?.timezone || $currentUser?.timezone || "UTC" : $currentUser?.timezone || "UTC"}</span>
+              <a href={`${base}/availability?schedule=${encodeURIComponent(form.schedule_id || activeSched?.id || "default")}`} class="inline-flex items-center gap-1 font-medium text-foreground hover:underline">
                 Edit availability ↗
               </a>
             </div>
@@ -2089,7 +2108,7 @@
                 form.destination_calendar_id = v ?? "";
               }}
             >
-              <Select.Trigger class=" w-full justify-between">
+              <Select.Trigger class=" w-fit max-w-full justify-between">
                 {(() => {
                   if (!form.destination_calendar_id) {
                     return $t("eventTypeEditor.location.addToCalendarDefault");
@@ -2153,7 +2172,7 @@
                     if (v !== undefined) form.buffer_before_minutes = Number(v);
                   }}
                 >
-                  <Select.Trigger id="et-buf-before" class="min- w-full justify-between"
+                  <Select.Trigger id="et-buf-before" class="min-w-0 w-fit max-w-full justify-between"
                     >{optionLabel(
                       BUFFER_OPTIONS,
                       form.buffer_before_minutes,
@@ -2179,7 +2198,7 @@
                     if (v !== undefined) form.buffer_after_minutes = Number(v);
                   }}
                 >
-                  <Select.Trigger id="et-buf-after" class="min- w-full justify-between"
+                  <Select.Trigger id="et-buf-after" class="min-w-0 w-fit max-w-full justify-between"
                     >{optionLabel(
                       BUFFER_OPTIONS,
                       form.buffer_after_minutes,
@@ -2205,7 +2224,7 @@
                     if (v !== undefined) form.min_notice_minutes = Number(v);
                   }}
                 >
-                  <Select.Trigger id="et-notice" class="min- w-full justify-between"
+                  <Select.Trigger id="et-notice" class="min-w-0 w-fit max-w-full justify-between"
                     >{optionLabel(
                       NOTICE_OPTIONS,
                       form.min_notice_minutes,
@@ -2281,7 +2300,7 @@
                         }}
                       >
                         <Select.Trigger
-                          class="min- w-full justify-between"
+                          class="min-w-0 w-fit max-w-full justify-between"
                           aria-label="Frequency period"
                         >
                           {freqLabel(unit)}
@@ -2382,7 +2401,7 @@
                           if (v) setDurRowUnit(idx, v as "day" | "week");
                         }}
                       >
-                        <Select.Trigger class="min- w-full justify-between" aria-label="Duration period">
+                        <Select.Trigger class="min-w-0 w-fit max-w-full justify-between" aria-label="Duration period">
                           {unit === "day" ? $t("eventTypeEditor.limits.perDay") : $t("eventTypeEditor.limits.perWeek")}
                         </Select.Trigger>
                         <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
@@ -2452,7 +2471,7 @@
                         if (v) form.future_limit_mode = v as typeof form.future_limit_mode;
                       }}
                     >
-                      <Select.Trigger class="flex-1 min-w-[200px] w-full justify-between">
+                      <Select.Trigger class="flex-1 min-w-[200px] w-fit max-w-full justify-between">
                         {form.future_limit_mode === "business_days"
                           ? $t("eventTypeEditor.limits.businessDays")
                           : form.future_limit_mode === "date_range"
@@ -2588,7 +2607,7 @@
                       if (v) form.require_cancel_reason = v as typeof form.require_cancel_reason;
                     }}
                   >
-                    <Select.Trigger id="et-cancel-reason" class=" w-full justify-between">
+                    <Select.Trigger id="et-cancel-reason" class=" w-fit max-w-full justify-between">
                       {cancelReasonSelection === "both"
                         ? $t("eventTypeEditor.policies.cancelReasonBoth")
                         : cancelReasonSelection === "host_only"
@@ -2686,7 +2705,7 @@
                         if (v) form.confirm_mode = v as typeof form.confirm_mode;
                       }}
                     >
-                      <Select.Trigger id="et-confirm-mode" class=" w-full justify-between">
+                      <Select.Trigger id="et-confirm-mode" class=" w-fit max-w-full justify-between">
                         {form.confirm_mode === "under_notice"
                           ? $t("eventTypeEditor.privacy.confirmModeUnderNotice")
                           : form.confirm_mode === "free_email"
@@ -2809,7 +2828,7 @@
               <div class="space-y-1.5">
                 <Label for="et-team-assign">Team assignment</Label>
                 <Select.Root type="single" value={form.team_id || "__personal__"} onValueChange={(v) => { if (!v) return; form.team_id = v === "__personal__" ? "" : v; if (form.team_id) setScope("people"); }}>
-                  <Select.Trigger id="et-team-assign" class="w-full justify-between">{teams.find((tm) => tm.id === form.team_id)?.name ?? "Personal (no team)"}</Select.Trigger>
+                  <Select.Trigger id="et-team-assign" class="w-fit max-w-full justify-between">{teams.find((tm) => tm.id === form.team_id)?.name ?? "Personal (no team)"}</Select.Trigger>
                   <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                     <Select.Item value="__personal__" label="Personal (no team)">Personal (no team)</Select.Item>
                     {#each teams.filter((tm) => $currentUser?.is_admin || tm.my_role === "owner") as tm (tm.id)}
@@ -2894,7 +2913,7 @@
                           if (v) rrStrategy = v as Strategy;
                         }}
                       >
-                        <Select.Trigger id="rr-strategy" class=" w-full justify-between">
+                        <Select.Trigger id="rr-strategy" class=" w-fit max-w-full justify-between">
                           {RR_STRATEGIES.find((s) => s.value === rrStrategy)
                             ?.label ?? $t("common.select")}
                         </Select.Trigger>
@@ -3106,7 +3125,7 @@
                         );
                       }}
                     >
-                      <Select.Trigger class=" w-full justify-between">
+                      <Select.Trigger class=" w-fit max-w-full justify-between">
                         {REMINDER_OPTIONS.find((o) => o.value === hb)?.label ??
                           $t("common.select")}
                       </Select.Trigger>
@@ -3415,7 +3434,7 @@
             value={transferOwner}
             onValueChange={(v) => (transferOwner = v ?? "")}
           >
-            <Select.Trigger id="transfer-owner" disabled={transferHosts.length === 0} class="w-full justify-between">
+            <Select.Trigger id="transfer-owner" disabled={transferHosts.length === 0} class="w-fit max-w-full justify-between">
               {transferHosts.find((h) => h.user_id === transferOwner)?.name ||
                 transferHosts.find((h) => h.user_id === transferOwner)?.email ||
                 $t("eventTypeEditor.transfer.select")}

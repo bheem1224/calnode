@@ -55,6 +55,11 @@
 		"testing": "Test…"
 	},
 	"layout": {
+		"bookingPage": "Ma page de réservation",
+		"openBookingPage": "Ouvrir ma page de réservation",
+		"copyBookingPage": "Copier le lien de ma page de réservation",
+		"setupBookingPage": "Configurer ma page de réservation",
+		"saveBookingPage": "Enregistrez votre profil pour publier ce lien.",
 		"loading": "Chargement…",
 		"signOut": "Se déconnecter",
 		"reportIssue": "Signaler un problème",
@@ -232,6 +237,7 @@
 		}
 	},
 	"availability": {
+		"summaryLoadError": "Impossible de charger les disponibilités. Veuillez réessayer.",
 		"headTitle": "Disponibilités — Calnode",
 		"title": "Disponibilités",
 		"subtitle": "Définissez vos horaires hebdomadaires et bloquez certaines dates.",

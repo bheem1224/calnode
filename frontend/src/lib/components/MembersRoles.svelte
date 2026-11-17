@@ -471,7 +471,7 @@
 
 <svelte:head><title>{$t('members.headTitle')}</title></svelte:head>
 
-<div class="mb-8 flex items-center justify-between">
+<div class="mb-8 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
 	<div>
 		<h1 class="text-2xl font-semibold tracking-tight">{$t('members.title')}</h1>
 		<p class="mt-1 text-sm text-muted-foreground">{$t('members.subtitle')}</p>

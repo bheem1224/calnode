@@ -228,7 +228,7 @@
 </script>
 
 <Dialog.Root bind:open>
-	<Dialog.Content class="max-w-5xl">
+	<Dialog.Content class="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-5xl overflow-y-auto">
 		<Dialog.Header>
 			<div class="flex flex-wrap items-center justify-between gap-3 pr-6">
 				<div>
@@ -237,7 +237,7 @@
 						Edit in Styled Note mode or customize full HTML with live preview and reusable templates.
 					</Dialog.Description>
 				</div>
-				<div class="flex items-center gap-2">
+				<div class="flex flex-wrap items-center gap-2">
 					<Select.Root type="single" value="" onValueChange={(v) => { if (v) applySavedTemplate(v); }}>
 						<Select.Trigger aria-label="Load saved template" class="h-8 w-48 justify-between text-xs">Load template...</Select.Trigger>
 						<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
@@ -319,7 +319,7 @@
 							bind:value={draftHtml}
 							oninput={schedulePreview}
 							rows={12}
-							class="font-mono text-xs"
+							class="h-72 max-h-96 resize-y field-sizing-fixed overflow-y-auto font-mono text-xs"
 						/>
 					{:else}
 						<Textarea
@@ -327,7 +327,7 @@
 							bind:value={draftNote}
 							oninput={schedulePreview}
 							rows={8}
-							class="text-xs"
+							class="h-48 max-h-96 resize-y field-sizing-fixed overflow-y-auto text-xs"
 						/>
 					{/if}
 					<div class="flex flex-wrap gap-1 pt-0.5">
@@ -350,7 +350,7 @@
 
 			<!-- Right: Live Preview -->
 			<div class="flex flex-col space-y-2">
-				<div class="flex items-center justify-between text-xs">
+				<div class="flex flex-wrap items-center justify-between gap-2 text-xs">
 					<span class="font-semibold text-muted-foreground">Live Email Preview</span>
 					{#if previewSubject}
 						<span class="max-w-[260px] truncate text-[11px] text-muted-foreground">Subject: <strong class="text-foreground">{previewSubject}</strong></span>

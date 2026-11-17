@@ -33,19 +33,21 @@
 <DynamicLinkDialog bind:open={dynamicOpen} />
 <OfferCustomTimes bind:open={customOpen} event={customEvent} />
 <Dialog.Root bind:open>
-  <Dialog.Content class="sm:max-w-xl">
+  <Dialog.Content class="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-y-auto sm:max-w-xl">
     <Dialog.Header><Dialog.Title>{$t('quickLink.title')}</Dialog.Title><Dialog.Description>{$t('quickLink.description')}</Dialog.Description></Dialog.Header>
     <Input aria-label={$t('quickLink.search')} placeholder={$t('quickLink.search')} bind:value={query} oninput={() => selected = 0} onkeydown={keys} />
     <Button type="button" variant="outline" class="justify-start" onclick={() => { open = false; dynamicOpen = true; }}>{$t('dynamicLink.title')}</Button>
     <div class="max-h-80 space-y-1 overflow-y-auto">
       {#if error}<p class="text-sm text-destructive">{error}</p>{:else if visible.length === 0}<p class="p-3 text-sm text-muted-foreground">{$t('quickLink.empty')}</p>{/if}
       {#each visible as item, i (item.id)}
-        <div class="flex items-center gap-2 rounded-md p-2 {selected === i ? 'bg-muted' : ''}">
-          <div class="min-w-0 flex-1"><p class="truncate text-sm font-medium">{item.name}</p><p class="truncate text-xs text-muted-foreground">/{item.slug}</p></div>
+        <div class="flex flex-wrap items-center gap-2 rounded-md p-2 {selected === i ? 'bg-muted' : ''}">
+          <div class="min-w-0 flex-1 basis-32"><p class="truncate text-sm font-medium">{item.name}</p><p class="truncate text-xs text-muted-foreground">/{item.slug}</p></div>
           <Badge variant="secondary">{item.duration_minutes}m</Badge>
-          <Button size="sm" variant="outline" disabled={busy} onclick={() => copy(item)}>{$t('quickLink.copy')}</Button>
-          <Button size="sm" variant="ghost" disabled={busy} onclick={() => { customEvent = item; open = false; customOpen = true; }}>{$t('customTimes.title')}</Button>
-          <Button size="sm" variant="ghost" disabled={busy} onclick={() => copy(item, true)}>{$t('quickLink.once')}</Button>
+          <div class="flex w-full flex-wrap items-center gap-1 sm:w-auto">
+            <Button type="button" size="sm" variant="outline" disabled={busy} onclick={() => copy(item)}>{$t('quickLink.copy')}</Button>
+            <Button type="button" size="sm" variant="ghost" disabled={busy} onclick={() => { customEvent = item; open = false; customOpen = true; }}>{$t('customTimes.title')}</Button>
+            <Button type="button" size="sm" variant="ghost" disabled={busy} onclick={() => copy(item, true)}>{$t('quickLink.once')}</Button>
+          </div>
         </div>
       {/each}
     </div>

@@ -277,6 +277,8 @@
 			<div class="mb-4 space-y-1.5">
 				<Label for="wh-scope">{$t('webhooks.new.scopeLabel')}</Label>
 				<Combobox
+					id="wh-scope"
+					class="w-fit max-w-full min-w-56"
 					items={scopeItems}
 					bind:value={form.event_type_id}
 					placeholder={$t('webhooks.new.scopeAll')}

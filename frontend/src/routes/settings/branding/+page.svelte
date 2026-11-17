@@ -300,7 +300,7 @@
 						value={fallbackLocale}
 						onValueChange={(v) => { if (v) fallbackLocale = v; }}
 					>
-						<Select.Trigger id="fallback-locale" class=" w-full justify-between">
+						<Select.Trigger id="fallback-locale" class=" w-fit max-w-full justify-between">
 							{supportedLocales.find((l) => l.code === fallbackLocale)?.name ?? $t('common.select')}
 						</Select.Trigger>
 						<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">

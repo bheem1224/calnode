@@ -147,7 +147,7 @@
   );
 </script>
 
-<div class="w-full overflow-hidden rounded-xl border bg-card shadow-sm">
+<div class="@container/booking-preview w-full overflow-hidden rounded-xl border bg-card shadow-sm">
   <div class="flex items-center justify-between border-b bg-muted/30 px-4 py-2">
     <span class="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Live Preview</span>
     <span class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
@@ -198,9 +198,9 @@
     </div>
   {:else}
     <!-- Mirrors /book/[slug] 2-3 column booking card -->
-    <div class="w-full max-w-[860px] grid grid-cols-1 md:grid-cols-[210px_1fr]">
+    <div class="w-full max-w-[860px] grid grid-cols-1 @[560px]/booking-preview:grid-cols-[210px_minmax(0,1fr)]">
       <!-- Left info panel -->
-      <div class="border-b p-5 md:border-b-0 md:border-r">
+      <div class="border-b p-5 @[560px]/booking-preview:border-b-0 @[560px]/booking-preview:border-r">
         <div class="mb-3">
           {#if hostAvatar}
             <img src={hostAvatar} alt={hostName} class="h-10 w-10 rounded-full object-cover" />
@@ -357,7 +357,7 @@
           </div>
         </div>
       {:else}
-        <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_148px]">
+        <div class="grid grid-cols-1 @[380px]/booking-preview:grid-cols-[minmax(0,1fr)_148px]">
           <div class="p-5">
             <div class="mb-3 flex items-center justify-between text-xs font-semibold">
               <span>November 2026</span>
@@ -390,7 +390,7 @@
               America/New York ▾
             </div>
           </div>
-          <div class="border-t p-4 sm:border-l sm:border-t-0">
+          <div class="border-t p-4 @[380px]/booking-preview:border-l @[380px]/booking-preview:border-t-0">
             <p class="mb-2 text-[11px] font-medium text-muted-foreground">Wed, Nov {selectedDay ?? 18}</p>
             <div class="max-h-[380px] space-y-1.5 overflow-y-auto">
               {#each slots as s}
