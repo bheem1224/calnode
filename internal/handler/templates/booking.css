@@ -702,6 +702,10 @@ html.dark .dir-empty,
 html.dark .cookie-text {
   color: var(--fp-text-muted);
 }
+html.dark .slot-label,
+html.dark .confirm-view .when {
+  color: var(--fp-text);
+}
 html.dark .meta li,
 html.dark .description strong {
   color: var(--fp-text-secondary);

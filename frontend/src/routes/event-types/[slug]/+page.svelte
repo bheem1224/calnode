@@ -90,10 +90,6 @@
     { id: "privacy" as const, label: $t("eventTypeEditor.tabs.privacy") },
     { id: "hosts" as const, label: $t("eventTypeEditor.tabs.hosts") },
     { id: "payments" as const, label: $t("settings.nav.payments") },
-    {
-      id: "notifications" as const,
-      label: $t("eventTypeEditor.tabs.notifications"),
-    },
     { id: "questions" as const, label: "Booking form" },
     { id: "confirmation" as const, label: "Confirmation" },
     { id: "webhooks" as const, label: $t("webhooks.title") },
@@ -3004,7 +3000,7 @@
         </div>
       {/if}
 
-      {#if activeTab === "notifications"}
+      {#if activeTab === "confirmation"}
         <!-- Notifications -->
         <div class="mb-8">
           <h2

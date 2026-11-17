@@ -266,7 +266,7 @@
 			<div class="rounded-xl border bg-card transition-colors hover:border-foreground/20">
 				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 				<div
-					class="flex cursor-pointer items-center justify-between gap-3 p-4"
+					class="flex cursor-pointer flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
 					onclick={() => { if (renamingId !== team.id) toggleExpand(team); }}
 				>
 					<div class="min-w-0">
@@ -313,7 +313,8 @@
 						{#if (expanded[team.id].members ?? []).length === 0}
 							<p class="mb-3 text-sm text-muted-foreground">{$t('teams.members.empty')}</p>
 						{:else}
-							<table class="mb-3 w-full text-sm">
+							<div class="mb-3 overflow-x-auto">
+							<table class="w-full min-w-[460px] text-sm">
 								<thead>
 									<tr class="border-b">
 										<th class="pb-2 text-left text-xs font-medium text-muted-foreground">{$t('teams.members.column')}</th>
@@ -334,14 +335,23 @@
 											</td>
 											<td class="py-2">
 												{#if canManage(team)}
-													<select
+													<Select.Root
+														type="single"
 														value={m.role ?? 'member'}
-														onchange={(e) => saveRole(team.id, m.id, (e.currentTarget as HTMLSelectElement).value as 'owner' | 'member')}
-														class="h-7 rounded-md border border-border bg-background px-2 text-xs"
+														onValueChange={(v) => {
+															if (v === 'owner' || v === 'member') {
+																saveRole(team.id, m.id, v);
+															}
+														}}
 													>
-														<option value="member">Member</option>
-														<option value="owner">Team Head</option>
-													</select>
+														<Select.Trigger class="h-7 w-32 text-xs">
+															{(m.role ?? 'member') === 'owner' ? 'Team Head' : 'Member'}
+														</Select.Trigger>
+														<Select.Content>
+															<Select.Item value="member" label="Member">Member</Select.Item>
+															<Select.Item value="owner" label="Team Head">Team Head</Select.Item>
+														</Select.Content>
+													</Select.Root>
 												{:else}
 													<span class="text-xs text-muted-foreground">{m.role === 'owner' ? 'Team Head' : 'Member'}</span>
 												{/if}
@@ -364,6 +374,7 @@
 									{/each}
 								</tbody>
 							</table>
+							</div>
 						{/if}
 
 						{#if canManage(team) && users.length > 0}
@@ -452,8 +463,8 @@
 				<p class="text-xs text-muted-foreground">Combine 2 or more team members into an instant collective booking link (<code class="font-mono">/u/alice+bob</code>).</p>
 			</div>
 			{#if groupHandles.length >= 2}
-				<div class="flex items-center gap-2">
-					<code class="rounded-md bg-muted px-2.5 py-1 text-xs font-mono">{groupLinkPath}</code>
+				<div class="flex flex-wrap items-center gap-2">
+					<code class="max-w-full truncate rounded-md bg-muted px-2.5 py-1 text-xs font-mono">{groupLinkPath}</code>
 					<Button size="sm" variant="outline" class="h-8 text-xs" onclick={() => {
 						const url = `${window.location.origin}${groupLinkPath}`;
 						navigator.clipboard?.writeText(url);
