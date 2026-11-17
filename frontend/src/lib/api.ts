@@ -447,6 +447,7 @@ export type OOOEntry = {
 export type RBACRole = {
 	id: string;
 	name: string;
+	description: string;
 	is_system: boolean;
 	can_impersonate: boolean;
 	is_impersonatable: boolean;

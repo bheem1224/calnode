@@ -105,7 +105,7 @@
 			section: 'Instance Settings',
 			title: 'Members & Roles',
 			description: 'Invite users, manage custom RBAC roles, and configure impersonation.',
-			href: `${base}/team`,
+			href: `${base}/settings/members`,
 			adminOnly: true,
 		},
 	];

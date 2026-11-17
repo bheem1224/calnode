@@ -7,7 +7,7 @@
 	import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
 	import { t } from '$lib/i18n';
 
-	type Item = { value: string; label: string };
+	type Item = { value: string; label: string; keywords?: string };
 
 	let {
 		items,
@@ -15,12 +15,16 @@
 		placeholder,
 		searchPlaceholder,
 		class: className,
+		onValueChange,
+		id,
 	}: {
 		items: Item[];
 		value?: string;
 		placeholder?: string;
 		searchPlaceholder?: string;
 		class?: string;
+		onValueChange?: (value: string) => void;
+		id?: string;
 	} = $props();
 
 	const resolvedPlaceholder = $derived(placeholder ?? $t('common.select'));
@@ -32,12 +36,13 @@
 	const selectedLabel = $derived(items.find((i) => i.value === value)?.label ?? '');
 	const filtered = $derived(
 		filter.trim()
-			? items.filter((i) => i.label.toLowerCase().includes(filter.trim().toLowerCase()))
+			? items.filter((i) => `${i.label} ${i.value} ${i.keywords ?? ''}`.toLowerCase().includes(filter.trim().toLowerCase()))
 			: items
 	);
 
 	function select(v: string) {
 		value = v;
+		onValueChange?.(v);
 		open = false;
 		filter = '';
 	}
@@ -52,6 +57,7 @@
 
 <Popover.Root bind:open onOpenChange={(o) => { if (!o) filter = ''; }}>
 	<Popover.Trigger
+		{id}
 		class={cn(
 			'border-input focus-visible:border-ring focus-visible:ring-ring/50 inline-flex h-8 w-full items-center justify-between gap-2 rounded-lg border bg-transparent px-2.5 py-1 text-sm transition-colors outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50',
 			className

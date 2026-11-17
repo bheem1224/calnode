@@ -13,6 +13,7 @@ import (
 type roleJSON struct {
 	ID                string `json:"id"`
 	Name              string `json:"name"`
+	Description       string `json:"description"`
 	IsSystem          bool   `json:"is_system"`
 	CanImpersonate    bool   `json:"can_impersonate"`
 	IsImpersonatable  bool   `json:"is_impersonatable"`
@@ -35,7 +36,7 @@ func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := h.db.QueryContext(r.Context(), `
-		SELECT id, name, is_system, allow_impersonation, is_impersonatable, can_manage_users, can_manage_settings, can_manage_teams, created_at
+		SELECT id, name, description, is_system, allow_impersonation, is_impersonatable, can_manage_users, can_manage_settings, can_manage_teams, created_at
 		FROM roles
 		ORDER BY is_system DESC, name ASC`)
 	if err != nil {
@@ -49,7 +50,7 @@ func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var item roleJSON
 		var isSys, allowImp, isImpTarget, canUsers, canSettings, canTeams int
-		if err := rows.Scan(&item.ID, &item.Name, &isSys, &allowImp, &isImpTarget, &canUsers, &canSettings, &canTeams, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &isSys, &allowImp, &isImpTarget, &canUsers, &canSettings, &canTeams, &item.CreatedAt); err != nil {
 			h.writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
@@ -76,6 +77,7 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 	var req struct {
 		Name               string `json:"name"`
+		Description        string `json:"description"`
 		CanImpersonate     bool   `json:"can_impersonate"`
 		AllowImpersonation bool   `json:"allow_impersonation"` // legacy alias
 		IsImpersonatable   *bool  `json:"is_impersonatable"`
@@ -100,9 +102,9 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 
 	id := uid.New()
 	if _, err := h.db.ExecContext(r.Context(), `
-		INSERT INTO roles (id, name, is_system, allow_impersonation, is_impersonatable, can_manage_users, can_manage_settings, can_manage_teams)
-		VALUES (?, ?, 0, ?, ?, ?, ?, ?)`,
-		id, req.Name, boolInt(canImp), boolInt(isImpTarget), boolInt(req.CanManageUsers), boolInt(req.CanManageSettings), boolInt(req.CanManageTeams)); err != nil {
+		INSERT INTO roles (id, name, description, is_system, allow_impersonation, is_impersonatable, can_manage_users, can_manage_settings, can_manage_teams)
+		VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+		id, req.Name, strings.TrimSpace(req.Description), boolInt(canImp), boolInt(isImpTarget), boolInt(req.CanManageUsers), boolInt(req.CanManageSettings), boolInt(req.CanManageTeams)); err != nil {
 		if db.IsUniqueViolation(err) {
 			h.writeError(w, http.StatusConflict, "role name already exists")
 			return
@@ -114,6 +116,7 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusCreated, roleJSON{
 		ID:                id,
 		Name:              req.Name,
+		Description:       strings.TrimSpace(req.Description),
 		IsSystem:          false,
 		CanImpersonate:    canImp,
 		IsImpersonatable:  isImpTarget,
@@ -146,12 +149,13 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 	var req struct {
-		Name              string `json:"name"`
-		CanImpersonate    bool   `json:"can_impersonate"`
-		IsImpersonatable  bool   `json:"is_impersonatable"`
-		CanManageUsers    bool   `json:"can_manage_users"`
-		CanManageSettings bool   `json:"can_manage_settings"`
-		CanManageTeams    bool   `json:"can_manage_teams"`
+		Name              string  `json:"name"`
+		Description       *string `json:"description"`
+		CanImpersonate    bool    `json:"can_impersonate"`
+		IsImpersonatable  bool    `json:"is_impersonatable"`
+		CanManageUsers    bool    `json:"can_manage_users"`
+		CanManageSettings bool    `json:"can_manage_settings"`
+		CanManageTeams    bool    `json:"can_manage_teams"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -165,10 +169,10 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := h.db.ExecContext(r.Context(), `
 		UPDATE roles
-		SET name = ?, allow_impersonation = ?, is_impersonatable = ?,
+		SET name = ?, description = COALESCE(?, description), allow_impersonation = ?, is_impersonatable = ?,
 		    can_manage_users = ?, can_manage_settings = ?, can_manage_teams = ?
 		WHERE id = ?`,
-		req.Name, boolInt(req.CanImpersonate), boolInt(req.IsImpersonatable),
+		req.Name, req.Description, boolInt(req.CanImpersonate), boolInt(req.IsImpersonatable),
 		boolInt(req.CanManageUsers), boolInt(req.CanManageSettings), boolInt(req.CanManageTeams), id); err != nil {
 		if db.IsUniqueViolation(err) {
 			h.writeError(w, http.StatusConflict, "role name already exists")
@@ -179,7 +183,13 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var description string
+	if err := h.db.QueryRowContext(r.Context(), `SELECT description FROM roles WHERE id = ?`, id).Scan(&description); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	h.writeJSON(w, http.StatusOK, roleJSON{
+		Description:       description,
 		ID:                id,
 		Name:              req.Name,
 		IsSystem:          false,

@@ -157,3 +157,46 @@ func TestRBAC_AdminImpersonatesMember_And_ProtectedCustomRoleBlocked(t *testing.
 		t.Fatalf("expected 2 audit log entries (start+stop), got %d", len(logResp.Items))
 	}
 }
+
+func TestRoleDescriptionCreateUpdateAndList(t *testing.T) {
+	h, _, key, _ := setupWorkspaceWithDB(t)
+	create := authReq(http.MethodPost, "/v1/roles", `{"name":"Support","description":"Handles customer requests","can_manage_users":true}`, key)
+	out := httptest.NewRecorder()
+	h.RequireAuth(h.CreateRole)(out, create)
+	if out.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", out.Code, out.Body)
+	}
+	var role struct {
+		ID          string `json:"id"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(out.Body.Bytes(), &role); err != nil || role.Description != "Handles customer requests" {
+		t.Fatalf("create response: %s (%v)", out.Body, err)
+	}
+	// Existing clients that omit description on update must not erase it.
+	update := authReq(http.MethodPatch, "/v1/roles/"+role.ID, `{"name":"Support team","can_manage_users":true}`, key)
+	update.SetPathValue("id", role.ID)
+	changed := httptest.NewRecorder()
+	h.RequireAuth(h.UpdateRole)(changed, update)
+	if changed.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", changed.Code, changed.Body)
+	}
+	if err := json.Unmarshal(changed.Body.Bytes(), &role); err != nil || role.Description != "Handles customer requests" {
+		t.Fatalf("update response: %s (%v)", changed.Body, err)
+	}
+	edit := authReq(http.MethodPatch, "/v1/roles/"+role.ID, `{"name":"Support team","description":"Handles scheduling","can_manage_users":true}`, key)
+	edit.SetPathValue("id", role.ID)
+	edited := httptest.NewRecorder()
+	h.RequireAuth(h.UpdateRole)(edited, edit)
+	if edited.Code != http.StatusOK {
+		t.Fatalf("edit: %d %s", edited.Code, edited.Body)
+	}
+	if err := json.Unmarshal(edited.Body.Bytes(), &role); err != nil || role.Description != "Handles scheduling" {
+		t.Fatalf("edit response: %s (%v)", edited.Body, err)
+	}
+	list := httptest.NewRecorder()
+	h.RequireAuth(h.ListRoles)(list, authReq(http.MethodGet, "/v1/roles", "", key))
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), "Handles scheduling") {
+		t.Fatalf("list: %d %s", list.Code, list.Body)
+	}
+}

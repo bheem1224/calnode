@@ -22,7 +22,7 @@
 		{ section: 'Instance Settings', href: `${base}/settings/storage`, label: $t('settings.nav.storage'), adminOnly: true },
 		{ section: 'Instance Settings', href: `${base}/settings/ai`, label: $t('settings.nav.ai'), adminOnly: true },
 		{ section: 'Instance Settings', href: `${base}/settings/tracking`, label: $t('settings.nav.tracking'), adminOnly: true },
-		{ section: 'Instance Settings', href: `${base}/team`, label: 'Members & Roles', adminOnly: true },
+		{ section: 'Instance Settings', href: `${base}/settings/members`, label: 'Members & Roles', adminOnly: true },
 	]);
 
 	const visibleNavItems = $derived(navItems.filter((item) => !item.adminOnly || $currentUser?.is_admin));

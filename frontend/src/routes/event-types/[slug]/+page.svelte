@@ -620,8 +620,27 @@
   ]);
   let reminders = $state<number[]>([]);
 
+  let msg_confirmation = $state("");
+  let msg_cancellation = $state("");
+  let msg_reschedule = $state("");
+  let msg_reminder = $state("");
+  // Assistant's opening chat line for this event type — blank keeps the built-in
+  // (translated) default; set overrides it verbatim, same as the email notes above.
+  let msg_greeting = $state("");
+  // Optional custom subject lines (empty = built-in default subject).
+  let subj_confirmation = $state("");
+  let subj_cancellation = $state("");
+  let subj_reschedule = $state("");
+  let subj_reminder = $state("");
+  let html_confirmation = $state("");
+  let html_cancellation = $state("");
+  let html_reschedule = $state("");
+  let html_reminder = $state("");
+  let emailBuilderOpen = $state(false);
+  let emailBuilderKind = $state<"confirmation" | "cancellation" | "reschedule" | "reminder">("confirmation");
+
   const currentSnapshot = $derived(
-    JSON.stringify({ form, routingMode, rrStrategy, reminders })
+    JSON.stringify({ form, routingMode, rrStrategy, reminders, msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, msg_greeting, subj_confirmation, subj_cancellation, subj_reschedule, subj_reminder, html_confirmation, html_cancellation, html_reschedule, html_reminder })
   );
   const isDirty = $derived(
     savedSnapshot !== "" && currentSnapshot !== savedSnapshot
@@ -650,24 +669,6 @@
       window.location.href = pendingNavHref;
     }
   }
-  let msg_confirmation = $state("");
-  let msg_cancellation = $state("");
-  let msg_reschedule = $state("");
-  let msg_reminder = $state("");
-  // Assistant's opening chat line for this event type — blank keeps the built-in
-  // (translated) default; set overrides it verbatim, same as the email notes above.
-  let msg_greeting = $state("");
-  // Optional custom subject lines (empty = built-in default subject).
-  let subj_confirmation = $state("");
-  let subj_cancellation = $state("");
-  let subj_reschedule = $state("");
-  let subj_reminder = $state("");
-  let html_confirmation = $state("");
-  let html_cancellation = $state("");
-  let html_reschedule = $state("");
-  let html_reminder = $state("");
-  let emailBuilderOpen = $state(false);
-  let emailBuilderKind = $state<"confirmation" | "cancellation" | "reschedule" | "reminder">("confirmation");
   // Track which message accordions are open
   let msgOpen = $state({
     confirmation: false,
@@ -817,7 +818,6 @@
           ? et.rr_strategy
           : "even"
       ) as Strategy;
-      savedSnapshot = JSON.stringify({ form, routingMode, rrStrategy, reminders });
       msg_confirmation = et.msg_confirmation ?? "";
       msg_cancellation = et.msg_cancellation ?? "";
       msg_reschedule = et.msg_reschedule ?? "";
@@ -831,6 +831,7 @@
       html_cancellation = et.html_cancellation ?? "";
       html_reschedule = et.html_reschedule ?? "";
       html_reminder = et.html_reminder ?? "";
+      savedSnapshot = JSON.stringify({ form, routingMode, rrStrategy, reminders, msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, msg_greeting, subj_confirmation, subj_cancellation, subj_reschedule, subj_reminder, html_confirmation, html_cancellation, html_reschedule, html_reminder });
     } catch (e: any) {
       etError = e.message;
     } finally {
@@ -1003,7 +1004,7 @@
         });
       }
       toast.success(tr("eventTypeEditor.toast.saved"));
-      savedSnapshot = JSON.stringify({ form, routingMode, rrStrategy, reminders });
+      savedSnapshot = JSON.stringify({ form, routingMode, rrStrategy, reminders, msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, msg_greeting, subj_confirmation, subj_cancellation, subj_reschedule, subj_reminder, html_confirmation, html_cancellation, html_reschedule, html_reminder });
       // The URL carries the slug, so a rename has to move the page too or a reload
       // lands on a 404. replaceState: the old address no longer resolves, and
       // leaving it in history is a back button that breaks.
@@ -1142,10 +1143,10 @@
         value=""
         onValueChange={(v) => addMember(target, v)}
       >
-        <Select.Trigger id="{idPrefix}-add-member" class="w-full"
+        <Select.Trigger id="{idPrefix}-add-member" class=" w-full justify-between"
           >{$t("eventTypeEditor.hosts.selectMember")}</Select.Trigger
         >
-        <Select.Content>
+        <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
           {#if availableMembers.length > 0}
             {#each availableMembers as m}
               <Select.Item value={m.id} label={m.name}
@@ -1169,10 +1170,10 @@
         value=""
         onValueChange={(v) => addTeam(target, v)}
       >
-        <Select.Trigger id="{idPrefix}-add-team" class="w-full"
+        <Select.Trigger id="{idPrefix}-add-team" class=" w-full justify-between"
           >{$t("eventTypeEditor.hosts.selectTeam")}</Select.Trigger
         >
-        <Select.Content>
+        <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
           {#if teams.length > 0}
             {#each teams as tm}
               <Select.Item value={tm.id} label={tm.name}
@@ -1244,6 +1245,7 @@
           <Switch bind:checked={form.is_public} />
         </div>
         <Button
+          type="button"
           variant="ghost"
           size="icon"
           onclick={() => window.open(`/book/${form.slug || slug}`, "_blank")}
@@ -1269,10 +1271,11 @@
             /></svg
           >
         </Button>
-        <Button variant="outline" size="sm" onclick={copyPublicLink}
+        <Button type="button" variant="outline" size="sm" onclick={copyPublicLink}
           >Copy Link</Button
         >
         <Button
+          type="button"
           variant="outline"
           size="sm"
           onclick={mintOneTimeLink}
@@ -1280,7 +1283,7 @@
         >
           {mintingOneTime ? "Copying..." : "1-Time Link"}
         </Button>
-        <Button size="sm" onclick={saveET} disabled={etSaving}>
+        <Button type="button" size="sm" onclick={saveET} disabled={etSaving}>
           {etSaving ? "Saving..." : "Save"}
         </Button>
       </div>
@@ -1419,7 +1422,7 @@
     </nav>
 
     <!-- Focused Settings Pane (Center) -->
-    <div class="min-w-0 w-full">
+    <div class="min-w-0 w-full max-w-2xl">
       {#snippet infoTip(text: string)}
         <Tooltip.Provider>
           <Tooltip.Root>
@@ -1567,11 +1570,11 @@
                   >
                     <Select.Trigger
                       id="et-dur-default"
-                      class="w-full min-w-0 overflow-hidden"
+                      class="min- overflow-hidden w-full justify-between"
                     >
                       <span class="truncate">{form.duration_minutes} mins</span>
                     </Select.Trigger>
-                    <Select.Content>
+                    <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                       {#each form.duration_options as d}
                         <Select.Item value={String(d)} label="{d} mins">{d} mins</Select.Item>
                       {/each}
@@ -1613,7 +1616,7 @@
                 >
                   <Select.Trigger
                     id="et-slot"
-                    class="w-full min-w-0 overflow-hidden"
+                    class="min- overflow-hidden w-full justify-between"
                   >
                     <span class="truncate"
                       >{form.slot_interval_minutes === form.duration_minutes
@@ -1621,7 +1624,7 @@
                         : `${form.slot_interval_minutes} minutes`}</span
                     >
                   </Select.Trigger>
-                  <Select.Content>
+                  <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                     {#each INTERVAL_OPTIONS as mins}
                       <Select.Item value={String(mins)} label="{mins} minutes"
                         >{mins} minutes{mins === form.duration_minutes
@@ -1712,7 +1715,7 @@
                   <Select.Root type="single" bind:value={form.location_type}>
                     <Select.Trigger
                       id="et-loc"
-                      class="w-full min-w-0 overflow-hidden"
+                      class="min- overflow-hidden w-full justify-between"
                     >
                       <span class="truncate"
                         >{LOCATION_TYPES.find(
@@ -1720,7 +1723,7 @@
                         )?.label ?? $t("common.select")}</span
                       >
                     </Select.Trigger>
-                    <Select.Content>
+                    <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                       {#each LOCATION_TYPES as lt}
                         <Select.Item value={lt.value} label={lt.label}
                           >{lt.label}</Select.Item
@@ -1888,10 +1891,10 @@
                             }
                           }}
                         >
-                          <Select.Trigger class="w-48">
+                          <Select.Trigger class=" w-full justify-between">
                             {LOCATION_TYPES.find((lt) => lt.value === opt.type)?.label ?? opt.type}
                           </Select.Trigger>
-                          <Select.Content>
+                          <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                             {#each LOCATION_TYPES as lt}
                               <Select.Item value={lt.value} label={lt.label}>{lt.label}</Select.Item>
                             {/each}
@@ -1939,12 +1942,12 @@
                       value={form.invite_delivery}
                       onValueChange={requestInviteDelivery}
                     >
-                      <Select.Trigger id="et-invite" class="w-full">
+                      <Select.Trigger id="et-invite" class=" w-full justify-between">
                         {INVITE_DELIVERY.find(
                           (o) => o.value === form.invite_delivery,
                         )?.label ?? $t("common.select")}
                       </Select.Trigger>
-                      <Select.Content>
+                      <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                         {#each INVITE_DELIVERY as o}
                           <Select.Item value={o.value} label={o.label}
                             >{o.label}</Select.Item
@@ -2035,14 +2038,14 @@
                   form.schedule_id = v ?? "";
                 }}
               >
-                <Select.Trigger class="w-full min-w-0 overflow-hidden">
+                <Select.Trigger class="min- overflow-hidden w-full justify-between">
                   <span class="truncate">
                     {form.schedule_id
                       ? (availSchedules.find((s) => s.id === form.schedule_id)?.name ?? form.schedule_id)
                       : `Default schedule${activeSched ? ` (${activeSched.name})` : ""}`}
                   </span>
                 </Select.Trigger>
-                <Select.Content>
+                <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                   <Select.Item value="" label="Default schedule">Default schedule</Select.Item>
                   {#each availSchedules as sched}
                     <Select.Item value={sched.id} label={sched.name}>
@@ -2086,7 +2089,7 @@
                 form.destination_calendar_id = v ?? "";
               }}
             >
-              <Select.Trigger class="w-full">
+              <Select.Trigger class=" w-full justify-between">
                 {(() => {
                   if (!form.destination_calendar_id) {
                     return $t("eventTypeEditor.location.addToCalendarDefault");
@@ -2101,7 +2104,7 @@
                   return `${providerName} · ${match.account_email || match.name || match.calendar_id}`;
                 })()}
               </Select.Trigger>
-              <Select.Content>
+              <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                 <Select.Item
                   value=""
                   label={$t("eventTypeEditor.location.addToCalendarDefault")}
@@ -2150,13 +2153,13 @@
                     if (v !== undefined) form.buffer_before_minutes = Number(v);
                   }}
                 >
-                  <Select.Trigger id="et-buf-before" class="w-full min-w-0"
+                  <Select.Trigger id="et-buf-before" class="min- w-full justify-between"
                     >{optionLabel(
                       BUFFER_OPTIONS,
                       form.buffer_before_minutes,
                     )}</Select.Trigger
                   >
-                  <Select.Content>
+                  <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                     {#each BUFFER_OPTIONS as opt}
                       <Select.Item value={String(opt.value)} label={opt.label}
                         >{opt.label}</Select.Item
@@ -2176,13 +2179,13 @@
                     if (v !== undefined) form.buffer_after_minutes = Number(v);
                   }}
                 >
-                  <Select.Trigger id="et-buf-after" class="w-full min-w-0"
+                  <Select.Trigger id="et-buf-after" class="min- w-full justify-between"
                     >{optionLabel(
                       BUFFER_OPTIONS,
                       form.buffer_after_minutes,
                     )}</Select.Trigger
                   >
-                  <Select.Content>
+                  <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                     {#each BUFFER_OPTIONS as opt}
                       <Select.Item value={String(opt.value)} label={opt.label}
                         >{opt.label}</Select.Item
@@ -2202,13 +2205,13 @@
                     if (v !== undefined) form.min_notice_minutes = Number(v);
                   }}
                 >
-                  <Select.Trigger id="et-notice" class="w-full min-w-0"
+                  <Select.Trigger id="et-notice" class="min- w-full justify-between"
                     >{optionLabel(
                       NOTICE_OPTIONS,
                       form.min_notice_minutes,
                     )}</Select.Trigger
                   >
-                  <Select.Content>
+                  <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                     {#each NOTICE_OPTIONS as opt}
                       <Select.Item value={String(opt.value)} label={opt.label}
                         >{opt.label}</Select.Item
@@ -2278,12 +2281,12 @@
                         }}
                       >
                         <Select.Trigger
-                          class="w-40 min-w-0"
+                          class="min- w-full justify-between"
                           aria-label="Frequency period"
                         >
                           {freqLabel(unit)}
                         </Select.Trigger>
-                        <Select.Content>
+                        <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                           {#each availableUnits as opt}
                             <Select.Item
                               value={opt}
@@ -2379,10 +2382,10 @@
                           if (v) setDurRowUnit(idx, v as "day" | "week");
                         }}
                       >
-                        <Select.Trigger class="w-36 min-w-0" aria-label="Duration period">
+                        <Select.Trigger class="min- w-full justify-between" aria-label="Duration period">
                           {unit === "day" ? $t("eventTypeEditor.limits.perDay") : $t("eventTypeEditor.limits.perWeek")}
                         </Select.Trigger>
-                        <Select.Content>
+                        <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                           {#each availDur as opt}
                             <Select.Item
                               value={opt}
@@ -2449,14 +2452,14 @@
                         if (v) form.future_limit_mode = v as typeof form.future_limit_mode;
                       }}
                     >
-                      <Select.Trigger class="flex-1 min-w-[200px]">
+                      <Select.Trigger class="flex-1 min-w-[200px] w-full justify-between">
                         {form.future_limit_mode === "business_days"
                           ? $t("eventTypeEditor.limits.businessDays")
                           : form.future_limit_mode === "date_range"
                             ? $t("eventTypeEditor.limits.dateRange")
                             : $t("eventTypeEditor.limits.calendarDays")}
                       </Select.Trigger>
-                      <Select.Content>
+                      <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                         <Select.Item
                           value="calendar_days"
                           label={$t("eventTypeEditor.limits.calendarDays")}
@@ -2585,14 +2588,14 @@
                       if (v) form.require_cancel_reason = v as typeof form.require_cancel_reason;
                     }}
                   >
-                    <Select.Trigger id="et-cancel-reason" class="w-full">
+                    <Select.Trigger id="et-cancel-reason" class=" w-full justify-between">
                       {cancelReasonSelection === "both"
                         ? $t("eventTypeEditor.policies.cancelReasonBoth")
                         : cancelReasonSelection === "host_only"
                           ? $t("eventTypeEditor.policies.cancelReasonHostOnly")
                           : $t("eventTypeEditor.policies.cancelReasonAttendeeOnly")}
                     </Select.Trigger>
-                    <Select.Content>
+                    <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                       <Select.Item
                         value="both"
                         label={$t("eventTypeEditor.policies.cancelReasonBoth")}
@@ -2683,14 +2686,14 @@
                         if (v) form.confirm_mode = v as typeof form.confirm_mode;
                       }}
                     >
-                      <Select.Trigger id="et-confirm-mode" class="w-full">
+                      <Select.Trigger id="et-confirm-mode" class=" w-full justify-between">
                         {form.confirm_mode === "under_notice"
                           ? $t("eventTypeEditor.privacy.confirmModeUnderNotice")
                           : form.confirm_mode === "free_email"
                             ? $t("eventTypeEditor.privacy.confirmModeFreeEmail")
                             : $t("eventTypeEditor.privacy.confirmModeAlways")}
                       </Select.Trigger>
-                      <Select.Content>
+                      <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                         <Select.Item
                           value="always"
                           label={$t("eventTypeEditor.privacy.confirmModeAlways")}
@@ -2805,23 +2808,15 @@
             {#if teams.length > 0}
               <div class="space-y-1.5">
                 <Label for="et-team-assign">Team assignment</Label>
-                <select
-                  id="et-team-assign"
-                  value={form.team_id}
-                  onchange={(e) => {
-                    const v = (e.currentTarget as HTMLSelectElement).value;
-                    form.team_id = v;
-                    if (v) {
-                      setScope("people");
-                    }
-                  }}
-                  class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                >
-                  <option value="">Personal (no team)</option>
-                  {#each teams.filter((tm) => $currentUser?.is_admin || tm.my_role === "owner") as tm (tm.id)}
-                    <option value={tm.id}>{tm.name}</option>
-                  {/each}
-                </select>
+                <Select.Root type="single" value={form.team_id || "__personal__"} onValueChange={(v) => { if (!v) return; form.team_id = v === "__personal__" ? "" : v; if (form.team_id) setScope("people"); }}>
+                  <Select.Trigger id="et-team-assign" class="w-full justify-between">{teams.find((tm) => tm.id === form.team_id)?.name ?? "Personal (no team)"}</Select.Trigger>
+                  <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
+                    <Select.Item value="__personal__" label="Personal (no team)">Personal (no team)</Select.Item>
+                    {#each teams.filter((tm) => $currentUser?.is_admin || tm.my_role === "owner") as tm (tm.id)}
+                      <Select.Item value={tm.id} label={tm.name}>{tm.name}</Select.Item>
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
                 <p class="text-xs text-muted-foreground">
                   Team event types appear on the team's booking page and must use Collective or Round-robin scheduling.
                 </p>
@@ -2899,11 +2894,11 @@
                           if (v) rrStrategy = v as Strategy;
                         }}
                       >
-                        <Select.Trigger id="rr-strategy" class="w-full">
+                        <Select.Trigger id="rr-strategy" class=" w-full justify-between">
                           {RR_STRATEGIES.find((s) => s.value === rrStrategy)
                             ?.label ?? $t("common.select")}
                         </Select.Trigger>
-                        <Select.Content>
+                        <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                           {#each RR_STRATEGIES as s}
                             <Select.Item value={s.value} label={s.label}
                               >{s.label}</Select.Item
@@ -3111,11 +3106,11 @@
                         );
                       }}
                     >
-                      <Select.Trigger class="w-full">
+                      <Select.Trigger class=" w-full justify-between">
                         {REMINDER_OPTIONS.find((o) => o.value === hb)?.label ??
                           $t("common.select")}
                       </Select.Trigger>
-                      <Select.Content>
+                      <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
                         {#each REMINDER_OPTIONS as opt}
                           <Select.Item
                             value={String(opt.value)}
@@ -3420,12 +3415,12 @@
             value={transferOwner}
             onValueChange={(v) => (transferOwner = v ?? "")}
           >
-            <Select.Trigger id="transfer-owner" class="w-full">
+            <Select.Trigger id="transfer-owner" disabled={transferHosts.length === 0} class="w-full justify-between">
               {transferHosts.find((h) => h.user_id === transferOwner)?.name ||
                 transferHosts.find((h) => h.user_id === transferOwner)?.email ||
                 $t("eventTypeEditor.transfer.select")}
             </Select.Trigger>
-            <Select.Content>
+            <Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
               {#each transferHosts as host}
                 <Select.Item
                   value={host.user_id}
@@ -3436,6 +3431,7 @@
             </Select.Content>
           </Select.Root>
           <Button
+            type="button"
             variant="outline"
             disabled={!transferOwner || transferring}
             onclick={transferEvent}

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api, type User } from '$lib/api';
-	import { prefs, prefsFromUser, TIMEZONES, weekDays } from '$lib/prefs';
+	import { prefs, prefsFromUser, weekDays } from '$lib/prefs';
 	import { t, tr, locale, setLocale, ADMIN_LOCALES, isAdminLocale } from '$lib/i18n';
 	import { currentUser } from '$lib/stores';
 	import { Button } from '$lib/components/ui/button';
@@ -9,6 +9,7 @@
 	import { Label } from '$lib/components/ui/label';
 	import * as Select from '$lib/components/ui/select';
 	import { Combobox } from '$lib/components/ui/combobox';
+	import { timezoneOptions } from '$lib/timezones';
 	import * as Avatar from '$lib/components/ui/avatar';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { toast } from 'svelte-sonner';
@@ -257,10 +258,10 @@
 				<div class="space-y-1.5">
 					<Label for="ui-locale">{$t('settings.profile.language.label')}</Label>
 					<Select.Root type="single" value={$locale} onValueChange={(v) => { if (isAdminLocale(v)) setLocale(v); }}>
-						<Select.Trigger id="ui-locale" class="w-full">
+						<Select.Trigger id="ui-locale" class=" w-full justify-between">
 							{ADMIN_LOCALES.find((l) => l.code === $locale)?.name ?? $t('common.select')}
 						</Select.Trigger>
-						<Select.Content>
+						<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
 							{#each ADMIN_LOCALES as loc}
 								<Select.Item value={loc.code} label={loc.name}>{loc.name}</Select.Item>
 							{/each}
@@ -272,7 +273,7 @@
 				<div class="space-y-1.5">
 					<Label for="timezone">{$t('settings.profile.timezone.label')}</Label>
 					<Combobox
-						items={TIMEZONES.map((tz) => ({ value: tz, label: tz }))}
+						items={timezoneOptions(timezone)}
 						bind:value={timezone}
 						placeholder={$t('settings.profile.timezone.placeholder')}
 						searchPlaceholder={$t('settings.profile.timezone.searchPlaceholder')}
@@ -290,7 +291,7 @@
 						{/if}
 					</div>
 					<Combobox
-						items={TIMEZONES.map((tz) => ({ value: tz, label: tz }))}
+						items={timezoneOptions(scheduledTimezone)}
 						bind:value={scheduledTimezone}
 						placeholder="Select future timezone..."
 						searchPlaceholder={$t('settings.profile.timezone.searchPlaceholder')}
@@ -319,10 +320,10 @@
 				<div class="space-y-1.5">
 					<Label for="week-start">{$t('settings.profile.weekStart.label')}</Label>
 					<Select.Root type="single" value={String(week_start)} onValueChange={(v) => { if (v) week_start = Number(v); }}>
-						<Select.Trigger id="week-start" class="w-full">
+						<Select.Trigger id="week-start" class=" w-full justify-between">
 							{weekdayLabels[week_start]}
 						</Select.Trigger>
-						<Select.Content>
+						<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
 							{#each [0, 1] as d}
 								<Select.Item value={String(d)} label={weekdayLabels[d]}>{weekdayLabels[d]}</Select.Item>
 							{/each}
@@ -333,10 +334,10 @@
 				<div class="space-y-1.5">
 					<Label for="date-format">{$t('settings.profile.dateFormat.label')}</Label>
 					<Select.Root type="single" value={date_format} onValueChange={(v) => { if (v) date_format = v as 'dmy' | 'mdy' | 'ymd'; }}>
-						<Select.Trigger id="date-format" class="w-full">
+						<Select.Trigger id="date-format" class=" w-full justify-between">
 							{DATE_FORMATS.find((f) => f.value === date_format)?.label ?? $t('common.select')}
 						</Select.Trigger>
-						<Select.Content>
+						<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
 							{#each DATE_FORMATS as f}
 								<Select.Item value={f.value} label={f.label}>{f.label}</Select.Item>
 							{/each}

@@ -61,20 +61,6 @@
 		}
 	}
 
-	// Dynamic Group Link (/u/alice+bob) builder
-	let groupHandles = $state<string[]>([]);
-	const groupLinkPath = $derived(groupHandles.length > 0 ? `/u/${groupHandles.join('+')}` : '');
-
-	function toggleGroupUser(u: TeamMember) {
-		const h = (u.handle || u.email.split('@')[0] || '').trim();
-		if (!h) return;
-		if (groupHandles.includes(h)) {
-			groupHandles = groupHandles.filter((x) => x !== h);
-		} else {
-			groupHandles = [...groupHandles, h];
-		}
-	}
-
 	function canManage(team: Team): boolean {
 		return Boolean($currentUser?.is_admin || team.my_role === 'owner');
 	}
@@ -452,44 +438,5 @@
 				{/if}
 			</div>
 		{/each}
-	</div>
-{/if}
-
-{#if users.length > 1}
-	<div class="mt-8 rounded-xl border bg-card p-5">
-		<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-			<div>
-				<h2 class="text-sm font-semibold">Dynamic Group Link Builder</h2>
-				<p class="text-xs text-muted-foreground">Combine 2 or more team members into an instant collective booking link (<code class="font-mono">/u/alice+bob</code>).</p>
-			</div>
-			{#if groupHandles.length >= 2}
-				<div class="flex flex-wrap items-center gap-2">
-					<code class="max-w-full truncate rounded-md bg-muted px-2.5 py-1 text-xs font-mono">{groupLinkPath}</code>
-					<Button size="sm" variant="outline" class="h-8 text-xs" onclick={() => {
-						const url = `${window.location.origin}${groupLinkPath}`;
-						navigator.clipboard?.writeText(url);
-						toast.success(`Copied ${url}`);
-					}}>Copy</Button>
-					<a href={groupLinkPath} target="_blank" rel="noopener noreferrer">
-						<Button size="sm" class="h-8 text-xs">Open</Button>
-					</a>
-				</div>
-			{/if}
-		</div>
-		<div class="mt-3 flex flex-wrap gap-2">
-			{#each users.filter((u) => !u.archived) as u (u.id)}
-				{@const h = (u.handle || u.email.split('@')[0] || '').trim()}
-				{@const selected = groupHandles.includes(h)}
-				<button
-					type="button"
-					onclick={() => toggleGroupUser(u)}
-					class="rounded-full border px-3 py-1 text-xs transition-colors {selected
-						? 'border-foreground bg-foreground text-background'
-						: 'border-border bg-background text-foreground hover:bg-accent'}"
-				>
-					{selected ? '✓ ' : ''}{u.name}
-				</button>
-			{/each}
-		</div>
 	</div>
 {/if}

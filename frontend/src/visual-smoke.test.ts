@@ -4,6 +4,7 @@ import { today, getLocalTimeZone } from '@internationalized/date';
 import Switch from '$lib/components/ui/switch/switch.svelte';
 import Checkbox from '$lib/components/ui/checkbox/checkbox.svelte';
 import Calendar from '$lib/components/ui/calendar/calendar.svelte';
+import { timezoneOptions } from '$lib/timezones';
 
 // Resolve a CSS value (e.g. `var(--primary)`) to the browser's computed color
 // string, so comparisons are exact and color-space-agnostic (same engine, same
@@ -69,5 +70,18 @@ describe('shadcn component state styling', () => {
 		const selected = container.querySelector('[data-bits-day][data-selected]')!;
 		expect(selected).toBeTruthy();
 		expect(getComputedStyle(selected).backgroundColor).toBe(resolveColor('var(--primary)'));
+	});
+});
+
+
+describe('timezone options', () => {
+	test('Kolkata is searchable by its name, abbreviation, country and offset', () => {
+		const kolkata = timezoneOptions().find((item) => item.value === 'Asia/Kolkata');
+		expect(kolkata).toBeTruthy();
+		const searchText = `${kolkata!.label} ${kolkata!.keywords}`.toLowerCase();
+		for (const term of ['ist', 'india', 'kolkata', 'gmt+5:30']) {
+			expect(searchText).toContain(term);
+		}
+		expect(kolkata!.label).toContain('UTC+05:30');
 	});
 });

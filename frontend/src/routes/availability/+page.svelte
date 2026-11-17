@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, type AvailabilityRule, type AvailabilityOverride, type AvailabilitySchedule, type OOOEntry } from '$lib/api';
-	import { prefs, fmtDate, weekDays } from '$lib/prefs';
+	import { api, type User, type AvailabilityRule, type AvailabilityOverride, type AvailabilitySchedule, type OOOEntry } from '$lib/api';
+	import { prefs, prefsFromUser, fmtDate, weekDays } from '$lib/prefs';
 	import { t, tr, localeTag } from '$lib/i18n';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { ConfirmDialog } from '$lib/components/ui/confirm-dialog';
@@ -10,9 +10,12 @@
 	import { Switch } from '$lib/components/ui/switch';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import * as Select from '$lib/components/ui/select';
+	import { Combobox } from '$lib/components/ui/combobox';
+	import { timezoneOptions } from '$lib/timezones';
 	import { DatePicker } from '$lib/components/ui/date-picker';
 	import { DateRangePicker } from '$lib/components/ui/date-range-picker';
 	import { toast } from 'svelte-sonner';
+	import { currentUser } from '$lib/stores';
 
 	const DAY_NAMES = $derived(weekDays($t));
 
@@ -85,6 +88,18 @@
 		} finally {
 			creatingSchedule = false;
 		}
+	}
+
+	async function setScheduleTimezone(id: string, timezone: string) {
+		try {
+			if (id) {
+				const updated = await api.patch<AvailabilitySchedule>(`/v1/availability-schedules/${id}`, { timezone });
+				schedules = schedules.map(s => s.id === id ? updated : s);
+			} else {
+				const updated = await api.patch<User>('/v1/users/me', { timezone });
+				currentUser.set(updated); prefs.set(prefsFromUser(updated));
+			}
+		} catch (e: any) { toast.error(e.message || 'Failed to update timezone'); }
 	}
 
 	async function deleteSchedule(id: string) {
@@ -824,6 +839,12 @@
 		{/if}
 	</div>
 
+	<div class="mb-6 max-w-md space-y-1.5">
+		<label for="schedule-timezone" class="text-sm font-medium">{$t('settings.profile.timezone.label')}</label>
+		<Combobox id="schedule-timezone" items={timezoneOptions(schedules.find(s => s.id === selectedScheduleId)?.timezone || $prefs.timezone)} value={schedules.find(s => s.id === selectedScheduleId)?.timezone || $prefs.timezone} onValueChange={(value) => setScheduleTimezone(selectedScheduleId, value)} searchPlaceholder={$t('settings.profile.timezone.searchPlaceholder')} />
+		{#if !selectedScheduleId}<p class="text-xs text-muted-foreground">{$t('settings.profile.timezone.hint')}</p>{/if}
+	</div>
+
 <!-- Weekly Hours -->
 <div class="mb-8">
 	<h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">{$t('availability.weeklyHours')}</h2>
@@ -868,8 +889,8 @@
 											onValueChange={() => updateBlock(block)}
 											disabled={block.saving || !block.id}
 										>
-											<Select.Trigger class="w-fit">{timeLabel(block.start_time)}</Select.Trigger>
-											<Select.Content>
+											<Select.Trigger class=" w-full justify-between">{timeLabel(block.start_time)}</Select.Trigger>
+											<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
 												{#each timeOptions as opt}<Select.Item value={opt.value} label={opt.label}>{opt.label}</Select.Item>{/each}
 											</Select.Content>
 										</Select.Root>
@@ -880,8 +901,8 @@
 											onValueChange={() => updateBlock(block)}
 											disabled={block.saving || !block.id}
 										>
-											<Select.Trigger class="w-fit">{timeLabel(block.end_time)}</Select.Trigger>
-											<Select.Content>
+											<Select.Trigger class=" w-full justify-between">{timeLabel(block.end_time)}</Select.Trigger>
+											<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
 												{#each timeOptions as opt}<Select.Item value={opt.value} label={opt.label}>{opt.label}</Select.Item>{/each}
 											</Select.Content>
 										</Select.Root>
@@ -1085,10 +1106,10 @@
 			<div class="space-y-1.5">
 				<span class="text-xs font-medium text-muted-foreground">Reason</span>
 				<Select.Root type="single" bind:value={oooReason}>
-					<Select.Trigger class="w-full text-sm">
+					<Select.Trigger class="text-sm w-full justify-between">
 						{oooReason === 'ooo' ? 'Unspecified' : oooReason.charAt(0).toUpperCase() + oooReason.slice(1)}
 					</Select.Trigger>
-					<Select.Content>
+					<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
 						<Select.Item value="ooo" label="Unspecified">Unspecified</Select.Item>
 						<Select.Item value="holiday" label="Holiday">Holiday</Select.Item>
 						<Select.Item value="vacation" label="Vacation">Vacation</Select.Item>
@@ -1117,12 +1138,12 @@
 				</div>
 				{#if oooProvideRedirect}
 					<Select.Root type="single" bind:value={oooRedirectUserId}>
-						<Select.Trigger class="w-full text-xs">
+						<Select.Trigger class="text-xs w-full justify-between">
 							{oooRedirectUserId
 								? (directoryUsers.find((u) => u.id === oooRedirectUserId)?.name ?? 'Select teammate')
 								: 'Select teammate...'}
 						</Select.Trigger>
-						<Select.Content>
+						<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
 							{#each directoryUsers as u}
 								<Select.Item value={u.id} label={u.name}>{u.name}{u.handle ? ` (/${u.handle})` : ''}</Select.Item>
 							{/each}
@@ -1198,15 +1219,15 @@
 							{#each ovTimeRanges as range, idx}
 								<div class="flex flex-wrap items-center gap-2">
 									<Select.Root type="single" bind:value={range.start_time}>
-										<Select.Trigger class="w-fit">{timeLabel(range.start_time)}</Select.Trigger>
-										<Select.Content>
+										<Select.Trigger class=" w-full justify-between">{timeLabel(range.start_time)}</Select.Trigger>
+										<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
 											{#each timeOptions as opt}<Select.Item value={opt.value} label={opt.label}>{opt.label}</Select.Item>{/each}
 										</Select.Content>
 									</Select.Root>
 									<span class="text-muted-foreground">–</span>
 									<Select.Root type="single" bind:value={range.end_time}>
-										<Select.Trigger class="w-fit">{timeLabel(range.end_time)}</Select.Trigger>
-										<Select.Content>
+										<Select.Trigger class=" w-full justify-between">{timeLabel(range.end_time)}</Select.Trigger>
+										<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
 											{#each timeOptions as opt}<Select.Item value={opt.value} label={opt.label}>{opt.label}</Select.Item>{/each}
 										</Select.Content>
 									</Select.Root>

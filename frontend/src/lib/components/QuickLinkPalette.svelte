@@ -7,6 +7,8 @@
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import OfferCustomTimes from '$lib/components/OfferCustomTimes.svelte';
+  import DynamicLinkDialog from '$lib/components/DynamicLinkDialog.svelte';
+  let dynamicOpen = $state(false);
   let customOpen = $state(false), customEvent = $state<EventType | null>(null);
   let { open = $bindable(false) }: { open: boolean } = $props();
   let items = $state<EventType[]>([]), query = $state(''), busy = $state(false), selected = $state(0), error = $state('');
@@ -28,11 +30,13 @@
     if (e.key === 'Enter' && visible[selected]) { e.preventDefault(); void copy(visible[selected], e.shiftKey); }
   }
 </script>
+<DynamicLinkDialog bind:open={dynamicOpen} />
 <OfferCustomTimes bind:open={customOpen} event={customEvent} />
 <Dialog.Root bind:open>
   <Dialog.Content class="sm:max-w-xl">
     <Dialog.Header><Dialog.Title>{$t('quickLink.title')}</Dialog.Title><Dialog.Description>{$t('quickLink.description')}</Dialog.Description></Dialog.Header>
     <Input aria-label={$t('quickLink.search')} placeholder={$t('quickLink.search')} bind:value={query} oninput={() => selected = 0} onkeydown={keys} />
+    <Button type="button" variant="outline" class="justify-start" onclick={() => { open = false; dynamicOpen = true; }}>{$t('dynamicLink.title')}</Button>
     <div class="max-h-80 space-y-1 overflow-y-auto">
       {#if error}<p class="text-sm text-destructive">{error}</p>{:else if visible.length === 0}<p class="p-3 text-sm text-muted-foreground">{$t('quickLink.empty')}</p>{/if}
       {#each visible as item, i (item.id)}
