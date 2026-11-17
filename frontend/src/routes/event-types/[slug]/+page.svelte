@@ -86,20 +86,24 @@
   // ── Event type ───────────────────────────────────────────────────────────────
   let et = $state<EventType | null>(null);
   const TABS = $derived([
-    { id: "general" as const, label: $t("eventTypeEditor.tabs.general") },
-    { id: "limits" as const, label: "Limits & buffers" },
-    { id: "privacy" as const, label: $t("eventTypeEditor.tabs.privacy") },
-    { id: "hosts" as const, label: $t("eventTypeEditor.tabs.hosts") },
-    { id: "payments" as const, label: $t("settings.nav.payments") },
-    { id: "questions" as const, label: "Booking form" },
-    { id: "confirmation" as const, label: "Confirmation" },
-    { id: "webhooks" as const, label: $t("webhooks.title") },
-    { id: "embed" as const, label: $t("eventTypeEditor.tabs.embed") },
+    { id: "general" as const, label: "Basics", section: "Setup" },
+    { id: "availability" as const, label: "Availability", section: "Setup" },
+    { id: "hosts" as const, label: $t("eventTypeEditor.tabs.hosts"), section: "Setup" },
+    { id: "questions" as const, label: "Booking form", section: "Booking experience" },
+    { id: "confirmation" as const, label: "Confirmation", section: "Booking experience" },
+    { id: "payments" as const, label: $t("settings.nav.payments"), section: "Booking experience" },
+    { id: "limits" as const, label: "Limits & buffers", section: "Policies" },
+    { id: "reschedule" as const, label: "Reschedule & cancel", section: "Policies" },
+    { id: "privacy" as const, label: $t("eventTypeEditor.tabs.privacy"), section: "Policies" },
+    { id: "webhooks" as const, label: $t("webhooks.title"), section: "Automation" },
+    { id: "embed" as const, label: $t("eventTypeEditor.tabs.embed"), section: "Automation" },
   ]);
   let activeTab = $state<(typeof TABS)[number]["id"]>("general");
   let durationMenuOpen = $state(false);
   const DURATION_PRESETS = [5, 10, 15, 20, 25, 30, 45, 60, 90, 120];
   let previewQuestions = $state<Question[]>([]);
+  let bookingFormConfig = $state("");
+  let availRules = $state<{ schedule_id?: string | null; day_of_week: number; start_time: string; end_time: string }[]>([]);
   let etLoading = $state(true);
   let etError = $state("");
   let etSaving = $state(false);
@@ -182,6 +186,7 @@
     location_options: [] as LocationOption[],
     destination_calendar_id: "",
     schedule_id: "",
+    optimized_slots: false,
     team_id: "",
     price_cents: 0,
     currency: "usd",
@@ -709,14 +714,17 @@
   async function loadET() {
     etError = "";
     try {
-      const [etRes, calRes, schedRes] = await Promise.all([
+      const [etRes, calRes, schedRes, rulesRes] = await Promise.all([
         api.get<EventType>(`/v1/event-types/${slug}`),
         api.get<{ items: ConnectedCalendarItem[] }>("/v1/calendar/calendars").catch(() => ({ items: [] })),
         api.get<{ items: AvailabilitySchedule[] }>("/v1/availability-schedules").catch(() => ({ items: [] })),
+        api.get<{ rules: { schedule_id?: string | null; day_of_week: number; start_time: string; end_time: string }[] }>("/v1/availability").catch(() => ({ rules: [] })),
       ]);
       et = etRes;
       connectedCalendars = calRes.items ?? [];
       availSchedules = schedRes.items ?? [];
+      availRules = rulesRes.rules ?? [];
+      bookingFormConfig = et.booking_form_config ?? "";
       allowPhoneCall = et.allow_phone_call;
       form = {
         display_order: et.display_order,
@@ -771,6 +779,7 @@
         })),
         destination_calendar_id: et.destination_calendar_id ?? "",
         schedule_id: et.schedule_id ?? "",
+        optimized_slots: !!et.optimized_slots,
         team_id: et.team_id ?? "",
         price_cents: et.price_cents ?? 0,
         currency: et.currency ?? "usd",
@@ -935,6 +944,7 @@
         location_options: form.location_options,
         destination_calendar_id: form.destination_calendar_id,
         schedule_id: form.schedule_id,
+        optimized_slots: form.optimized_slots,
         team_id: form.team_id,
         price_cents: Math.max(0, Math.round(Number(priceMajor) * 100)) || 0,
         currency: form.currency.trim().toLowerCase() || "usd",
@@ -1387,12 +1397,14 @@
       class="flex shrink-0 gap-1 overflow-x-auto pb-2 lg:flex-col lg:overflow-visible lg:pb-0"
       aria-label="Event type sections"
     >
-      <p
-        class="hidden px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70 lg:block"
-      >
-        Setup
-      </p>
-      {#each TABS as tab}
+      {#each TABS as tab, i}
+        {#if i === 0 || TABS[i - 1].section !== tab.section}
+          <p
+            class="hidden px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70 lg:block {i === 0 ? 'pt-1' : 'pt-4'}"
+          >
+            {tab.section}
+          </p>
+        {/if}
         <button
           type="button"
           onclick={() => (activeTab = tab.id)}
@@ -1640,34 +1652,6 @@
                   }}
                 />
               </div>
-              {#if availSchedules.length > 0}
-                <div class="sm:col-span-2 space-y-1.5 min-w-0">
-                  <Label>Availability schedule</Label>
-                  <Select.Root
-                    type="single"
-                    value={form.schedule_id}
-                    onValueChange={(v) => {
-                      form.schedule_id = v ?? "";
-                    }}
-                  >
-                    <Select.Trigger class="w-full min-w-0 overflow-hidden">
-                      <span class="truncate">
-                        {form.schedule_id
-                          ? (availSchedules.find((s) => s.id === form.schedule_id)?.name ?? form.schedule_id)
-                          : "Default schedule"}
-                      </span>
-                    </Select.Trigger>
-                    <Select.Content>
-                      <Select.Item value="" label="Default schedule">Default schedule</Select.Item>
-                      {#each availSchedules as sched}
-                        <Select.Item value={sched.id} label={sched.name}>
-                          {sched.name}{sched.timezone ? ` (${sched.timezone})` : ""}
-                        </Select.Item>
-                      {/each}
-                    </Select.Content>
-                  </Select.Root>
-                </div>
-              {/if}
               <div class="sm:col-span-2 space-y-1.5 min-w-0">
                 <Label for="et-desc"
                   >{$t("eventTypeEditor.general.description")}</Label
@@ -1939,56 +1923,6 @@
                 {/if}
               </div>
 
-              <div class="mt-4 space-y-1.5 border-t pt-4">
-                <Label>{$t("eventTypeEditor.location.addToCalendar")}</Label>
-                <Select.Root
-                  type="single"
-                  value={form.destination_calendar_id}
-                  onValueChange={(v) => {
-                    form.destination_calendar_id = v ?? "";
-                  }}
-                >
-                  <Select.Trigger class="w-full">
-                    {(() => {
-                      if (!form.destination_calendar_id) {
-                        return $t("eventTypeEditor.location.addToCalendarDefault");
-                      }
-                      const match = displayCalendars.find(
-                        (c) => c.calendar_id === form.destination_calendar_id
-                      ) ?? connectedCalendars.find(
-                        (c) => c.calendar_id === form.destination_calendar_id
-                      );
-                      if (!match) return form.destination_calendar_id;
-                      const providerName = match.provider === "microsoft" ? "Outlook" : "Google Calendar";
-                      return `${providerName} · ${match.account_email || match.name || match.calendar_id}`;
-                    })()}
-                  </Select.Trigger>
-                  <Select.Content>
-                    <Select.Item
-                      value=""
-                      label={$t("eventTypeEditor.location.addToCalendarDefault")}
-                    >
-                      {$t("eventTypeEditor.location.addToCalendarDefault")}
-                    </Select.Item>
-                    {#each displayCalendars as cal}
-                      {@const isMs = cal.provider === "microsoft"}
-                      {@const calLabel = `${isMs ? "Outlook" : "Google Calendar"} · ${cal.account_email || cal.name || cal.calendar_id}`}
-                      <Select.Item value={cal.calendar_id} label={calLabel}>
-                        <span class="inline-flex items-center gap-2">
-                          <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-bold {isMs ? 'bg-sky-500/20 text-sky-400' : 'bg-blue-500/20 text-blue-400'}">
-                            {isMs ? "O" : "G"}
-                          </span>
-                          <span>{calLabel}</span>
-                        </span>
-                      </Select.Item>
-                    {/each}
-                  </Select.Content>
-                </Select.Root>
-                <p class="text-xs text-muted-foreground">
-                  Bookings always add to your main personal calendar; conflict checks still run across all enabled calendars.
-                </p>
-              </div>
-
               <p
                 class="mb-3 mt-4 border-t pt-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
               >
@@ -2066,6 +2000,131 @@
                 </p>
               {/if}
             </div>
+          </div>
+        </div>
+      {/if}
+
+      {#if activeTab === "availability"}
+        {@const activeSched = form.schedule_id
+          ? availSchedules.find((s) => s.id === form.schedule_id)
+          : availSchedules.find((s) => s.is_default) ?? availSchedules[0]}
+        {@const schedRules = availRules.filter((r) =>
+          activeSched ? (!r.schedule_id && activeSched.is_default) || r.schedule_id === activeSched.id : !r.schedule_id
+        )}
+        {@const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]}
+        <div class="mb-8 space-y-6">
+          <div class="rounded-lg border bg-card p-5">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <h2 class="text-sm font-semibold">Optimized slots</h2>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Show start times that fit tightly around your existing bookings, instead of snapping to fixed intervals like :00 and :30.
+                </p>
+              </div>
+              <Switch bind:checked={form.optimized_slots} />
+            </div>
+          </div>
+
+          <div class="rounded-lg border bg-card p-5 space-y-4">
+            <div class="space-y-1.5">
+              <Label>Availability</Label>
+              <Select.Root
+                type="single"
+                value={form.schedule_id}
+                onValueChange={(v) => {
+                  form.schedule_id = v ?? "";
+                }}
+              >
+                <Select.Trigger class="w-full min-w-0 overflow-hidden">
+                  <span class="truncate">
+                    {form.schedule_id
+                      ? (availSchedules.find((s) => s.id === form.schedule_id)?.name ?? form.schedule_id)
+                      : `Default schedule${activeSched ? ` (${activeSched.name})` : ""}`}
+                  </span>
+                </Select.Trigger>
+                <Select.Content>
+                  <Select.Item value="" label="Default schedule">Default schedule</Select.Item>
+                  {#each availSchedules as sched}
+                    <Select.Item value={sched.id} label={sched.name}>
+                      {sched.name}{sched.is_default ? " · Default" : ""}{sched.timezone ? ` (${sched.timezone})` : ""}
+                    </Select.Item>
+                  {/each}
+                </Select.Content>
+              </Select.Root>
+            </div>
+
+            <div class="divide-y rounded-md border bg-muted/20 px-3 text-xs">
+              {#each dayNames as dayName, dow}
+                {@const dayRanges = schedRules.filter((r) => r.day_of_week === dow)}
+                <div class="flex items-center justify-between py-2">
+                  <span class="font-medium text-foreground">{dayName}</span>
+                  {#if dayRanges.length === 0}
+                    <span class="text-muted-foreground">Unavailable</span>
+                  {:else}
+                    <span class="text-muted-foreground">
+                      {dayRanges.map((r) => `${r.start_time} - ${r.end_time}`).join(", ")}
+                    </span>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+
+            <div class="flex items-center justify-between text-xs text-muted-foreground pt-1">
+              <span>{activeSched?.timezone || "UTC"}</span>
+              <a href="/availability" class="inline-flex items-center gap-1 font-medium text-foreground hover:underline">
+                Edit availability ↗
+              </a>
+            </div>
+          </div>
+
+          <div class="rounded-lg border bg-card p-5 space-y-2">
+            <Label>{$t("eventTypeEditor.location.addToCalendar")}</Label>
+            <Select.Root
+              type="single"
+              value={form.destination_calendar_id}
+              onValueChange={(v) => {
+                form.destination_calendar_id = v ?? "";
+              }}
+            >
+              <Select.Trigger class="w-full">
+                {(() => {
+                  if (!form.destination_calendar_id) {
+                    return $t("eventTypeEditor.location.addToCalendarDefault");
+                  }
+                  const match = displayCalendars.find(
+                    (c) => c.calendar_id === form.destination_calendar_id
+                  ) ?? connectedCalendars.find(
+                    (c) => c.calendar_id === form.destination_calendar_id
+                  );
+                  if (!match) return form.destination_calendar_id;
+                  const providerName = match.provider === "microsoft" ? "Outlook" : "Google Calendar";
+                  return `${providerName} · ${match.account_email || match.name || match.calendar_id}`;
+                })()}
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Item
+                  value=""
+                  label={$t("eventTypeEditor.location.addToCalendarDefault")}
+                >
+                  {$t("eventTypeEditor.location.addToCalendarDefault")}
+                </Select.Item>
+                {#each displayCalendars as cal}
+                  {@const isMs = cal.provider === "microsoft"}
+                  {@const calLabel = `${isMs ? "Outlook" : "Google Calendar"} · ${cal.account_email || cal.name || cal.calendar_id}`}
+                  <Select.Item value={cal.calendar_id} label={calLabel}>
+                    <span class="inline-flex items-center gap-2">
+                      <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-bold {isMs ? 'bg-sky-500/20 text-sky-400' : 'bg-blue-500/20 text-blue-400'}">
+                        {isMs ? "O" : "G"}
+                      </span>
+                      <span>{calLabel}</span>
+                    </span>
+                  </Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            <p class="text-xs text-muted-foreground">
+              Bookings always add to your main personal calendar; conflict checks still run across all enabled calendars.
+            </p>
           </div>
         </div>
       {/if}
@@ -2469,11 +2528,15 @@
               {/if}
             </div>
           </div>
+        </div>
+      {/if}
 
+      {#if activeTab === "reschedule"}
+        <div class="mb-8">
           <h2
-            class="mb-3 mt-8 text-sm font-semibold uppercase tracking-wider text-muted-foreground"
+            class="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground"
           >
-            {$t("eventTypeEditor.policies.title")}
+            Reschedule &amp; cancel
           </h2>
           <div class="space-y-4 rounded-lg border bg-card p-6">
             <div class="flex items-center justify-between gap-4">
@@ -3454,7 +3517,9 @@
         <QuestionsPanel
           slug={slug ?? ""}
           allowPhoneCall={allowPhoneCall && isOnlineMeeting(form.location_type)}
+          {bookingFormConfig}
           onQuestionsChange={(items) => (previewQuestions = items)}
+          onFormConfigChange={(cfg) => (bookingFormConfig = cfg)}
         />
       {/if}
 
@@ -3543,6 +3608,7 @@
           calendarEventTitle={form.calendar_event_title}
           redirectUrl={form.redirect_url}
           questions={previewQuestions}
+          {bookingFormConfig}
         />
       </div>
     </aside>

@@ -52,6 +52,92 @@ type bookQuestion struct {
 	LockIfPrefilled bool
 }
 
+type bookingFormConfigItem struct {
+	Key      string `json:"key"`
+	Hidden   bool   `json:"hidden,omitempty"`
+	Required bool   `json:"required,omitempty"`
+}
+
+type bookFormItem struct {
+	Kind     string // "name" | "email" | "phone" | "notes" | "guests" | "question"
+	Hidden   bool
+	Required bool
+	Question *bookQuestion
+}
+
+func buildBookFormItems(raw string, questions []bookQuestion, phoneChoice bool) []bookFormItem {
+	qByID := make(map[string]bookQuestion, len(questions))
+	for _, q := range questions {
+		qByID[q.ID] = q
+	}
+
+	var cfg []bookingFormConfigItem
+	if strings.TrimSpace(raw) != "" {
+		_ = json.Unmarshal([]byte(raw), &cfg)
+	}
+
+	seen := make(map[string]bool)
+	var out []bookFormItem
+
+	addSystem := func(key string, hidden, required bool) {
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		if key == "name" || key == "email" {
+			hidden = false
+			required = true
+		}
+		if key == "phone" && phoneChoice {
+			hidden = false
+		}
+		out = append(out, bookFormItem{
+			Kind:     key,
+			Hidden:   hidden,
+			Required: required,
+		})
+	}
+
+	for _, c := range cfg {
+		switch c.Key {
+		case "name", "email", "phone", "notes", "guests":
+			addSystem(c.Key, c.Hidden, c.Required)
+		default:
+			if strings.HasPrefix(c.Key, "q:") {
+				qid := strings.TrimPrefix(c.Key, "q:")
+				if q, ok := qByID[qid]; ok && !seen[c.Key] {
+					seen[c.Key] = true
+					qCopy := q
+					out = append(out, bookFormItem{
+						Kind:     "question",
+						Question: &qCopy,
+					})
+				}
+			}
+		}
+	}
+
+	// Append any system fields or custom questions not yet present in config.
+	addSystem("name", false, true)
+	addSystem("email", false, true)
+	addSystem("phone", false, false)
+	addSystem("notes", false, false)
+	addSystem("guests", false, false)
+	for _, q := range questions {
+		k := "q:" + q.ID
+		if !seen[k] {
+			seen[k] = true
+			qCopy := q
+			out = append(out, bookFormItem{
+				Kind:     "question",
+				Question: &qCopy,
+			})
+		}
+	}
+
+	return out
+}
+
 type bookPageData struct {
 	PhoneChoice      bool
 	AccentColor      string
@@ -83,6 +169,7 @@ type bookPageData struct {
 	Currency                 string // ISO 4217, lowercase
 	MaxFutureDays            int
 	Questions                []bookQuestion
+	FormItems                []bookFormItem
 	RequireEmailVerification bool
 	AllowMultipleDurations   bool
 	DurationOptions          []int
@@ -486,30 +573,31 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 	}
 
 	var (
-		etID           string
-		name           string
-		description    string
-		durMins        int
-		locType        string
-		locValue       string
-		maxDays        int
-		minNotice      int
-		hostName       string
-		avatarURL      string
-		routingMode    string
-		priceCents     int
-		currency       string
-		msgGreeting    sql.NullString
-		allowPhoneCall bool
-		accentColor    string
-		redirectURL    string
-		reqEmailVerify bool
-		allowMultiDur  bool
-		durOptsRaw     sql.NullString
-		locOptsRaw     sql.NullString
-		ownerID        string
-		teamID         string
-		teamName       string
+		etID              string
+		name              string
+		description       string
+		durMins           int
+		locType           string
+		locValue          string
+		maxDays           int
+		minNotice         int
+		hostName          string
+		avatarURL         string
+		routingMode       string
+		priceCents        int
+		currency          string
+		msgGreeting       sql.NullString
+		allowPhoneCall    bool
+		accentColor       string
+		redirectURL       string
+		reqEmailVerify    bool
+		allowMultiDur     bool
+		durOptsRaw        sql.NullString
+		locOptsRaw        sql.NullString
+		ownerID           string
+		teamID            string
+		teamName          string
+		bookingFormConfig string
 	)
 	_ = allowPrivate
 	query := `
@@ -519,13 +607,13 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		       et.price_cents, et.currency, et.msg_greeting, et.allow_phone_call, u.booking_accent,
 		       COALESCE(et.redirect_url, ''), et.require_email_verification,
 		       et.allow_multiple_durations, et.duration_options, et.location_options,
-		       COALESCE(et.team_id, ''), COALESCE(tm.name, '')
+		       COALESCE(et.team_id, ''), COALESCE(tm.name, ''), COALESCE(et.booking_form_config, '')
 		FROM event_types et
 		JOIN users u ON u.id = et.user_id
 		LEFT JOIN teams tm ON tm.id = et.team_id
 		WHERE et.slug = ? AND et.is_active = 1`
 	err := h.db.QueryRowContext(r.Context(), query, slug).
-		Scan(&etID, &ownerID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor, &redirectURL, &reqEmailVerify, &allowMultiDur, &durOptsRaw, &locOptsRaw, &teamID, &teamName)
+		Scan(&etID, &ownerID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor, &redirectURL, &reqEmailVerify, &allowMultiDur, &durOptsRaw, &locOptsRaw, &teamID, &teamName, &bookingFormConfig)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Page not found", http.StatusNotFound)
@@ -660,6 +748,7 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		Currency:            currency,
 		MaxFutureDays:       maxDays,
 		Questions:           questions,
+		FormItems:           buildBookFormItems(bookingFormConfig, questions, allowPhoneCall && onlineMeetingLocation(locType)),
 		BookingLogicJS:      template.JS(bookingLogicJS), // #nosec G203 -- our own bundled JS source constant, not user input
 		AssistantEnabled:    h.getLLM() != nil,
 		AssistantDisclosure: loc.T("assistant_disclosure"),

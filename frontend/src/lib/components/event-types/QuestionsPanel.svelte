@@ -16,12 +16,49 @@
   let {
     slug,
     allowPhoneCall = false,
+    bookingFormConfig = "",
     onQuestionsChange,
+    onFormConfigChange,
   }: {
     slug: string;
     allowPhoneCall?: boolean;
+    bookingFormConfig?: string;
     onQuestionsChange?: (items: Question[]) => void;
+    onFormConfigChange?: (configJson: string) => void;
   } = $props();
+
+  type FormConfigEntry = {
+    key: string;
+    hidden?: boolean;
+    required?: boolean;
+  };
+
+  type UnifiedItem =
+    | {
+        kind: "system";
+        key: "name" | "email" | "phone" | "notes" | "guests";
+        label: string;
+        typeLabel: string;
+        hidden: boolean;
+        required: boolean;
+        locked: boolean;
+      }
+    | {
+        kind: "question";
+        key: string;
+        question: Question;
+      };
+
+  const SYSTEM_DEFAULTS: Record<
+    "name" | "email" | "phone" | "notes" | "guests",
+    { label: string; typeLabel: string; required: boolean; locked: boolean }
+  > = {
+    name: { label: "Your name", typeLabel: "Name", required: true, locked: true },
+    email: { label: "Email address", typeLabel: "Email", required: true, locked: true },
+    phone: { label: "Phone number", typeLabel: "Phone", required: false, locked: false },
+    notes: { label: "Additional notes", typeLabel: "Long Text", required: false, locked: false },
+    guests: { label: "Add guests", typeLabel: "Multiple Emails", required: false, locked: false },
+  };
 
   const OPTION_TYPES = new Set<QuestionType>([
     "select",
@@ -237,35 +274,139 @@
   }
 
   let dragIdx = $state<number | null>(null);
+  let dragOverIdx = $state<number | null>(null);
   let reordering = $state(false);
 
-  async function reorderQuestions(fromIdx: number, toIdx: number) {
+  let unifiedItems = $derived.by((): UnifiedItem[] => {
+    const qById = new Map(questions.map((q) => [q.id, q]));
+    let parsed: FormConfigEntry[] = [];
+    if (bookingFormConfig && bookingFormConfig.trim() !== "") {
+      try {
+        const raw = JSON.parse(bookingFormConfig);
+        if (Array.isArray(raw)) parsed = raw;
+      } catch {
+        parsed = [];
+      }
+    }
+    const seen = new Set<string>();
+    const out: UnifiedItem[] = [];
+
+    const addSystem = (
+      key: "name" | "email" | "phone" | "notes" | "guests",
+      hidden: boolean,
+      required: boolean,
+    ) => {
+      if (seen.has(key)) return;
+      seen.add(key);
+      const def = SYSTEM_DEFAULTS[key];
+      out.push({
+        kind: "system",
+        key,
+        label: def.label,
+        typeLabel: def.typeLabel,
+        hidden: def.locked ? false : key === "phone" && allowPhoneCall ? false : hidden,
+        required: def.locked ? true : required,
+        locked: def.locked,
+      });
+    };
+
+    for (const entry of parsed) {
+      if (
+        entry.key === "name" ||
+        entry.key === "email" ||
+        entry.key === "phone" ||
+        entry.key === "notes" ||
+        entry.key === "guests"
+      ) {
+        addSystem(entry.key, !!entry.hidden, !!entry.required);
+      } else if (entry.key?.startsWith("q:")) {
+        const qid = entry.key.slice(2);
+        const q = qById.get(qid);
+        if (q && !seen.has(entry.key)) {
+          seen.add(entry.key);
+          out.push({ kind: "question", key: entry.key, question: q });
+        }
+      }
+    }
+
+    addSystem("name", false, true);
+    addSystem("email", false, true);
+    addSystem("phone", false, allowPhoneCall);
+    addSystem("notes", false, false);
+    addSystem("guests", false, false);
+
+    for (const q of questions) {
+      const k = `q:${q.id}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        out.push({ kind: "question", key: k, question: q });
+      }
+    }
+    return out;
+  });
+
+  async function saveUnifiedConfig(items: UnifiedItem[]) {
+    const payload: FormConfigEntry[] = items.map((it) =>
+      it.kind === "system"
+        ? { key: it.key, hidden: it.hidden, required: it.required }
+        : { key: it.key, hidden: !!it.question.hidden, required: it.question.required },
+    );
+    const json = JSON.stringify(payload);
+    onFormConfigChange?.(json);
+    reordering = true;
+    try {
+      await api.patch(`/v1/event-types/${slug}`, { booking_form_config: json });
+      const customOrder = items
+        .filter((it): it is Extract<UnifiedItem, { kind: "question" }> => it.kind === "question")
+        .map((it) => it.question);
+      if (customOrder.length > 0) {
+        questions = customOrder.map((q, idx) => ({ ...q, position: idx }));
+        await Promise.all(
+          customOrder.map((q, idx) =>
+            api.patch(`/v1/event-types/${slug}/questions/${q.id}`, { position: idx }),
+          ),
+        );
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Failed to update booking form");
+    } finally {
+      reordering = false;
+    }
+  }
+
+  async function reorderUnified(fromIdx: number, toIdx: number) {
     if (
       fromIdx === toIdx ||
       fromIdx < 0 ||
       toIdx < 0 ||
-      toIdx >= questions.length ||
+      toIdx >= unifiedItems.length ||
       reordering
     )
       return;
-    const next = [...questions];
+    const next = [...unifiedItems];
     const [moved] = next.splice(fromIdx, 1);
     next.splice(toIdx, 0, moved);
-    questions = next.map((item, idx) => ({ ...item, position: idx }));
-    reordering = true;
+    await saveUnifiedConfig(next);
+  }
+
+  async function toggleSystemVisibility(
+    key: "phone" | "notes" | "guests",
+    visible: boolean,
+  ) {
+    const next = unifiedItems.map((it) =>
+      it.kind === "system" && it.key === key ? { ...it, hidden: !visible } : it,
+    );
+    await saveUnifiedConfig(next);
+  }
+
+  async function toggleQuestionVisibility(q: Question, visible: boolean) {
     try {
-      await Promise.all(
-        questions.map((item, idx) =>
-          api.patch(`/v1/event-types/${slug}/questions/${item.id}`, {
-            position: idx,
-          }),
-        ),
-      );
-    } catch (e: any) {
-      toast.error(e.message || "Failed to reorder questions");
+      await api.patch(`/v1/event-types/${slug}/questions/${q.id}`, {
+        hidden: !visible,
+      });
       await loadQuestions();
-    } finally {
-      reordering = false;
+    } catch (e: any) {
+      toast.error(e.message || tr("eventTypeEditor.questions.error.save"));
     }
   }
 </script>
@@ -294,538 +435,222 @@
     {$t("eventTypeEditor.questions.subtitle")}
   </p>
 
-  <!-- Standard built-in fields -->
-  <div class="mb-4 rounded-lg border bg-card divide-y">
-    <div class="flex items-center justify-between px-4 py-2.5">
-      <div>
-        <div class="text-sm font-medium">Your name</div>
-        <div class="text-xs text-muted-foreground">Text</div>
-      </div>
-      <span
-        class="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
-        >Required</span
-      >
-    </div>
-    <div class="flex items-center justify-between px-4 py-2.5">
-      <div>
-        <div class="text-sm font-medium">Email address</div>
-        <div class="text-xs text-muted-foreground">Email</div>
-      </div>
-      <span
-        class="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
-        >Required</span
-      >
-    </div>
-    {#if allowPhoneCall}
-      <div class="flex items-center justify-between px-4 py-2.5">
-        <div>
-          <div class="text-sm font-medium">Phone number</div>
-          <div class="text-xs text-muted-foreground">Phone</div>
-        </div>
-        <span
-          class="rounded-full border px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
-          >Optional</span
-        >
-      </div>
-    {/if}
-  </div>
-
-  <h3
-    class="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
-  >
-    Custom questions
-  </h3>
-
+  <!-- Unified drag-and-drop booking questions list -->
   <div class="rounded-lg border bg-card overflow-hidden">
     {#if qLoading}
       <p class="px-4 py-4 text-sm text-muted-foreground">
         {$t("common.loading")}
       </p>
-    {:else if questions.length > 0}
-      <!-- Mobile card list (< md) -->
-      <div class="divide-y md:hidden">
-        {#each questions as q, idx (q.id)}
-          {#if editingQId === q.id}
-            <div class="bg-muted/20 p-4 space-y-3">
-              <div class="space-y-1.5">
-                <Label
-                  for="m-eq-label-{q.id}"
-                  class="text-xs text-muted-foreground"
-                  >{$t("eventTypeEditor.questions.label")}</Label
+    {:else}
+      <div class="divide-y" role="list">
+        {#each unifiedItems as item, idx (item.key)}
+          {#if item.kind === "system"}
+            <div
+              role="listitem"
+              draggable={!reordering && editingQId === null}
+              ondragstart={(e) => {
+                dragIdx = idx;
+                e.dataTransfer?.setData("text/plain", String(idx));
+              }}
+              ondragover={(e) => {
+                e.preventDefault();
+                dragOverIdx = idx;
+              }}
+              ondragleave={() => {
+                if (dragOverIdx === idx) dragOverIdx = null;
+              }}
+              ondrop={async (e) => {
+                e.preventDefault();
+                dragOverIdx = null;
+                if (dragIdx !== null && dragIdx !== idx) {
+                  await reorderUnified(dragIdx, idx);
+                }
+                dragIdx = null;
+              }}
+              ondragend={() => {
+                dragIdx = null;
+                dragOverIdx = null;
+              }}
+              class="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-muted/20 {dragOverIdx === idx ? 'bg-muted/40 ring-1 ring-inset ring-primary/40' : ''}"
+            >
+              <div class="flex items-center gap-3 min-w-0">
+                <span
+                  class="cursor-grab active:cursor-grabbing text-muted-foreground/60 hover:text-foreground shrink-0"
+                  title="Drag to reorder"
                 >
-                <Input id="m-eq-label-{q.id}" bind:value={editQForm.label} />
-              </div>
-              <div class="space-y-1.5">
-                <Label
-                  for="m-eq-type-{q.id}"
-                  class="text-xs text-muted-foreground"
-                  >{$t("eventTypeEditor.questions.table.type")}</Label
-                >
-                <Select.Root
-                  type="single"
-                  value={editQForm.type}
-                  onValueChange={(v) => {
-                    if (v) editQForm.type = v as "text" | "select" | "checkbox";
-                  }}
-                >
-                  <Select.Trigger id="m-eq-type-{q.id}" class="w-full">
-                    {QUESTION_TYPES.find((t) => t.value === editQForm.type)
-                      ?.label ?? $t("common.select")}
-                  </Select.Trigger>
-                  <Select.Content>
-                    {#each QUESTION_TYPES as qt}
-                      <Select.Item value={qt.value} label={qt.label}
-                        >{qt.label}</Select.Item
-                      >
-                    {/each}
-                  </Select.Content>
-                </Select.Root>
-              </div>
-              {#if editQForm.type === "select"}
-                <div class="space-y-1.5">
-                  <Label
-                    for="m-eq-options-{q.id}"
-                    class="text-xs text-muted-foreground"
-                    >{$t("eventTypeEditor.questions.options")}</Label
-                  >
-                  <Textarea
-                    id="m-eq-options-{q.id}"
-                    bind:value={editQForm.options}
-                    rows={3}
-                  />
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></svg>
+                </span>
+                <div class="min-w-0">
+                  <div class="flex flex-wrap items-center gap-1.5">
+                    <span class="text-sm font-medium {item.hidden ? 'text-muted-foreground line-through' : ''}">{item.label}</span>
+                    <span class="rounded border px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      {item.required ? "Required" : "Optional"}
+                    </span>
+                    {#if item.hidden}
+                      <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Hidden</span>
+                    {/if}
+                  </div>
+                  <div class="text-xs text-muted-foreground">{item.typeLabel}</div>
                 </div>
-              {/if}
-              <div
-                class="flex items-center justify-between rounded-md border px-3 py-2"
-              >
-                <Label
-                  for="m-eq-required-{q.id}"
-                  class="cursor-pointer font-normal"
-                  >{$t("eventTypeEditor.questions.table.required")}</Label
-                >
-                <Switch
-                  id="m-eq-required-{q.id}"
-                  bind:checked={editQForm.required}
-                />
               </div>
-              <div class="flex gap-2">
-                <Button
-                  size="sm"
-                  onclick={() => saveQuestion(q)}
-                  disabled={qSaving}
-                  >{qSaving ? $t("common.saving") : $t("common.save")}</Button
-                >
-                <Button size="sm" variant="outline" onclick={cancelEditQ}
-                  >{$t("common.cancel")}</Button
-                >
+              <div class="flex items-center gap-2 shrink-0">
+                {#if !item.locked}
+                  <Switch
+                    checked={!item.hidden}
+                    disabled={item.key === "phone" && allowPhoneCall}
+                    onCheckedChange={(v) => {
+                      if (item.key === "phone" || item.key === "notes" || item.key === "guests") {
+                        toggleSystemVisibility(item.key, v);
+                      }
+                    }}
+                    aria-label="Toggle {item.label}"
+                  />
+                {/if}
               </div>
             </div>
           {:else}
-            <div class="p-4 space-y-2">
-              <div class="flex items-start justify-between gap-2">
-                <div class="min-w-0">
-                  <div class="font-medium break-words">
-                    {idx + 1}. {q.label}
+            {@const q = item.question}
+            {#if editingQId === q.id}
+              <div class="bg-muted/20 p-4 space-y-3">
+                <div class="grid gap-3 sm:grid-cols-2">
+                  <div class="space-y-1.5">
+                    <Label for="eq-label-{q.id}" class="text-xs text-muted-foreground">{$t("eventTypeEditor.questions.label")}</Label>
+                    <Input id="eq-label-{q.id}" bind:value={editQForm.label} />
                   </div>
-                  <div class="mt-1 flex flex-wrap items-center gap-1.5">
-                    <span
-                      class="inline-flex items-center rounded-md bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground"
-                      >{typeLabel(q.type)}</span
+                  <div class="space-y-1.5">
+                    <Label for="eq-type-{q.id}" class="text-xs text-muted-foreground">{$t("eventTypeEditor.questions.table.type")}</Label>
+                    <Select.Root
+                      type="single"
+                      value={editQForm.type}
+                      onValueChange={(v) => {
+                        if (v) editQForm.type = v as QuestionType;
+                      }}
                     >
-                    <span class="text-xs text-muted-foreground"
-                      >{q.required ? "Required" : "Optional"}</span
-                    >
+                      <Select.Trigger id="eq-type-{q.id}" class="w-full">
+                        {QUESTION_TYPES.find((t) => t.value === editQForm.type)?.label ?? $t("common.select")}
+                      </Select.Trigger>
+                      <Select.Content>
+                        {#each QUESTION_TYPES as qt}
+                          <Select.Item value={qt.value} label={qt.label}>{qt.label}</Select.Item>
+                        {/each}
+                      </Select.Content>
+                    </Select.Root>
+                  </div>
+                  {#if needsOptions(editQForm.type)}
+                    <div class="sm:col-span-2 space-y-1.5">
+                      <Label for="eq-options-{q.id}" class="text-xs text-muted-foreground">{$t("eventTypeEditor.questions.options")}</Label>
+                      <Textarea id="eq-options-{q.id}" bind:value={editQForm.options} rows={3} />
+                    </div>
+                  {/if}
+                  <div class="space-y-1.5">
+                    <Label for="eq-ident-{q.id}" class="text-xs text-muted-foreground">Identifier</Label>
+                    <Input id="eq-ident-{q.id}" bind:value={editQForm.identifier} placeholder="company_name" />
+                  </div>
+                  <div class="flex flex-wrap items-center gap-4 pt-5">
+                    <div class="flex items-center gap-2">
+                      <Switch id="eq-req-{q.id}" bind:checked={editQForm.required} />
+                      <Label for="eq-req-{q.id}" class="text-xs">Required</Label>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <Switch id="eq-hid-{q.id}" bind:checked={editQForm.hidden} />
+                      <Label for="eq-hid-{q.id}" class="text-xs">Hidden</Label>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <Switch id="eq-lock-{q.id}" bind:checked={editQForm.lock_if_prefilled} />
+                      <Label for="eq-lock-{q.id}" class="text-xs">Lock if prefilled</Label>
+                    </div>
                   </div>
                 </div>
+                <div class="flex justify-end gap-2">
+                  <Button type="button" variant="outline" size="sm" onclick={cancelEditQ}>{$t("common.cancel")}</Button>
+                  <Button type="button" size="sm" disabled={qSaving} onclick={() => saveQuestion(q)}>
+                    {qSaving ? $t("common.saving") : $t("common.save")}
+                  </Button>
+                </div>
               </div>
-              <div class="flex flex-wrap items-center gap-1 pt-1">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  class="h-8 px-2 text-xs"
-                  disabled={idx === 0 || reordering}
-                  onclick={() => reorderQuestions(idx, idx - 1)}>↑</Button
-                >
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  class="h-8 px-2 text-xs"
-                  disabled={idx === questions.length - 1 || reordering}
-                  onclick={() => reorderQuestions(idx, idx + 1)}>↓</Button
-                >
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  class="h-8 text-xs"
-                  onclick={() => startEditQ(q)}>Edit</Button
-                >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  class="h-8 text-xs text-destructive hover:text-destructive"
-                  onclick={() => deleteQuestion(q)}>Remove</Button
-                >
+            {:else}
+              <div
+                role="listitem"
+                draggable={!reordering && editingQId === null}
+                ondragstart={(e) => {
+                  dragIdx = idx;
+                  e.dataTransfer?.setData("text/plain", String(idx));
+                }}
+                ondragover={(e) => {
+                  e.preventDefault();
+                  dragOverIdx = idx;
+                }}
+                ondragleave={() => {
+                  if (dragOverIdx === idx) dragOverIdx = null;
+                }}
+                ondrop={async (e) => {
+                  e.preventDefault();
+                  dragOverIdx = null;
+                  if (dragIdx !== null && dragIdx !== idx) {
+                    await reorderUnified(dragIdx, idx);
+                  }
+                  dragIdx = null;
+                }}
+                ondragend={() => {
+                  dragIdx = null;
+                  dragOverIdx = null;
+                }}
+                class="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-muted/20 {dragOverIdx === idx ? 'bg-muted/40 ring-1 ring-inset ring-primary/40' : ''}"
+              >
+                <div class="flex items-center gap-3 min-w-0">
+                  <span
+                    class="cursor-grab active:cursor-grabbing text-muted-foreground/60 hover:text-foreground shrink-0"
+                    title="Drag to reorder"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></svg>
+                  </span>
+                  <div class="min-w-0">
+                    <div class="flex flex-wrap items-center gap-1.5">
+                      <span class="text-sm font-medium {q.hidden ? 'text-muted-foreground line-through' : ''}">{q.label}</span>
+                      <span class="rounded border px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        {q.required ? "Required" : "Optional"}
+                      </span>
+                      {#if q.hidden}
+                        <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                          {$t("eventTypeEditor.questions.hiddenBadge")}
+                        </span>
+                      {/if}
+                      {#if q.identifier}
+                        <span class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                          ?{q.identifier}
+                        </span>
+                      {/if}
+                    </div>
+                    <div class="text-xs text-muted-foreground">
+                      {typeLabel(q.type)}{#if needsOptions(q.type) && q.options?.length} · {q.options.join(", ")}{/if}
+                    </div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                  <Switch
+                    checked={!q.hidden}
+                    onCheckedChange={(v) => toggleQuestionVisibility(q, v)}
+                    aria-label="Toggle {q.label}"
+                  />
+                  <Button type="button" variant="outline" size="sm" class="h-7 px-2.5 text-xs" onclick={() => startEditQ(q)}>
+                    Edit
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    class="h-7 w-7 text-muted-foreground hover:text-destructive"
+                    onclick={() => deleteQuestion(q)}
+                    aria-label={$t("eventTypeEditor.questions.tooltip.remove")}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                  </Button>
+                </div>
               </div>
-            </div>
+            {/if}
           {/if}
         {/each}
       </div>
-
-      <!-- Desktop table (>= md) -->
-      <table class="hidden md:table w-full text-sm">
-        <thead>
-          <tr class="border-b">
-            <th
-              class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground"
-              >{$t("eventTypeEditor.questions.table.number")}</th
-            >
-            <th
-              class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground"
-              >{$t("eventTypeEditor.questions.table.question")}</th
-            >
-            <th
-              class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground"
-              >{$t("eventTypeEditor.questions.table.type")}</th
-            >
-            <th
-              class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground"
-              >{$t("eventTypeEditor.questions.table.required")}</th
-            >
-            <th class="px-4 pb-3 pt-3"></th>
-          </tr>
-        </thead>
-        <tbody class="divide-y">
-          {#each questions as q, idx (q.id)}
-            {#if editingQId === q.id}
-              <tr class="bg-muted/20">
-                <td class="px-4 py-3 text-muted-foreground">{q.position + 1}</td
-                >
-                <td colspan="3" class="px-4 py-3">
-                  <div class="grid grid-cols-2 gap-3">
-                    <div class="space-y-1.5">
-                      <Label
-                        for="eq-label-{q.id}"
-                        class="text-xs text-muted-foreground"
-                        >{$t("eventTypeEditor.questions.label")}</Label
-                      >
-                      <Input
-                        id="eq-label-{q.id}"
-                        bind:value={editQForm.label}
-                      />
-                    </div>
-                    <div class="space-y-1.5">
-                      <Label
-                        for="eq-type-{q.id}"
-                        class="text-xs text-muted-foreground"
-                        >{$t("eventTypeEditor.questions.table.type")}</Label
-                      >
-                      <Select.Root
-                        type="single"
-                        value={editQForm.type}
-                        onValueChange={(v) => {
-                          if (v) editQForm.type = v as QuestionType;
-                        }}
-                      >
-                        <Select.Trigger id="eq-type-{q.id}" class="w-full">
-                          {QUESTION_TYPES.find(
-                            (t) => t.value === editQForm.type,
-                          )?.label ?? $t("common.select")}
-                        </Select.Trigger>
-                        <Select.Content>
-                          {#each QUESTION_TYPES as qt}
-                            <Select.Item value={qt.value} label={qt.label}
-                              >{qt.label}</Select.Item
-                            >
-                          {/each}
-                        </Select.Content>
-                      </Select.Root>
-                    </div>
-                    {#if needsOptions(editQForm.type)}
-                      <div class="col-span-2 space-y-1.5">
-                        <Label
-                          for="eq-options-{q.id}"
-                          class="text-xs text-muted-foreground"
-                          >{$t("eventTypeEditor.questions.options")}</Label
-                        >
-                        <Textarea
-                          id="eq-options-{q.id}"
-                          bind:value={editQForm.options}
-                          rows={3}
-                        />
-                      </div>
-                    {/if}
-                    <div class="col-span-2 space-y-1.5">
-                      <Label
-                        for="eq-identifier-{q.id}"
-                        class="text-xs text-muted-foreground"
-                        >{$t("eventTypeEditor.questions.identifierLabel")}</Label
-                      >
-                      <Input
-                        id="eq-identifier-{q.id}"
-                        bind:value={editQForm.identifier}
-                        placeholder={$t("eventTypeEditor.questions.identifierPlaceholder")}
-                      />
-                    </div>
-                    <div
-                      class="col-span-2 flex items-center justify-between rounded-md border px-3 py-2"
-                    >
-                      <Label
-                        for="eq-required-{q.id}"
-                        class="cursor-pointer font-normal"
-                        >{$t("eventTypeEditor.questions.table.required")}</Label
-                      >
-                      <Switch
-                        id="eq-required-{q.id}"
-                        bind:checked={editQForm.required}
-                      />
-                    </div>
-                    <div
-                      class="flex items-center justify-between rounded-md border px-3 py-2"
-                    >
-                      <Label
-                        for="eq-hidden-{q.id}"
-                        class="cursor-pointer font-normal"
-                        >{$t("eventTypeEditor.questions.hiddenLabel")}</Label
-                      >
-                      <Switch
-                        id="eq-hidden-{q.id}"
-                        bind:checked={editQForm.hidden}
-                      />
-                    </div>
-                    <div
-                      class="flex items-center justify-between rounded-md border px-3 py-2"
-                    >
-                      <Label
-                        for="eq-lock-{q.id}"
-                        class="cursor-pointer font-normal"
-                        >{$t("eventTypeEditor.questions.lockLabel")}</Label
-                      >
-                      <Switch
-                        id="eq-lock-{q.id}"
-                        bind:checked={editQForm.lock_if_prefilled}
-                      />
-                    </div>
-                  </div>
-                </td>
-                <td class="px-4 py-3 align-top">
-                  <div class="flex items-center justify-end gap-2 pt-5">
-                    <Button
-                      size="sm"
-                      onclick={() => saveQuestion(q)}
-                      disabled={qSaving}
-                    >
-                      {qSaving ? $t("common.saving") : $t("common.save")}
-                    </Button>
-                    <Button size="sm" variant="outline" onclick={cancelEditQ}
-                      >{$t("common.cancel")}</Button
-                    >
-                  </div>
-                </td>
-              </tr>
-            {:else}
-              <tr
-                draggable="true"
-                ondragstart={() => (dragIdx = idx)}
-                ondragover={(e) => e.preventDefault()}
-                ondrop={(e) => {
-                  e.preventDefault();
-                  if (dragIdx !== null) reorderQuestions(dragIdx, idx);
-                  dragIdx = null;
-                }}
-                ondragend={() => (dragIdx = null)}
-                class="transition-colors hover:bg-muted/30 {dragIdx === idx
-                  ? 'opacity-50'
-                  : ''}"
-              >
-                <td class="px-4 py-3 text-muted-foreground">
-                  <div class="flex items-center gap-1.5">
-                    <span
-                      class="cursor-grab text-muted-foreground/60 hover:text-foreground"
-                      title="Drag to reorder"
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        ><circle cx="9" cy="5" r="1" /><circle
-                          cx="9"
-                          cy="12"
-                          r="1"
-                        /><circle cx="9" cy="19" r="1" /><circle
-                          cx="15"
-                          cy="5"
-                          r="1"
-                        /><circle cx="15" cy="12" r="1" /><circle
-                          cx="15"
-                          cy="19"
-                          r="1"
-                        /></svg
-                      >
-                    </span>
-                    <span>{idx + 1}</span>
-                  </div>
-                </td>
-                <td class="px-4 py-3">
-                  <div class="flex flex-wrap items-center gap-1.5 font-medium">
-                    <span>{q.label}</span>
-                    {#if q.hidden}
-                      <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                        {$t("eventTypeEditor.questions.hiddenBadge")}
-                      </span>
-                    {/if}
-                    {#if q.identifier}
-                      <span class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                        ?{q.identifier}
-                      </span>
-                    {/if}
-                  </div>
-                  {#if needsOptions(q.type) && q.options?.length}
-                    <div class="mt-0.5 text-xs text-muted-foreground">
-                      {q.options.join(", ")}
-                    </div>
-                  {/if}
-                </td>
-                <td class="px-4 py-3">
-                  <span
-                    class="inline-flex items-center rounded-md bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground"
-                  >
-                    {typeLabel(q.type)}
-                  </span>
-                </td>
-                <td class="px-4 py-3 text-muted-foreground"
-                  >{q.required ? "Required" : "Optional"}</td
-                >
-                <td class="px-4 py-3">
-                  <Tooltip.Provider>
-                    <div class="flex items-center justify-end gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        disabled={idx === 0 || reordering}
-                        aria-label="Move up"
-                        onclick={() => reorderQuestions(idx, idx - 1)}
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          ><polyline points="18 15 12 9 6 15" /></svg
-                        >
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        disabled={idx === questions.length - 1 || reordering}
-                        aria-label="Move down"
-                        onclick={() => reorderQuestions(idx, idx + 1)}
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          ><polyline points="6 9 12 15 18 9" /></svg
-                        >
-                      </Button>
-                      <Tooltip.Root>
-                        <Tooltip.Trigger
-                          class={buttonVariants({
-                            variant: "ghost",
-                            size: "icon",
-                          })}
-                          onclick={() => startEditQ(q)}
-                        >
-                          <!-- Pencil/edit icon -->
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="16"
-                            height="16"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            ><path
-                              d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
-                            /><path
-                              d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
-                            /></svg
-                          >
-                        </Tooltip.Trigger>
-                        <Tooltip.Content
-                          >{$t(
-                            "eventTypeEditor.questions.tooltip.edit",
-                          )}</Tooltip.Content
-                        >
-                      </Tooltip.Root>
-                      <Tooltip.Root>
-                        <Tooltip.Trigger
-                          class={buttonVariants({
-                            variant: "ghost",
-                            size: "icon",
-                          })}
-                          onclick={() => deleteQuestion(q)}
-                        >
-                          <!-- Trash icon -->
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="16"
-                            height="16"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            ><polyline points="3 6 5 6 21 6" /><path
-                              d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"
-                            /><path d="M10 11v6" /><path d="M14 11v6" /><path
-                              d="M9 6V4h6v2"
-                            /></svg
-                          >
-                        </Tooltip.Trigger>
-                        <Tooltip.Content
-                          >{$t(
-                            "eventTypeEditor.questions.tooltip.remove",
-                          )}</Tooltip.Content
-                        >
-                      </Tooltip.Root>
-                    </div>
-                  </Tooltip.Provider>
-                </td>
-              </tr>
-            {/if}
-          {/each}
-        </tbody>
-      </table>
-    {:else}
-      <p class="px-4 py-4 text-sm text-muted-foreground">
-        {$t("eventTypeEditor.questions.empty")}
-      </p>
     {/if}
 
     <!-- Add question button + modal -->

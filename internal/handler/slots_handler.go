@@ -302,6 +302,7 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 			MinNoticeMinutes:    et.MinNoticeMinutes,
 			MaxFutureDays:       maxFutureDays,
 			RoutingMode:         et.RoutingMode,
+			OptimizedSlots:      et.OptimizedSlots,
 		},
 		Hosts:    hostAvails,
 		DateFrom: dateFrom,

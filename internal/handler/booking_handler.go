@@ -531,6 +531,7 @@ type bookableEventType struct {
 	AllowMultipleDurations   bool
 	DurationOptions          []int
 	LocationOptions          []LocationOption
+	OptimizedSlots           bool
 }
 
 func (et *bookableEventType) allowsDuration(d int) bool {
@@ -560,7 +561,7 @@ func (h *Handler) loadBookableEventType(ctx context.Context, slug string) (*book
 func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug string, allowPrivate bool) (*bookableEventType, error) {
 	var et bookableEventType
 	var isActive, isPublic, showTaken, showFirst int
-	var reqConfirm, reqEmailVerify, allowMultiDur int
+	var reqConfirm, reqEmailVerify, allowMultiDur, optimizedSlots int
 	var maxPerDay, maxPerWeek, maxPerMonth, maxPerYear, maxDurDay, maxDurWeek sql.NullInt64
 	var rangeStart, rangeEnd, durOptsRaw, locOptsRaw sql.NullString
 	err := h.db.QueryRowContext(ctx, `
@@ -573,7 +574,7 @@ func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug 
 		       et.show_first_slot_only, et.future_limit_mode, et.future_range_start, et.future_range_end,
 		       COALESCE(u.iana_timezone, 'UTC'),
 		       et.requires_confirmation, et.confirm_mode, et.confirm_notice_minutes, et.require_email_verification,
-		       et.allow_multiple_durations, et.duration_options, et.location_options
+		       et.allow_multiple_durations, et.duration_options, et.location_options, et.optimized_slots
 		FROM event_types et
 		LEFT JOIN users u ON u.id = et.user_id
 		WHERE et.slug = ?`, slug).
@@ -586,7 +587,7 @@ func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug 
 			&showFirst, &et.FutureLimitMode, &rangeStart, &rangeEnd,
 			&et.OwnerTimezone,
 			&reqConfirm, &et.ConfirmMode, &et.ConfirmNoticeMinutes, &reqEmailVerify,
-			&allowMultiDur, &durOptsRaw, &locOptsRaw)
+			&allowMultiDur, &durOptsRaw, &locOptsRaw, &optimizedSlots)
 	if err != nil || isActive == 0 || (!allowPrivate && isPublic == 0) {
 		return nil, errEventTypeNotFound
 	}
@@ -595,6 +596,7 @@ func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug 
 	et.RequiresConfirmation = reqConfirm != 0
 	et.RequireEmailVerification = reqEmailVerify != 0
 	et.AllowMultipleDurations = allowMultiDur != 0
+	et.OptimizedSlots = optimizedSlots != 0
 	if durOptsRaw.Valid && durOptsRaw.String != "" {
 		_ = json.Unmarshal([]byte(durOptsRaw.String), &et.DurationOptions)
 	}

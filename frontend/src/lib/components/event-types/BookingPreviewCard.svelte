@@ -16,6 +16,7 @@
     calendarEventTitle = "",
     redirectUrl = "",
     questions = [],
+    bookingFormConfig = "",
   }: {
     name?: string;
     description?: string;
@@ -31,6 +32,7 @@
     calendarEventTitle?: string;
     redirectUrl?: string;
     questions?: Question[];
+    bookingFormConfig?: string;
   } = $props();
 
   let selectedDay = $state<number | null>(18);
@@ -38,6 +40,72 @@
   let previewDuration = $state<number | null>(null);
   let previewGuestsOpen = $state(false);
   let previewGuestsMode = $state<"single" | "list">("single");
+  let previewGuestRows = $state<string[]>([""]);
+
+  type PreviewFormItem =
+    | { kind: "name" | "email" | "phone" | "notes" | "guests"; hidden: boolean; required: boolean }
+    | { kind: "question"; question: Question };
+
+  const previewFormItems = $derived.by((): PreviewFormItem[] => {
+    const qById = new Map(questions.map((q) => [q.id, q]));
+    let parsed: { key: string; hidden?: boolean; required?: boolean }[] = [];
+    if (bookingFormConfig && bookingFormConfig.trim() !== "") {
+      try {
+        const raw = JSON.parse(bookingFormConfig);
+        if (Array.isArray(raw)) parsed = raw;
+      } catch {
+        parsed = [];
+      }
+    }
+    const seen = new Set<string>();
+    const out: PreviewFormItem[] = [];
+    const addSys = (
+      key: "name" | "email" | "phone" | "notes" | "guests",
+      hidden: boolean,
+      required: boolean,
+    ) => {
+      if (seen.has(key)) return;
+      seen.add(key);
+      if (key === "name" || key === "email") {
+        hidden = false;
+        required = true;
+      }
+      if (key === "phone" && allowPhoneCall) {
+        hidden = false;
+      }
+      out.push({ kind: key, hidden, required });
+    };
+    for (const c of parsed) {
+      if (
+        c.key === "name" ||
+        c.key === "email" ||
+        c.key === "phone" ||
+        c.key === "notes" ||
+        c.key === "guests"
+      ) {
+        addSys(c.key, !!c.hidden, !!c.required);
+      } else if (c.key?.startsWith("q:")) {
+        const q = qById.get(c.key.slice(2));
+        if (q && !seen.has(c.key)) {
+          seen.add(c.key);
+          out.push({ kind: "question", question: q });
+        }
+      }
+    }
+    addSys("name", false, true);
+    addSys("email", false, true);
+    addSys("phone", false, allowPhoneCall);
+    addSys("notes", false, false);
+    addSys("guests", false, false);
+    for (const q of questions) {
+      const k = `q:${q.id}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        out.push({ kind: "question", question: q });
+      }
+    }
+    return out;
+  });
   const activeDuration = $derived(
     allowMultipleDurations && durationOptions.length > 0
       ? (previewDuration && durationOptions.includes(previewDuration) ? previewDuration : durationOptions[0])
@@ -190,63 +258,96 @@
       {#if mode === "form"}
         <div class="space-y-3 p-5">
           <div class="space-y-2.5 text-xs">
-            <div>
-              <div class="mb-1 font-medium text-foreground">Your name <span class="text-destructive">*</span></div>
-              <div class="rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">Jane Doe</div>
-            </div>
-            <div>
-              <div class="mb-1 font-medium text-foreground">Email address <span class="text-destructive">*</span></div>
-              <div class="rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">jane@example.com</div>
-            </div>
-            <div>
-              <div class="mb-1 font-medium text-foreground">Phone number <span class="font-normal text-muted-foreground">{allowPhoneCall ? "" : "(optional)"}</span></div>
-              <div class="rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">+1 (555) 000-0000</div>
-            </div>
-            <div>
-              <div class="mb-1 font-medium text-foreground">Additional notes</div>
-              <div class="rounded-md border bg-background px-2.5 py-2 text-muted-foreground">Please share anything that will help prepare...</div>
-            </div>
-            <div>
-              <button
-                type="button"
-                onclick={() => (previewGuestsOpen = !previewGuestsOpen)}
-                class="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
-                Add guests
-              </button>
-              {#if previewGuestsOpen}
-                <div class="mt-2 space-y-2">
-                  <div class="inline-flex rounded-md border bg-muted/40 p-0.5 text-[11px]">
-                    <button type="button" onclick={() => (previewGuestsMode = "single")} class="rounded px-2 py-0.5 {previewGuestsMode === 'single' ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground'}">One at a time</button>
-                    <button type="button" onclick={() => (previewGuestsMode = "list")} class="rounded px-2 py-0.5 {previewGuestsMode === 'list' ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground'}">Add a list</button>
-                  </div>
-                  {#if previewGuestsMode === "single"}
-                    <div class="rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">Email</div>
+            {#each previewFormItems as item}
+              {#if item.kind === "name"}
+                <div>
+                  <div class="mb-1 font-medium text-foreground">Your name <span class="text-destructive">*</span></div>
+                  <div class="rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">Jane Doe</div>
+                </div>
+              {:else if item.kind === "email"}
+                <div>
+                  <div class="mb-1 font-medium text-foreground">Email address <span class="text-destructive">*</span></div>
+                  <div class="rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">jane@example.com</div>
+                </div>
+              {:else if item.kind === "phone" && !item.hidden}
+                <div>
+                  <div class="mb-1 font-medium text-foreground">Phone number <span class="font-normal text-muted-foreground">{allowPhoneCall ? "" : "(optional)"}</span></div>
+                  <div class="rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">+1 (555) 000-0000</div>
+                </div>
+              {:else if item.kind === "notes" && !item.hidden}
+                <div>
+                  <div class="mb-1 font-medium text-foreground">Additional notes</div>
+                  <div class="rounded-md border bg-background px-2.5 py-2 text-muted-foreground">Please share anything that will help prepare...</div>
+                </div>
+              {:else if item.kind === "guests" && !item.hidden}
+                <div>
+                  <button
+                    type="button"
+                    onclick={() => {
+                      previewGuestsOpen = !previewGuestsOpen;
+                      if (previewGuestsOpen && previewGuestRows.length === 0) previewGuestRows = [""];
+                    }}
+                    class="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+                    Add guests
+                  </button>
+                  {#if previewGuestsOpen}
+                    <div class="mt-2 space-y-2 rounded-md border bg-muted/20 p-2">
+                      <div class="inline-flex rounded-md border bg-muted/40 p-0.5 text-[11px]">
+                        <button type="button" onclick={() => (previewGuestsMode = "single")} class="rounded px-2 py-0.5 {previewGuestsMode === 'single' ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground'}">One at a time</button>
+                        <button type="button" onclick={() => (previewGuestsMode = "list")} class="rounded px-2 py-0.5 {previewGuestsMode === 'list' ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground'}">Add a list</button>
+                      </div>
+                      {#if previewGuestsMode === "single"}
+                        <div class="space-y-1.5">
+                          {#each previewGuestRows as _, rIdx}
+                            <div class="flex items-center gap-1.5">
+                              <div class="flex-1 rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">Email</div>
+                              <button
+                                type="button"
+                                onclick={() => {
+                                  previewGuestRows = previewGuestRows.filter((_, i) => i !== rIdx);
+                                  if (previewGuestRows.length === 0) previewGuestsOpen = false;
+                                }}
+                                class="rounded border px-2 py-1 text-muted-foreground hover:text-foreground"
+                                aria-label="Remove guest"
+                              >×</button>
+                            </div>
+                          {/each}
+                          <button
+                            type="button"
+                            onclick={() => (previewGuestRows = [...previewGuestRows, ""])}
+                            class="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+                          >
+                            + Add another
+                          </button>
+                        </div>
+                      {:else}
+                        <div class="rounded-md border bg-background px-2.5 py-2 text-muted-foreground">john@doe.com, alex@smith.com</div>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              {:else if item.kind === "question" && !item.question.hidden}
+                {@const q = item.question}
+                <div>
+                  {#if q.type === "checkbox"}
+                    <div class="flex items-center gap-2 py-0.5">
+                      <div class="h-3.5 w-3.5 shrink-0 rounded border bg-background"></div>
+                      <span class="font-medium text-foreground">{q.label}{#if q.required}<span class="text-destructive">*</span>{/if}</span>
+                    </div>
+                  {:else if q.type === "select"}
+                    <div class="mb-1 font-medium text-foreground">{q.label}{#if q.required}<span class="text-destructive">*</span>{/if}</div>
+                    <div class="flex items-center justify-between rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">
+                      <span>{q.options?.[0] ?? "Choose an option"}</span>
+                      <span>▾</span>
+                    </div>
                   {:else}
-                    <div class="rounded-md border bg-background px-2.5 py-2 text-muted-foreground">john@doe.com, alex@smith.com</div>
+                    <div class="mb-1 font-medium text-foreground">{q.label}{#if q.required}<span class="text-destructive">*</span>{/if}</div>
+                    <div class="rounded-md border bg-background px-2.5 py-2 text-muted-foreground">Answer...</div>
                   {/if}
                 </div>
               {/if}
-            </div>
-            {#each questions.filter((q) => !q.hidden) as q (q.id)}
-              <div>
-                {#if q.type === "checkbox"}
-                  <div class="flex items-center gap-2 py-0.5">
-                    <div class="h-3.5 w-3.5 shrink-0 rounded border bg-background"></div>
-                    <span class="font-medium text-foreground">{q.label}{#if q.required}<span class="text-destructive">*</span>{/if}</span>
-                  </div>
-                {:else if q.type === "select"}
-                  <div class="mb-1 font-medium text-foreground">{q.label}{#if q.required}<span class="text-destructive">*</span>{/if}</div>
-                  <div class="flex items-center justify-between rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">
-                    <span>{q.options?.[0] ?? "Choose an option"}</span>
-                    <span>▾</span>
-                  </div>
-                {:else}
-                  <div class="mb-1 font-medium text-foreground">{q.label}{#if q.required}<span class="text-destructive">*</span>{/if}</div>
-                  <div class="rounded-md border bg-background px-2.5 py-2 text-muted-foreground">Answer...</div>
-                {/if}
-              </div>
             {/each}
             <div class="pt-1">
               <div class="w-full rounded-md bg-primary py-2 text-center text-xs font-medium text-primary-foreground">

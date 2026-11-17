@@ -96,6 +96,8 @@ export type EventType = {
 	location_options?: LocationOption[];
 	destination_calendar_id?: string;
 	schedule_id?: string | null;
+	optimized_slots?: boolean;
+	booking_form_config?: string;
 	price_cents: number; // 0 = free
 	currency: string;    // ISO 4217, lowercase (e.g. "usd")
 	created_at: string;

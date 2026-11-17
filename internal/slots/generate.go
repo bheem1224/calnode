@@ -31,6 +31,10 @@ type EventConfig struct {
 	MaxFutureDays       int
 	// RoutingMode: "fixed" | "round_robin" | "collective" | "priority"
 	RoutingMode string
+	// OptimizedSlots starts each free window at its exact start (f.Start)
+	// rather than rounding up to the nearest SlotIntervalMinutes wall-clock
+	// boundary, fitting slots tightly around existing bookings.
+	OptimizedSlots bool
 }
 
 // Slot is one bookable time window rendered for the booker.
@@ -258,8 +262,13 @@ func hostsByStart(req Request, p params, applyBusy bool, belowNotice map[time.Ti
 
 			for _, f := range avail {
 				// Align the first slot start up to the nearest interval boundary
-				// on the shared wall clock, so slots land on :00/:15/:30/:45 etc.
-				t := alignUp(f.Start, p.interval, p.alignLoc)
+				// on the shared wall clock unless OptimizedSlots is enabled, in
+				// which case slots start immediately at f.Start to fit around
+				// existing bookings.
+				t := f.Start
+				if !req.Event.OptimizedSlots {
+					t = alignUp(f.Start, p.interval, p.alignLoc)
+				}
 				for ; !t.Add(p.dur).After(f.End); t = t.Add(p.interval) {
 					if t.Before(p.minNotice) {
 						// !t.Before(req.Now) is what keeps the attribution honest: a start

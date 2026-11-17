@@ -232,28 +232,6 @@ body {
         <div aria-hidden="true" style="position:absolute;left:-5000px;height:0;width:0;overflow:hidden;">
           <label>Extra<input id="f-hp-extra" name="hp_extra" type="text" tabindex="-1" autocomplete="off"></label>
         </div>
-        <div class="field">
-          <label for="f-name">{{call .T "name_label"}}</label>
-          <input id="f-name" name="name" type="text" required autocomplete="name" value="{{.PrefillName}}" placeholder="{{call .T "name_placeholder"}}">
-        </div>
-        <div class="field">
-          <label for="f-email">{{call .T "email_label"}}</label>
-          <input id="f-email" name="email" type="email" required autocomplete="email" value="{{.PrefillEmail}}" placeholder="{{call .T "email_placeholder"}}">
-        </div>
-        {{if .RequireEmailVerification}}
-        <div class="field" id="email-verify-box">
-          <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
-            <button type="button" id="send-code-btn" class="btn-secondary" style="width:auto;padding:0.45rem 0.75rem;font-size:0.82rem">Send verification code</button>
-            <input id="verify-code-input" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit code" style="width:120px;display:none">
-            <button type="button" id="check-code-btn" class="btn-secondary" style="width:auto;padding:0.45rem 0.75rem;font-size:0.82rem;display:none">Verify</button>
-            <span id="verify-status" class="hint" style="margin:0"></span>
-          </div>
-        </div>
-        {{end}}
-        {{/* SAFE (generic.html-templates.security.unquoted-attribute-var, this whole block):
-             .ID is the event type's own intake-question primary key (admin-configured, not
-             attacker-controlled at booking time), and Go's html/template context-aware-escapes
-             every {{.ID}} below regardless — there is no raw/unescaped output here. */}}
         {{if gt (len .LocationOptions) 1}}
         <div class="field">
           <label for="f-location-select">Location</label>
@@ -264,14 +242,47 @@ body {
           </select>
         </div>
         {{end}}
+        {{/* SAFE (generic.html-templates.security.unquoted-attribute-var, this whole block):
+             .ID is the event type's own intake-question primary key (admin-configured, not
+             attacker-controlled at booking time), and Go's html/template context-aware-escapes
+             every {{.ID}} below regardless — there is no raw/unescaped output here. */}}
+        {{range .FormItems}}
+        {{if eq .Kind "name"}}
         <div class="field">
-          <label for="f-phone">{{if .PhoneChoice}}{{call .T "phone_call_number"}}{{else}}Phone number <span style="font-weight:400;opacity:0.65">(optional)</span>{{end}}</label>
-          <input id="f-phone" name="phone" type="tel" maxlength="40" autocomplete="tel" placeholder="+1 (555) 000-0000">
+          <label for="f-name">{{call $.T "name_label"}}</label>
+          <input id="f-name" name="name" type="text" required autocomplete="name" value="{{$.PrefillName}}" placeholder="{{call $.T "name_placeholder"}}">
         </div>
+        {{else if eq .Kind "email"}}
+        <div class="field">
+          <label for="f-email">{{call $.T "email_label"}}</label>
+          <input id="f-email" name="email" type="email" required autocomplete="email" value="{{$.PrefillEmail}}" placeholder="{{call $.T "email_placeholder"}}">
+        </div>
+        {{if $.RequireEmailVerification}}
+        <div class="field" id="email-verify-box">
+          <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+            <button type="button" id="send-code-btn" class="btn-secondary" style="width:auto;padding:0.45rem 0.75rem;font-size:0.82rem">Send verification code</button>
+            <input id="verify-code-input" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit code" style="width:120px;display:none">
+            <button type="button" id="check-code-btn" class="btn-secondary" style="width:auto;padding:0.45rem 0.75rem;font-size:0.82rem;display:none">Verify</button>
+            <span id="verify-status" class="hint" style="margin:0"></span>
+          </div>
+        </div>
+        {{end}}
+        {{else if eq .Kind "phone"}}
+        {{if not .Hidden}}
+        <div class="field">
+          <label for="f-phone">{{if $.PhoneChoice}}{{call $.T "phone_call_number"}}{{else}}Phone number{{if not .Required}} <span style="font-weight:400;opacity:0.65">(optional)</span>{{else}} <span class="required-star">*</span>{{end}}{{end}}</label>
+          <input id="f-phone" name="phone" type="tel" maxlength="40" autocomplete="tel" placeholder="+1 (555) 000-0000"{{if .Required}} required{{end}}>
+        </div>
+        {{end}}
+        {{else if eq .Kind "notes"}}
+        {{if not .Hidden}}
         <div class="field">
           <label for="f-notes">Additional notes</label>
           <textarea id="f-notes" name="notes" rows="2" maxlength="2000" placeholder="Please share anything that will help prepare for our meeting."></textarea>
         </div>
+        {{end}}
+        {{else if eq .Kind "guests"}}
+        {{if not .Hidden}}
         <div class="field">
           <button type="button" id="guests-toggle-btn" class="guests-toggle">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
@@ -294,7 +305,9 @@ body {
             </div>
           </div>
         </div>
-        {{range .Questions}}
+        {{end}}
+        {{else if eq .Kind "question"}}
+        {{with .Question}}
         <div class="field{{if .Hidden}} hidden{{end}}" data-qid="{{.ID}}" data-qtype="{{.QType}}" data-identifier="{{.Identifier}}" data-lock-if-prefilled="{{if .LockIfPrefilled}}true{{else}}false{{end}}" data-required="{{if .Required}}true{{else}}false{{end}}">
           {{if eq .QType "checkbox"}}
           <div class="field-checkbox">
@@ -352,6 +365,8 @@ body {
           <textarea id="ans-{{.ID}}" name="ans-{{.ID}}" rows="3"{{if and .Required (not .Hidden)}} required{{end}}></textarea>  <!-- nosemgrep: generic.html-templates.security.unquoted-attribute-var.unquoted-attribute-var -->
           {{end}}
         </div>
+        {{end}}
+        {{end}}
         {{end}}
         <p id="form-error" class="form-error" role="alert"></p>
         <button type="submit" id="submit-btn" class="btn-primary">{{call .T "confirm_booking"}}</button>
@@ -1112,7 +1127,13 @@ body {
     rm.className = 'guest-remove';
     rm.textContent = '×';
     rm.setAttribute('aria-label', 'Remove guest');
-    rm.addEventListener('click', () => row.remove());
+    rm.addEventListener('click', () => {
+      row.remove();
+      if (rows.children.length === 0) {
+        const box = $('guests-box');
+        if (box) box.classList.add('hidden');
+      }
+    });
     row.appendChild(inp);
     row.appendChild(rm);
     rows.appendChild(row);

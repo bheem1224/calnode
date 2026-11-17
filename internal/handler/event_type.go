@@ -77,6 +77,8 @@ type eventTypeJSON struct {
 	LocationOptions          []LocationOption `json:"location_options,omitempty"`
 	DestinationCalendarID    string           `json:"destination_calendar_id,omitempty"`
 	ScheduleID               *string          `json:"schedule_id,omitempty"`
+	OptimizedSlots           bool             `json:"optimized_slots"`
+	BookingFormConfig        string           `json:"booking_form_config,omitempty"`
 	TeamID                   *string          `json:"team_id"`
 	TeamName                 string           `json:"team_name,omitempty"`
 	IsActive                 bool             `json:"is_active"`
@@ -158,7 +160,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	var durOptionsRaw, locOptionsRaw, schedID, teamID sql.NullString
 	var isActive, isPublic, showTaken int
 	var disableCancel, disableResched, allowReschedPast, showFirstSlotOnly int
-	var hideNotesCal, hideCalDetails, reqConfirm, unconfirmedBlocks, reqEmailVerify, allowMultiDur int
+	var hideNotesCal, hideCalDetails, reqConfirm, unconfirmedBlocks, reqEmailVerify, allowMultiDur, optimizedSlots int
 
 	dests := []any{
 		&et.ID, &et.Slug, &et.Name, &desc,
@@ -180,6 +182,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 		&et.ConfirmNoticeMinutes, &unconfirmedBlocks, &reqEmailVerify,
 		&allowMultiDur, &durOptionsRaw, &locOptionsRaw, &et.DestinationCalendarID, &schedID, &teamID,
 		&htmlConf, &htmlCancel, &htmlResched, &htmlRemind,
+		&optimizedSlots, &et.BookingFormConfig,
 	}
 	dests = append(dests, trailing...)
 	err := s.Scan(dests...)
@@ -280,6 +283,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	if locOptionsRaw.Valid && locOptionsRaw.String != "" {
 		_ = json.Unmarshal([]byte(locOptionsRaw.String), &et.LocationOptions)
 	}
+	et.OptimizedSlots = optimizedSlots != 0
 	et.Reminders = []int{} // initialise to non-nil so JSON encodes as [] not null
 	return &et, nil
 }
@@ -344,7 +348,8 @@ const etColumns = `id, slug, name, description,
 	hide_notes_in_calendar, hide_calendar_event_details, requires_confirmation,
 	confirm_mode, confirm_notice_minutes, unconfirmed_blocks_slots, require_email_verification,
 	allow_multiple_durations, duration_options, location_options, destination_calendar_id, schedule_id, team_id,
-	html_confirmation, html_cancellation, html_reschedule, html_reminder`
+	html_confirmation, html_cancellation, html_reschedule, html_reminder,
+	optimized_slots, booking_form_config`
 
 // selectETCols fetches a single event type without the caller-relative columns.
 const selectETCols = "SELECT " + etColumns + " FROM event_types"
@@ -789,6 +794,8 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		LocationOptions          []LocationOption `json:"location_options"`
 		DestinationCalendarID    *string          `json:"destination_calendar_id"`
 		ScheduleID               *string          `json:"schedule_id"`
+		OptimizedSlots           *bool            `json:"optimized_slots"`
+		BookingFormConfig        *string          `json:"booking_form_config"`
 		TeamID                   *string          `json:"team_id"`
 		IsActive                 *bool            `json:"is_active"`
 		IsPublic                 *bool            `json:"is_public"`
@@ -1108,6 +1115,16 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DestinationCalendarID != nil {
 		set("destination_calendar_id", strings.TrimSpace(*req.DestinationCalendarID))
+	}
+	if req.OptimizedSlots != nil {
+		v := 0
+		if *req.OptimizedSlots {
+			v = 1
+		}
+		set("optimized_slots", v)
+	}
+	if req.BookingFormConfig != nil {
+		set("booking_form_config", *req.BookingFormConfig)
 	}
 	if req.ScheduleID != nil {
 		sid := strings.TrimSpace(*req.ScheduleID)
