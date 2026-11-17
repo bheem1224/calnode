@@ -103,6 +103,10 @@ export type EventType = {
 	subj_cancellation?: string;
 	subj_reschedule?: string;
 	subj_reminder?: string;
+	html_confirmation?: string;
+	html_cancellation?: string;
+	html_reschedule?: string;
+	html_reminder?: string;
 	msg_confirmation?: string;
 	msg_cancellation?: string;
 	msg_reschedule?: string;
@@ -125,6 +129,18 @@ export type EventType = {
 	owner_email?: string;
 	team_id?: string | null;
 	team_name?: string;
+};
+
+export type EmailTemplate = {
+	id: string;
+	name: string;
+	kind: 'confirmation' | 'cancellation' | 'reschedule' | 'reminder';
+	is_default: boolean;
+	mode: 'note' | 'html';
+	subject: string;
+	body: string;
+	created_at: string;
+	updated_at: string;
 };
 
 export type EventTypeHost = {

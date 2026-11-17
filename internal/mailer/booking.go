@@ -31,6 +31,7 @@ type BookingData struct {
 	ManageURL          string // manage link (reschedule/cancel), set at booking creation
 	BaseURL            string
 	CustomNote         string // optional host-configured note appended to the email body
+	CustomHTML         string // optional full custom HTML template (sanitized); overrides default HTML card when set
 	SubjectOverride    string // optional per-event-type custom subject; falls back to the default when empty
 	ReplyTo            string // optional per-event-type Reply-To email address
 	// AttachICS attaches an iCalendar invite to the attendee's email — set by the
@@ -164,9 +165,21 @@ func (d BookingData) PreviousEndFmt() string {
 // subjectOr returns the custom subject override when set, else the default.
 func (d BookingData) subjectOr(def string) string {
 	if d.SubjectOverride != "" {
-		return d.SubjectOverride
+		return InterpolateTemplate(d.SubjectOverride, d, false)
 	}
 	return def
+}
+
+func renderEmailHTML(emailType string, d BookingData) string {
+	if d.CustomNote != "" {
+		d.CustomNote = InterpolateTemplate(d.CustomNote, d, false)
+	}
+	if d.CustomHTML != "" {
+		if cleaned, err := SanitizeAndValidateEmailHTML(d.CustomHTML); err == nil {
+			return InterpolateTemplate(cleaned, d, true)
+		}
+	}
+	return renderHTML(htmlByType(emailType), d)
 }
 
 func inTZ(t time.Time, tz string, l *i18n.Locale) string {
@@ -224,7 +237,7 @@ func SendConfirmationToAttendee(ctx context.Context, m Mailer, d BookingData) er
 		ReplyTo: d.ReplyTo,
 		Subject: d.subjectOr(d.Tf("email_subject_confirmed", d.EventTypeName)),
 		Text:    render(confirmOrgTmpl, d),
-		HTML:    renderHTML(htmlConfirmOrg, d),
+		HTML:    renderEmailHTML("confirmation", d),
 	}
 	if d.AttachICS {
 		msg.Attachments = []Attachment{icsAttachment(d, "REQUEST")}
@@ -284,7 +297,7 @@ func SendCancellationToAttendee(ctx context.Context, m Mailer, d BookingData) er
 		ReplyTo: d.ReplyTo,
 		Subject: d.subjectOr(d.Tf("email_subject_cancelled", d.EventTypeName)),
 		Text:    render(cancelOrgTmpl, d),
-		HTML:    renderHTML(htmlCancelOrg, d),
+		HTML:    renderEmailHTML("cancellation", d),
 	}
 	if d.AttachICS {
 		msg.Attachments = []Attachment{icsAttachment(d, "CANCEL")}
@@ -342,7 +355,7 @@ func SendRescheduleToAttendee(ctx context.Context, m Mailer, d BookingData) erro
 		ReplyTo: d.ReplyTo,
 		Subject: d.subjectOr(d.Tf("email_subject_rescheduled", d.EventTypeName)),
 		Text:    render(rescheduleOrgTmpl, d),
-		HTML:    renderHTML(htmlRescheduleOrg, d),
+		HTML:    renderEmailHTML("reschedule", d),
 	}
 	if d.AttachICS {
 		msg.Attachments = []Attachment{icsAttachment(d, "REQUEST")}
@@ -399,7 +412,7 @@ func SendReminder(ctx context.Context, m Mailer, d BookingData) error {
 		ReplyTo: d.ReplyTo,
 		Subject: d.subjectOr(d.Tf("email_subject_reminder", d.EventTypeName)),
 		Text:    render(reminderOrgTmpl, d),
-		HTML:    renderHTML(htmlReminderOrg, d),
+		HTML:    renderEmailHTML("reminder", d),
 	}); err != nil {
 		return fmt.Errorf("mailer: reminder: %w", err)
 	}
@@ -425,7 +438,7 @@ func RenderBody(emailType string, d BookingData) (subject, body, html string, ok
 	default:
 		return "", "", "", false
 	}
-	return d.subjectOr(def), render(textTmpl, d), renderHTML(htmlByType(emailType), d), true
+	return d.subjectOr(def), render(textTmpl, d), renderEmailHTML(emailType, d), true
 }
 
 func render(t *template.Template, d BookingData) string {

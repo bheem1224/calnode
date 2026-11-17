@@ -30,6 +30,7 @@
   import QuestionsPanel from "$lib/components/event-types/QuestionsPanel.svelte";
   import EmbedPanel from "$lib/components/event-types/EmbedPanel.svelte";
   import BookingPreviewCard from "$lib/components/event-types/BookingPreviewCard.svelte";
+  import EmailTemplateModal from "$lib/components/event-types/EmailTemplateModal.svelte";
   import WebhooksManager from "$lib/components/WebhooksManager.svelte";
   import { ConfirmDialog } from "$lib/components/ui/confirm-dialog";
   import * as Dialog from "$lib/components/ui/dialog";
@@ -656,6 +657,12 @@
   let subj_cancellation = $state("");
   let subj_reschedule = $state("");
   let subj_reminder = $state("");
+  let html_confirmation = $state("");
+  let html_cancellation = $state("");
+  let html_reschedule = $state("");
+  let html_reminder = $state("");
+  let emailBuilderOpen = $state(false);
+  let emailBuilderKind = $state<"confirmation" | "cancellation" | "reschedule" | "reminder">("confirmation");
   // Track which message accordions are open
   let msgOpen = $state({
     confirmation: false,
@@ -811,6 +818,10 @@
       subj_cancellation = et.subj_cancellation ?? "";
       subj_reschedule = et.subj_reschedule ?? "";
       subj_reminder = et.subj_reminder ?? "";
+      html_confirmation = et.html_confirmation ?? "";
+      html_cancellation = et.html_cancellation ?? "";
+      html_reschedule = et.html_reschedule ?? "";
+      html_reminder = et.html_reminder ?? "";
     } catch (e: any) {
       etError = e.message;
     } finally {
@@ -943,6 +954,10 @@
         subj_cancellation: subj_cancellation.trim(),
         subj_reschedule: subj_reschedule.trim(),
         subj_reminder: subj_reminder.trim(),
+        html_confirmation: html_confirmation.trim(),
+        html_cancellation: html_cancellation.trim(),
+        html_reschedule: html_reschedule.trim(),
+        html_reminder: html_reminder.trim(),
       });
       // A rename moves the row out from under the name this page was loaded with, so
       // every request after the PATCH has to use the one the server just confirmed.
@@ -3139,6 +3154,27 @@
                               ? msg_reschedule
                               : msg_reminder}
                       <div class="border-t px-4 pb-4 pt-3 space-y-3">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                          <span class="text-[11px] text-muted-foreground">
+                            {#if (item.key === "confirmation" ? html_confirmation : item.key === "cancellation" ? html_cancellation : item.key === "reschedule" ? html_reschedule : html_reminder)}
+                              <span class="rounded bg-primary/15 px-1.5 py-0.5 font-medium text-primary">Custom HTML active</span>
+                            {:else}
+                              Using Calnode styled email template
+                            {/if}
+                          </span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            class="h-7 text-xs"
+                            onclick={() => {
+                              emailBuilderKind = item.key;
+                              emailBuilderOpen = true;
+                            }}
+                          >
+                            Open visual builder (HTML &amp; preview)
+                          </Button>
+                        </div>
                         <div class="space-y-1.5">
                           <Label class="text-xs text-muted-foreground"
                             >{$t(
@@ -3511,6 +3547,34 @@
       </div>
     </aside>
   </div>
+
+  <EmailTemplateModal
+    bind:open={emailBuilderOpen}
+    slug={slug ?? ""}
+    kind={emailBuilderKind}
+    subject={emailBuilderKind === "confirmation" ? subj_confirmation : emailBuilderKind === "cancellation" ? subj_cancellation : emailBuilderKind === "reschedule" ? subj_reschedule : subj_reminder}
+    noteBody={emailBuilderKind === "confirmation" ? msg_confirmation : emailBuilderKind === "cancellation" ? msg_cancellation : emailBuilderKind === "reschedule" ? msg_reschedule : msg_reminder}
+    htmlBody={emailBuilderKind === "confirmation" ? html_confirmation : emailBuilderKind === "cancellation" ? html_cancellation : emailBuilderKind === "reschedule" ? html_reschedule : html_reminder}
+    onApply={({ subject: s, noteBody: n, htmlBody: h }) => {
+      if (emailBuilderKind === "confirmation") {
+        subj_confirmation = s;
+        msg_confirmation = n;
+        html_confirmation = h;
+      } else if (emailBuilderKind === "cancellation") {
+        subj_cancellation = s;
+        msg_cancellation = n;
+        html_cancellation = h;
+      } else if (emailBuilderKind === "reschedule") {
+        subj_reschedule = s;
+        msg_reschedule = n;
+        html_reschedule = h;
+      } else {
+        subj_reminder = s;
+        msg_reminder = n;
+        html_reminder = h;
+      }
+    }}
+  />
 
   <Dialog.Root bind:open={calTitleModalOpen}>
     <Dialog.Content class="max-w-lg">

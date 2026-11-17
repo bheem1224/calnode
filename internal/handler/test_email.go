@@ -42,17 +42,20 @@ func (h *Handler) SendTestEmail(w http.ResponseWriter, r *http.Request) {
 	var durationMinutes int
 	var locVal, msgConf, msgCancel, msgResched, msgRemind sql.NullString
 	var subjConf, subjCancel, subjResched, subjRemind sql.NullString
+	var htmlConf, htmlCancel, htmlResched, htmlRemind sql.NullString
 	err := h.db.QueryRowContext(r.Context(), `
 		SELECT et.user_id, u.name, u.email,
 		       et.name, et.duration_minutes, et.location_value,
 		       et.msg_confirmation, et.msg_cancellation, et.msg_reschedule, et.msg_reminder,
-		       et.subj_confirmation, et.subj_cancellation, et.subj_reschedule, et.subj_reminder
+		       et.subj_confirmation, et.subj_cancellation, et.subj_reschedule, et.subj_reminder,
+		       et.html_confirmation, et.html_cancellation, et.html_reschedule, et.html_reminder
 		FROM event_types et
 		JOIN users u ON u.id = et.user_id
 		WHERE et.slug = ?`, slug).
 		Scan(&ownerID, &ownerName, &ownerEmail, &etName, &durationMinutes, &locVal,
 			&msgConf, &msgCancel, &msgResched, &msgRemind,
-			&subjConf, &subjCancel, &subjResched, &subjRemind)
+			&subjConf, &subjCancel, &subjResched, &subjRemind,
+			&htmlConf, &htmlCancel, &htmlResched, &htmlRemind)
 	if err == sql.ErrNoRows || (err == nil && !canManageEventType(user, ownerID)) {
 		h.writeError(w, http.StatusNotFound, "event type not found")
 		return
@@ -71,16 +74,16 @@ func (h *Handler) SendTestEmail(w http.ResponseWriter, r *http.Request) {
 
 	// Pick the custom note + subject for the requested email type. NullString.String
 	// is "" when unset, which is exactly the "use the default" sentinel.
-	var customNote, customSubject string
+	var customNote, customSubject, customHTML string
 	switch req.Type {
 	case "confirmation":
-		customNote, customSubject = msgConf.String, subjConf.String
+		customNote, customSubject, customHTML = msgConf.String, subjConf.String, htmlConf.String
 	case "cancellation":
-		customNote, customSubject = msgCancel.String, subjCancel.String
+		customNote, customSubject, customHTML = msgCancel.String, subjCancel.String, htmlCancel.String
 	case "reschedule":
-		customNote, customSubject = msgResched.String, subjResched.String
+		customNote, customSubject, customHTML = msgResched.String, subjResched.String, htmlResched.String
 	case "reminder":
-		customNote, customSubject = msgRemind.String, subjRemind.String
+		customNote, customSubject, customHTML = msgRemind.String, subjRemind.String, htmlRemind.String
 	}
 
 	// Build placeholder booking data. The sample date is tomorrow at 14:00 UTC.
@@ -106,6 +109,7 @@ func (h *Handler) SendTestEmail(w http.ResponseWriter, r *http.Request) {
 		LocationValue:     locVal.String,
 		BaseURL:           h.publicURL(),
 		CustomNote:        customNote,
+		CustomHTML:        customHTML,
 		SubjectOverride:   customSubject,
 	}
 	h.applyBranding(r.Context(), &d)

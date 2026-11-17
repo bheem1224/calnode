@@ -13,6 +13,7 @@ import (
 
 	"github.com/calnode/calnode/internal/booking"
 	"github.com/calnode/calnode/internal/db"
+	"github.com/calnode/calnode/internal/mailer"
 	"github.com/calnode/calnode/internal/uid"
 )
 
@@ -103,6 +104,10 @@ type eventTypeJSON struct {
 	SubjCancellation *string `json:"subj_cancellation"`
 	SubjReschedule   *string `json:"subj_reschedule"`
 	SubjReminder     *string `json:"subj_reminder"`
+	HTMLConfirmation *string `json:"html_confirmation"`
+	HTMLCancellation *string `json:"html_cancellation"`
+	HTMLReschedule   *string `json:"html_reschedule"`
+	HTMLReminder     *string `json:"html_reminder"`
 	PriceCents       int     `json:"price_cents"` // 0 = free
 	Currency         string  `json:"currency"`    // ISO 4217, lowercase (e.g. "usd")
 	Reminders        []int   `json:"reminders"`   // hours_before values
@@ -147,6 +152,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	var et eventTypeJSON
 	var desc, locVal, msgConf, msgCancel, msgResched, msgRemind, msgGreeting sql.NullString
 	var subjConf, subjCancel, subjResched, subjRemind sql.NullString
+	var htmlConf, htmlCancel, htmlResched, htmlRemind sql.NullString
 	var maxPerDay, maxPerWeek, maxPerMonth, maxPerYear, maxDurDay, maxDurWeek sql.NullInt64
 	var futureRangeStart, futureRangeEnd, calEventTitle, redirectURL, replyTo sql.NullString
 	var durOptionsRaw, locOptionsRaw, schedID, teamID sql.NullString
@@ -173,6 +179,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 		&hideNotesCal, &hideCalDetails, &reqConfirm, &et.ConfirmMode,
 		&et.ConfirmNoticeMinutes, &unconfirmedBlocks, &reqEmailVerify,
 		&allowMultiDur, &durOptionsRaw, &locOptionsRaw, &et.DestinationCalendarID, &schedID, &teamID,
+		&htmlConf, &htmlCancel, &htmlResched, &htmlRemind,
 	}
 	dests = append(dests, trailing...)
 	err := s.Scan(dests...)
@@ -223,6 +230,18 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	}
 	if subjRemind.Valid {
 		et.SubjReminder = &subjRemind.String
+	}
+	if htmlConf.Valid {
+		et.HTMLConfirmation = &htmlConf.String
+	}
+	if htmlCancel.Valid {
+		et.HTMLCancellation = &htmlCancel.String
+	}
+	if htmlResched.Valid {
+		et.HTMLReschedule = &htmlResched.String
+	}
+	if htmlRemind.Valid {
+		et.HTMLReminder = &htmlRemind.String
 	}
 	et.MaxPerDay = nullIntPtr(maxPerDay)
 	et.MaxPerWeek = nullIntPtr(maxPerWeek)
@@ -324,7 +343,8 @@ const etColumns = `id, slug, name, description,
 	calendar_event_title, redirect_url, reply_to,
 	hide_notes_in_calendar, hide_calendar_event_details, requires_confirmation,
 	confirm_mode, confirm_notice_minutes, unconfirmed_blocks_slots, require_email_verification,
-	allow_multiple_durations, duration_options, location_options, destination_calendar_id, schedule_id, team_id`
+	allow_multiple_durations, duration_options, location_options, destination_calendar_id, schedule_id, team_id,
+	html_confirmation, html_cancellation, html_reschedule, html_reminder`
 
 // selectETCols fetches a single event type without the caller-relative columns.
 const selectETCols = "SELECT " + etColumns + " FROM event_types"
@@ -613,6 +633,33 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Inherit caller's saved default email templates (if any).
+	if defRows, dErr := tx.QueryContext(r.Context(),
+		`SELECT kind, mode, subject, body FROM email_templates WHERE user_id = ? AND is_default = 1`, user.ID); dErr == nil {
+		type defTpl struct{ kind, mode, subj, body string }
+		var defs []defTpl
+		for defRows.Next() {
+			var dt defTpl
+			if defRows.Scan(&dt.kind, &dt.mode, &dt.subj, &dt.body) == nil {
+				defs = append(defs, dt)
+			}
+		}
+		defRows.Close()
+		for _, dt := range defs {
+			switch dt.kind {
+			case "confirmation", "cancellation", "reschedule", "reminder":
+				if dt.subj != "" {
+					_, _ = tx.ExecContext(r.Context(), "UPDATE event_types SET subj_"+dt.kind+" = ? WHERE id = ?", dt.subj, id)
+				}
+				if dt.mode == "html" && dt.body != "" {
+					_, _ = tx.ExecContext(r.Context(), "UPDATE event_types SET html_"+dt.kind+" = ? WHERE id = ?", dt.body, id)
+				} else if dt.body != "" {
+					_, _ = tx.ExecContext(r.Context(), "UPDATE event_types SET msg_"+dt.kind+" = ? WHERE id = ?", dt.body, id)
+				}
+			}
+		}
+	}
+
 	if err = tx.Commit(); err != nil {
 		h.logger.ErrorContext(r.Context(), "create event type: commit", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -758,6 +805,10 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		SubjCancellation         *string          `json:"subj_cancellation"`
 		SubjReschedule           *string          `json:"subj_reschedule"`
 		SubjReminder             *string          `json:"subj_reminder"`
+		HTMLConfirmation         *string          `json:"html_confirmation"`
+		HTMLCancellation         *string          `json:"html_cancellation"`
+		HTMLReschedule           *string          `json:"html_reschedule"`
+		HTMLReminder             *string          `json:"html_reminder"`
 		PriceCents               *int             `json:"price_cents"`
 		Currency                 *string          `json:"currency"`
 		Reminders                []int            `json:"reminders"` // nil = don't touch; [] = clear all
@@ -1190,6 +1241,30 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		set(s.col, nullableString(strings.TrimSpace(*s.val)))
+	}
+	for _, htm := range []struct {
+		col string
+		val *string
+	}{
+		{"html_confirmation", req.HTMLConfirmation},
+		{"html_cancellation", req.HTMLCancellation},
+		{"html_reschedule", req.HTMLReschedule},
+		{"html_reminder", req.HTMLReminder},
+	} {
+		if htm.val == nil {
+			continue
+		}
+		trimmed := strings.TrimSpace(*htm.val)
+		if trimmed == "" {
+			set(htm.col, nil)
+			continue
+		}
+		cleaned, err := mailer.SanitizeAndValidateEmailHTML(trimmed)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, htm.col+": "+err.Error())
+			return
+		}
+		set(htm.col, cleaned)
 	}
 
 	// Look up the event type ID, owner + current location (needed for reminder upsert,

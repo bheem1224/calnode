@@ -1585,14 +1585,17 @@ func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConf
 	} else {
 		bData.ManageURL = h.publicURL() + "/manage/" + tok
 	}
-	var msgNote, subjNote, replyTo sql.NullString
-	_ = h.db.QueryRowContext(ctx, `SELECT msg_confirmation, subj_confirmation, reply_to FROM event_types WHERE id = ?`, b.EventTypeID).
-		Scan(&msgNote, &subjNote, &replyTo)
+	var msgNote, subjNote, htmlNote, replyTo sql.NullString
+	_ = h.db.QueryRowContext(ctx, `SELECT msg_confirmation, subj_confirmation, html_confirmation, reply_to FROM event_types WHERE id = ?`, b.EventTypeID).
+		Scan(&msgNote, &subjNote, &htmlNote, &replyTo)
 	if msgNote.Valid {
 		bData.CustomNote = msgNote.String
 	}
 	if subjNote.Valid {
 		bData.SubjectOverride = subjNote.String
+	}
+	if htmlNote.Valid {
+		bData.CustomHTML = htmlNote.String
 	}
 	if replyTo.Valid {
 		bData.ReplyTo = replyTo.String
