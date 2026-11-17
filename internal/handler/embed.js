@@ -91,10 +91,35 @@
     return n;
   }
 
+  function calendarActions(data, labels) {
+    var root = document.createElement('div'); root.className = 'calendar-actions';
+    var title = document.createElement('p'); title.textContent = labels.title; root.appendChild(title);
+    var row = document.createElement('div'); row.className = 'calendar-actions-row'; root.appendChild(row);
+    var start = new Date(data.start), end = new Date(data.end);
+    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return root;
+    var stamp = function (d) { return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, ''); };
+    var details = [data.description, data.manageURL].filter(Boolean).join('\n\n');
+    function link(label, base, params) {
+      var a = document.createElement('a'); a.textContent = label; a.href = base + new URLSearchParams(params); a.target = '_blank'; a.rel = 'noopener noreferrer'; row.appendChild(a);
+    }
+    link('Google Calendar', 'https://calendar.google.com/calendar/render?', { action: 'TEMPLATE', text: data.title, dates: stamp(start) + '/' + stamp(end), details: details, location: data.location || '' });
+    link('Outlook', 'https://outlook.office.com/calendar/0/action/compose?', { rru: 'addevent', subject: data.title, startdt: start.toISOString(), enddt: end.toISOString(), body: details, location: data.location || '' });
+    var download = document.createElement('button'); download.type = 'button'; download.textContent = labels.download;
+    download.addEventListener('click', function () {
+      var escape = function (v) { return String(v || '').replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;'); };
+      // Fold at 75 UTF-8 octets, without splitting a Unicode code point.
+      function fold(line) { var out = '', bytes = 0; for (var c of line) { var n = new TextEncoder().encode(c).length; if (bytes + n > 75) { out += '\r\n '; bytes = 1; } out += c; bytes += n; } return out; }
+      var lines = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Calnode//Booking//EN','BEGIN:VEVENT','UID:' + escape(data.uid || stamp(start) + '@calnode'),'DTSTAMP:' + stamp(new Date()),'DTSTART:' + stamp(start),'DTEND:' + stamp(end),'SUMMARY:' + escape(data.title),'DESCRIPTION:' + escape(details),'LOCATION:' + escape(data.location),'END:VEVENT','END:VCALENDAR'];
+      var url = URL.createObjectURL(new Blob([lines.map(fold).join('\r\n') + '\r\n'], {type: 'text/calendar;charset=utf-8'}));
+      var a = document.createElement('a'); a.href = url; a.download = 'booking.ics'; a.click(); setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }); row.appendChild(download); return root;
+  }
+
   function dayKey(iso) { return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso)); }
   // locale is the resolved server-side locale (this.locale), not the browser's own
   // ([]) — see the matching fix/comment in book.html / internal-docs/i18n-plan.md.
-  function timeLabel(iso, locale) { return new Intl.DateTimeFormat(locale || [], { timeZone: TZ, hour: 'numeric', minute: '2-digit' }).format(new Date(iso)); }
+  function timeLabel(iso, locale, clock) { return new Intl.DateTimeFormat(locale || [], { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: clock === '12h' }).format(new Date(iso)); }
+  function clockFormat(i18n) { try { var v = localStorage.getItem('fp-clock-fmt'); if (v === '12h' || v === '24h') return v; } catch (_) {} return t(i18n, 'clock_format') === '12h' ? '12h' : '24h'; }
   function shortDay(iso, locale) { return new Intl.DateTimeFormat(locale || [], { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(iso)); }
   function ymd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
   function startOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
@@ -509,6 +534,13 @@
       else if (st.day) {
         var list = (st.slotsByDay[st.day] || []).slice().sort(function (a, b) { return a.start < b.start ? -1 : 1; });
         var listEl = el('div', { class: 'slots-list' });
+        var clock = el('div', { class: 'clock-format', role: 'group', 'aria-label': t(self.i18n, 'time_format') });
+        ['12h', '24h'].forEach(function (format) {
+          var button = el('button', { type: 'button', text: format, 'aria-pressed': String((self.clockOverride || clockFormat(self.i18n)) === format) });
+          button.addEventListener('click', function () { self.clockOverride = format; try { localStorage.setItem('fp-clock-fmt', format); } catch (_) {} self.render(); });
+          clock.appendChild(button);
+        });
+        listEl.appendChild(clock);
         var periodFor = function (slot) {
           var hour = Number(new Intl.DateTimeFormat('en-GB', {timeZone: TZ, hour: 'numeric', hourCycle: 'h23'}).format(new Date(slot.start)));
           return hour < 12 ? 0 : hour < 17 ? 1 : 2;
@@ -534,14 +566,14 @@
             // slot and is announced as unavailable instead of read out as a plain time.
             var d = el('button', {
               class: 'slot-btn taken',
-              text: timeLabel(s.start, self.locale),
-              'aria-label': timeLabel(s.start, self.locale) + ' - ' + t(self.i18n, 'slot_taken'),
+              text: timeLabel(s.start, self.locale, (self.clockOverride || clockFormat(self.i18n))),
+              'aria-label': timeLabel(s.start, self.locale, (self.clockOverride || clockFormat(self.i18n))) + ' - ' + t(self.i18n, 'slot_taken'),
             });
             d.disabled = true;
             grid.appendChild(d);
             return;
           }
-          var b = el('button', { class: 'slot-btn', text: timeLabel(s.start, self.locale) });
+          var b = el('button', { class: 'slot-btn', text: timeLabel(s.start, self.locale, (self.clockOverride || clockFormat(self.i18n))) });
           b.addEventListener('click', function () { self.state.slot = s; self.state.view = 'form'; self.render(); });
           grid.appendChild(b);
         });
@@ -657,14 +689,14 @@
           // Paid event types: the server returns a Stripe Checkout URL. Send the visitor
           // there (top window, so it isn't trapped in the host page's frame).
           if (res.data && res.data.checkout_url) { (window.top || window).location.href = res.data.checkout_url; return; }
-          self.state.view = 'confirm'; self.render();
+          self.booked = res.data; self.state.view = 'confirm'; self.render();
           self.dispatchEvent(new CustomEvent('calnode:booked', { bubbles: true, composed: true, detail: res.data }));
         }).catch(function (err) {
           errBox.textContent = err.message || t(self.i18n, 'booking_failed_error');
           cta.disabled = false; cta.textContent = t(self.i18n, 'confirm_booking');
         });
       });
-      return el('div', {}, [back, el('p', { class: 'slot-label', text: shortDay(slot.start, this.locale) + ' · ' + timeLabel(slot.start, this.locale) }), form]);
+      return el('div', {}, [back, el('p', { class: 'slot-label', text: shortDay(slot.start, this.locale) + ' · ' + timeLabel(slot.start, this.locale, (this.clockOverride || clockFormat(this.i18n))) }), form]);
     }
 
     confirmView(slot) {
@@ -672,8 +704,9 @@
         el('div', { class: 'confirm-icon', html: SVG_CHECK }),
         el('div', { class: 'confirm-view' }, [
           el('h3', { text: t(this.i18n, 'booking_confirmed') }),
-          el('p', { class: 'when', text: shortDay(slot.start, this.locale) + ' · ' + timeLabel(slot.start, this.locale) }),
+          el('p', { class: 'when', text: shortDay(slot.start, this.locale) + ' · ' + timeLabel(slot.start, this.locale, (this.clockOverride || clockFormat(this.i18n))) }),
           el('p', { class: 'sub', text: t(this.i18n, 'confirmation_email_sent') }),
+          calendarActions({ title: this.info.name, description: this.info.description, location: (this.booked && this.booked.location_value) || this.info.location_label, start: (this.booked && this.booked.start_at) || slot.start, end: (this.booked && this.booked.end_at) || slot.end, uid: this.booked && this.booked.id, manageURL: this.booked && this.booked.manage_url }, { title: t(this.i18n, 'add_to_calendar'), download: t(this.i18n, 'download_ics') }),
         ]),
       ]);
     }

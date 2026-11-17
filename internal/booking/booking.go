@@ -13,6 +13,7 @@ var (
 	ErrBookingLimitReached = errors.New("booking: active booking limit reached for this invitee")
 	ErrEmailThrottled      = errors.New("booking: too many bookings from this email address")
 	ErrFrequencyCapReached = errors.New("booking: event type frequency cap reached")
+	ErrAdHocSlotMismatch   = errors.New("booking: time was not offered by this link")
 	ErrSingleUseTokenGone  = errors.New("booking: single-use booking link has expired or has already been used")
 	// ErrHostAlreadyAssigned: a reassign targeted a host who already attends the booking
 	// (e.g. a collective's co-host). Moving the primary seat onto them would collapse two
@@ -131,4 +132,10 @@ type CreateParams struct {
 	// PendingApproval is true when the event type requires manual host confirmation
 	// and the booking has not yet been approved.
 	PendingApproval bool
+}
+
+// AdHocSlot is an exact time interval offered by a single-use link.
+type AdHocSlot struct {
+	StartAt time.Time `json:"start_at"`
+	EndAt   time.Time `json:"end_at"`
 }

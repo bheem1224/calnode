@@ -106,3 +106,8 @@ test('fmt leaves a string with no verbs untouched', () => {
   assert.equal(B.fmt('No available times.', ['unused']), 'No available times.');
   assert.equal(B.fmt('Inga lediga tider.'), 'Inga lediga tider.');
 });
+
+test('formatTime honors explicit clock format', () => {
+  assert.match(B.formatTime('2026-06-15T14:05:00Z', 'UTC', 'en-US', '12h'), /2:05.*PM/);
+  assert.match(B.formatTime('2026-06-15T14:05:00Z', 'UTC', 'en-US', '24h'), /14:05/);
+});

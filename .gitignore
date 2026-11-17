@@ -68,5 +68,7 @@ __screenshots__/
 packaging/ns8/tests/outputs/
 __pycache__/
 calnode.key
+
+#AI agent config and working documentation files
 FUTURE_FEATURES.md
-.agents/skills/calnode-design-system/
+.agents/

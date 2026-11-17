@@ -2020,5 +2020,28 @@
 			"loadTeams": "Could not load teams",
 			"loadTeamMembers": "Could not load team members"
 		}
+	},
+	"quickLink": {
+		"title": "Quick links",
+		"description": "Enter copies a link; Shift+Enter creates a one-time link.",
+		"search": "Search event types",
+		"empty": "No matching event types",
+		"copy": "Copy link",
+		"once": "1-Time link",
+		"copied": "Link copied",
+		"loadError": "Could not load event types",
+		"copyError": "Could not create or copy the link"
+	},
+	"customTimes": {
+		"title": "Offer custom times",
+		"description": "Choose specific times outside your regular availability.",
+		"time": "Start time",
+		"add": "Add time",
+		"timezone": "Your timezone",
+		"invalid": "Choose a future time; up to 20 slots are allowed.",
+		"remove": "Remove time",
+		"create": "Create & Copy 1-Time Link",
+		"copied": "Custom link copied",
+		"failed": "Could not create or copy the link"
 	}
 }

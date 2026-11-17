@@ -175,5 +175,8 @@
   "directory_empty": "Δεν υπάρχει κάτι διαθέσιμο εδώ αυτή τη στιγμή.",
   "directory_members": "Μέλη της ομάδας",
   "directory_person_subtitle": "Κράτηση ώρας με τον/την %s",
-  "directory_team_subtitle": "Κράτηση ώρας με την ομάδα %s"
+  "directory_team_subtitle": "Κράτηση ώρας με την ομάδα %s",
+  "add_to_calendar": "Προσθήκη στο ημερολόγιο",
+  "download_ics": "Λήψη .ics",
+  "time_format": "Μορφή ώρας"
 }

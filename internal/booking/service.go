@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -47,6 +48,33 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 	defer tx.Rollback() //nolint:errcheck
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	if token := strings.TrimSpace(p.SingleUseToken); token != "" {
+		var raw sql.NullString
+		err := tx.QueryRowContext(ctx, `SELECT custom_slots_json FROM single_use_tokens WHERE token = ? AND event_type_id = ? AND used_at IS NULL AND (expires_at IS NULL OR datetime(expires_at) > datetime(?))`, token, p.EventTypeID, now).Scan(&raw)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrSingleUseTokenGone
+		}
+		if err != nil {
+			return nil, fmt.Errorf("booking: read single-use token: %w", err)
+		}
+		if raw.Valid && raw.String != "" {
+			var offered []AdHocSlot
+			if json.Unmarshal([]byte(raw.String), &offered) != nil || len(offered) == 0 {
+				return nil, ErrAdHocSlotMismatch
+			}
+			match := false
+			for _, slot := range offered {
+				if absDuration(slot.StartAt.Sub(p.StartAt)) <= time.Second && absDuration(slot.EndAt.Sub(p.EndAt)) <= time.Second {
+					match = true
+					break
+				}
+			}
+			if !match {
+				return nil, ErrAdHocSlotMismatch
+			}
+		}
+	}
 
 	// Select hosts. Round-robin picks one *free* candidate from the rotation pool
 	// per p.RRStrategy (free candidates stay in priority order). Any
@@ -792,4 +820,11 @@ func scanBooking(s scanner) (*Booking, error) {
 	b.ConfirmFailed = confirmFailed != 0
 	b.PendingApproval = pendingApproval != 0
 	return &b, nil
+}
+
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
 }

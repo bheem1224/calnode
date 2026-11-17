@@ -2020,5 +2020,28 @@
 			"loadTeams": "Impossible de charger les équipes",
 			"loadTeamMembers": "Impossible de charger les membres de l'équipe"
 		}
+	},
+	"quickLink": {
+		"title": "Liens rapides",
+		"description": "Entrée copie un lien ; Maj+Entrée crée un lien à usage unique.",
+		"search": "Rechercher des types d’événement",
+		"empty": "Aucun type d’événement trouvé",
+		"copy": "Copier le lien",
+		"once": "Lien à usage unique",
+		"copied": "Lien copié",
+		"loadError": "Impossible de charger les types d’événement",
+		"copyError": "Impossible de créer ou copier le lien"
+	},
+	"customTimes": {
+		"title": "Proposer des horaires",
+		"description": "Choisissez des horaires en dehors de vos disponibilités habituelles.",
+		"time": "Heure de début",
+		"add": "Ajouter",
+		"timezone": "Votre fuseau horaire",
+		"invalid": "Choisissez une heure future ; 20 créneaux maximum.",
+		"remove": "Supprimer",
+		"create": "Créer et copier le lien à usage unique",
+		"copied": "Lien personnalisé copié",
+		"failed": "Impossible de créer ou copier le lien"
 	}
 }

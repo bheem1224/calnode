@@ -377,10 +377,10 @@
                   disabled={!isAvail}
                   onclick={() => (selectedDay = d)}
                   class="aspect-square rounded-md font-medium transition-colors {selectedDay === d
-                    ? 'bg-primary text-primary-foreground'
+                    ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950'
                     : isAvail
-                      ? 'border border-border/60 bg-muted/40 hover:bg-accent text-foreground'
-                      : 'text-muted-foreground/35 cursor-default'}"
+                      ? 'border border-zinc-200 bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-800/90 dark:text-zinc-100 dark:hover:bg-zinc-700'
+                      : 'cursor-default text-zinc-500 opacity-35'}"
                 >
                   {d}
                 </button>

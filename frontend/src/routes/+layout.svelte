@@ -13,6 +13,8 @@
 	import { buttonVariants } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import DemoBanner from '$lib/components/demo-banner.svelte';
+	import QuickLinkPalette from '$lib/components/QuickLinkPalette.svelte';
+	import { Button } from '$lib/components/ui/button';
 	import type { Snippet } from 'svelte';
 
 	let { children }: { children: Snippet } = $props();
@@ -24,6 +26,7 @@
 	// Mobile nav drawer. Only ever opened from the md:hidden header button, so it is
 	// always false at desktop widths — which is what makes `inert` on <main> safe.
 	let sidebarOpen = $state(false);
+	let quickLinkOpen = $state(false);
 	let sidebarHovered = $state(false);
 	const isCompactNav = $derived(
 		$page.route.id === '/event-types/[slug]' || ($page.route.id?.startsWith('/settings') ?? false)
@@ -243,6 +246,7 @@
 <svelte:window
 	onkeydown={(e) => {
 		if (e.key === 'Escape' && sidebarOpen) sidebarOpen = false;
+		if (!isPublicRoute && !checking && $currentUser && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); quickLinkOpen = true; }
 	}}
 />
 
@@ -271,6 +275,7 @@
 	</div>
 {:else}
 	<div class="flex h-full flex-col">
+	<QuickLinkPalette bind:open={quickLinkOpen} />
 	{#if $authStatus.demo_mode}
 		<DemoBanner />
 	{/if}
@@ -333,7 +338,7 @@
 			bind:this={sidebarEl}
 			onmouseenter={() => { if (isCompactNav) sidebarHovered = true; }}
 			onmouseleave={() => { sidebarHovered = false; }}
-			class="fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-sidebar-border bg-sidebar shadow-xl transition-all duration-150 md:max-w-none md:translate-x-0
+			class="fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-sidebar-border bg-sidebar shadow-xl transition-all duration-[240ms] ease-[cubic-bezier(0.16,1,0.3,1)] md:max-w-none md:translate-x-0
 				{isCompactNav
 					? (sidebarHovered ? 'md:fixed md:inset-y-0 md:left-0 md:z-50 md:w-56 md:shadow-xl' : 'md:fixed md:inset-y-0 md:left-0 md:z-40 md:w-14 md:shadow-none')
 					: 'md:static md:z-auto md:w-56 md:shadow-none'}
@@ -358,6 +363,7 @@
 				</div>
 			</a>
 
+			<Button variant="ghost" size="sm" class="mx-2 mt-2 justify-center text-muted-foreground" onclick={() => quickLinkOpen = true} aria-label={$t('quickLink.title')} title={$t('quickLink.title')}>?K</Button>
 			<!-- Nav -->
 			<nav class="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
 				{#each visibleNavItems as item, i}
@@ -374,6 +380,7 @@
 					<a
 						href={item.href}
 						title={item.label}
+						aria-label={item.label}
 						onclick={() => (sidebarOpen = false)}
 						class="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors {isCompactNav && !sidebarHovered ? 'md:justify-center md:px-0' : ''}
 							{active
@@ -420,6 +427,11 @@
 					</div>
 				{/if}
 
+				{#if isCompactNav && !sidebarHovered}
+					<button type="button" title="Theme: {theme.mode}. Change theme" aria-label="Theme: {theme.mode}. Change theme" onclick={() => theme.set(theme.mode === 'light' ? 'dark' : theme.mode === 'dark' ? 'system' : 'light')} class="hidden w-full justify-center rounded-md p-2 text-sidebar-foreground/70 hover:bg-sidebar-accent/60 md:flex">
+						{#if theme.mode === 'light'}?{:else if theme.mode === 'dark'}?{:else}?{/if}
+					</button>
+				{/if}
 				<div class="mb-1 px-1 {isCompactNav && !sidebarHovered ? 'md:hidden' : ''}" role="radiogroup" aria-label="Theme">
 					<div class="grid grid-cols-3 gap-0.5 rounded-md border border-sidebar-border bg-sidebar-accent/40 p-0.5">
 						{#each (['light', 'dark', 'system'] as ThemeMode[]) as modeOption}

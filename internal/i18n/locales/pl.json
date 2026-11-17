@@ -167,5 +167,8 @@
   "directory_empty": "Brak dostępnych wydarzeń do zarezerwowania.",
   "directory_members": "Członkowie zespołu",
   "directory_person_subtitle": "Zarezerwuj spotkanie z użytkownikiem %s",
-  "directory_team_subtitle": "Zarezerwuj spotkanie z zespołem %s"
+  "directory_team_subtitle": "Zarezerwuj spotkanie z zespołem %s",
+  "add_to_calendar": "Dodaj do kalendarza",
+  "download_ics": "Pobierz .ics",
+  "time_format": "Format czasu"
 }

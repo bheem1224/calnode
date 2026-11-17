@@ -714,6 +714,7 @@ type attendeeJSON struct {
 }
 
 type bookingJSON struct {
+	ManageURL          string `json:"manage_url,omitempty"`
 	ID                 string `json:"id"`
 	EventTypeID        string `json:"event_type_id"`
 	EventTypeSlug      string `json:"event_type_slug,omitempty"`
@@ -993,6 +994,31 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 	}
 	endAt := startAt.UTC().Add(time.Duration(durMins) * time.Minute)
 
+	offered, err := h.adHocSlots(r.Context(), singleUseToken, et.ID)
+	if err != nil {
+		if errors.Is(err, booking.ErrSingleUseTokenGone) {
+			h.writeError(w, http.StatusGone, "This booking link has expired or has already been used")
+		} else {
+			h.writeError(w, http.StatusInternalServerError, "could not read booking link")
+		}
+		return
+	}
+	if offered != nil {
+		matched := false
+		for _, slot := range offered {
+			if delta := slot.StartAt.Sub(startAt); delta >= -time.Second && delta <= time.Second {
+				startAt = slot.StartAt
+				endAt = slot.EndAt
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			h.writeError(w, http.StatusConflict, "this time was not offered")
+			return
+		}
+	}
+
 	locValue := ""
 	if et.LocationValue != nil {
 		locValue = *et.LocationValue
@@ -1044,11 +1070,16 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusConflict, "this slot is no longer available")
 		return
 	}
-	if err := h.validateBookingTime(r.Context(), et, et.RoutingMode, candidates, required, startAt.UTC(), endAt); err != nil {
-		h.writeError(w, http.StatusConflict, "this slot is no longer available")
-		return
-	}
-	if candidates, err = h.filterAvailableHosts(r.Context(), et, candidates, startAt.UTC(), endAt); err != nil {
+	if offered == nil {
+		if err := h.validateBookingTime(r.Context(), et, et.RoutingMode, candidates, required, startAt.UTC(), endAt); err != nil {
+			h.writeError(w, http.StatusConflict, "this slot is no longer available")
+			return
+		}
+		if candidates, err = h.filterAvailableHosts(r.Context(), et, candidates, startAt.UTC(), endAt); err != nil {
+			h.writeError(w, http.StatusConflict, "this slot is no longer available")
+			return
+		}
+	} else if startAt.Before(bookingNow()) || !booking.WithinFutureLimit(bookingNow(), startAt, booking.LoadLocationOrUTC(et.OwnerTimezone), et.FutureLimitMode, et.MaxFutureDays, et.FutureRangeStart, et.FutureRangeEnd) {
 		h.writeError(w, http.StatusConflict, "this slot is no longer available")
 		return
 	}
@@ -1096,6 +1127,10 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		PendingApproval:     needsApproval,
 	})
 	if err != nil {
+		if errors.Is(err, booking.ErrAdHocSlotMismatch) {
+			h.writeError(w, http.StatusConflict, "this time was not offered")
+			return
+		}
 		if errors.Is(err, booking.ErrSingleUseTokenGone) {
 			h.writeError(w, http.StatusGone, "This booking link has expired or has already been used")
 			return
@@ -1166,6 +1201,11 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bj := toBookingJSON(b)
+	if token, err := h.bookingSvc.IssueManageToken(r.Context(), b.ID); err == nil {
+		bj.ManageURL = h.publicURL() + "/manage/" + token
+	} else {
+		h.logger.ErrorContext(r.Context(), "issue confirmation manage token", "error", err, "booking_id", b.ID)
+	}
 	for _, hd := range h.displayHostsForBooking(r.Context(), b.ID) {
 		bj.Hosts = append(bj.Hosts, hostBrief{ID: hd.ID, Name: hd.Name, AvatarURL: hd.AvatarURL})
 	}

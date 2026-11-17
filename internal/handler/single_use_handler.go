@@ -13,21 +13,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/booking"
 	"github.com/calnode/calnode/internal/uid"
 )
 
 const defaultSingleUseExpiryHours = 168
 
 type singleUseLinkJSON struct {
-	ID              string  `json:"id"`
-	Token           string  `json:"token"`
-	URL             string  `json:"url"`
-	EventTypeID     string  `json:"event_type_id"`
-	CreatedByUserID string  `json:"created_by_user_id"`
-	ExpiresAt       *string `json:"expires_at"`
-	UsedAt          *string `json:"used_at"`
-	BookingID       *string `json:"booking_id"`
-	CreatedAt       string  `json:"created_at"`
+	ID              string              `json:"id"`
+	Token           string              `json:"token"`
+	URL             string              `json:"url"`
+	EventTypeID     string              `json:"event_type_id"`
+	CreatedByUserID string              `json:"created_by_user_id"`
+	ExpiresAt       *string             `json:"expires_at"`
+	UsedAt          *string             `json:"used_at"`
+	BookingID       *string             `json:"booking_id"`
+	CreatedAt       string              `json:"created_at"`
+	CustomSlots     []booking.AdHocSlot `json:"custom_slots,omitempty"`
 }
 
 func (h *Handler) singleUseURL(token string) string {
@@ -80,11 +82,40 @@ func (h *Handler) CreateSingleUseLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		ExpiresInHours *int `json:"expires_in_hours"`
+		ExpiresInHours *int            `json:"expires_in_hours"`
+		CustomSlots    json.RawMessage `json:"custom_slots"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
+	}
+
+	var customSlotsJSON any
+	var customSlots []booking.AdHocSlot
+	if req.CustomSlots != nil {
+		if err := json.Unmarshal(req.CustomSlots, &customSlots); err != nil || len(customSlots) == 0 || len(customSlots) > 20 {
+			h.writeError(w, http.StatusBadRequest, "custom_slots must contain 1 to 20 slots")
+			return
+		}
+		for i, slot := range customSlots {
+			for _, previous := range customSlots[:i] {
+				delta := previous.StartAt.Sub(slot.StartAt)
+				if delta >= -2*time.Second && delta <= 2*time.Second {
+					h.writeError(w, http.StatusBadRequest, "custom slot starts must be distinct")
+					return
+				}
+			}
+			if slot.StartAt.IsZero() || !slot.EndAt.After(slot.StartAt) || !slot.StartAt.After(time.Now()) {
+				h.writeError(w, http.StatusBadRequest, "custom slots must be future intervals with end after start")
+				return
+			}
+		}
+		data, err := json.Marshal(customSlots)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "invalid custom slots")
+			return
+		}
+		customSlotsJSON = string(data)
 	}
 
 	expHours := defaultSingleUseExpiryHours
@@ -116,9 +147,9 @@ func (h *Handler) CreateSingleUseLink(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := h.db.ExecContext(r.Context(), `
 		INSERT INTO single_use_tokens
-		  (id, token, event_type_id, created_by_user_id, expires_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		id, token, etID, user.ID, expiresAtSQL, nowStr); err != nil {
+		  (id, token, event_type_id, created_by_user_id, expires_at, created_at, custom_slots_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, token, etID, user.ID, expiresAtSQL, nowStr, customSlotsJSON); err != nil {
 		h.logger.ErrorContext(r.Context(), "create single-use link: insert", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -132,6 +163,12 @@ func (h *Handler) CreateSingleUseLink(w http.ResponseWriter, r *http.Request) {
 		CreatedByUserID: user.ID,
 		ExpiresAt:       expiresAtPtr,
 		CreatedAt:       nowStr,
+		CustomSlots: func() []booking.AdHocSlot {
+			if req.CustomSlots != nil {
+				return customSlots
+			}
+			return nil
+		}(),
 	})
 }
 
@@ -319,4 +356,26 @@ func writeSingleUseGonePage(w http.ResponseWriter) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusGone)
 	_, _ = io.WriteString(w, `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Link Unavailable</title><script>(function(){try{var m=localStorage.getItem('fp-theme')||'system';var d=m==='dark'||(m!=='light'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',d);document.documentElement.style.colorScheme=d?'dark':'light';}catch(e){}})();</script><style>:root{--bg:#f8fafc;--fg:#0f172a;--card:#ffffff;--border:#e2e8f0;--muted:#475569;--pill-bg:#ffffff;--pill-active:#0f172a;--pill-active-fg:#ffffff}html.dark{--bg:#09090b;--fg:#f4f4f5;--card:#18181b;--border:#27272a;--muted:#a1a1aa;--pill-bg:#18181b;--pill-active:#f4f4f5;--pill-active-fg:#09090b}body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px;transition:background-color .18s ease,color .18s ease}.box{max-width:440px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:32px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.08)}h1{font-size:20px;margin:0 0 12px;letter-spacing:-0.01em}p{font-size:15px;color:var(--muted);margin:0;line-height:1.55}.sw{position:fixed;top:14px;right:14px;display:inline-flex;gap:2px;padding:3px;border-radius:8px;border:1px solid var(--border);background:var(--pill-bg)}.sw button{border:0;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:500;padding:4px 9px;border-radius:6px;cursor:pointer}.sw button.active{background:var(--pill-active);color:var(--pill-active-fg)}@media(prefers-reduced-motion:reduce){*{transition:none!important}}</style></head><body><div class="sw" role="radiogroup" aria-label="Theme"><button type="button" data-t="light">Light</button><button type="button" data-t="dark">Dark</button><button type="button" data-t="system">System</button></div><main class="box"><h1>Booking Link Unavailable</h1><p>`+html.EscapeString(msg)+`</p></main><script>(function(){var K='fp-theme',mq=window.matchMedia?window.matchMedia('(prefers-color-scheme: dark)'):null;function gm(){try{var v=localStorage.getItem(K);return(v==='light'||v==='dark'||v==='system')?v:'system'}catch(e){return'system'}}function ap(m){var d=m==='dark'||(m!=='light'&&!!(mq&&mq.matches));document.documentElement.classList.toggle('dark',d);document.documentElement.style.colorScheme=d?'dark':'light';var bs=document.querySelectorAll('.sw [data-t]');for(var i=0;i<bs.length;i++){var a=bs[i].getAttribute('data-t')===m;bs[i].classList.toggle('active',a);bs[i].setAttribute('aria-checked',a?'true':'false');}}var bs=document.querySelectorAll('.sw [data-t]');for(var i=0;i<bs.length;i++){bs[i].addEventListener('click',function(){var n=this.getAttribute('data-t')||'system';try{localStorage.setItem(K,n)}catch(e){}ap(n);});}if(mq&&mq.addEventListener)mq.addEventListener('change',function(){ap(gm());});ap(gm());})();</script></body></html>`)
+}
+
+func (h *Handler) adHocSlots(ctx context.Context, token, eventID string) ([]booking.AdHocSlot, error) {
+	if strings.TrimSpace(token) == "" {
+		return nil, nil
+	}
+	var raw sql.NullString
+	err := h.db.QueryRowContext(ctx, `SELECT custom_slots_json FROM single_use_tokens WHERE token = ? AND event_type_id = ? AND used_at IS NULL AND (expires_at IS NULL OR datetime(expires_at) > datetime(?))`, token, eventID, time.Now().UTC().Format(time.RFC3339Nano)).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, booking.ErrSingleUseTokenGone
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !raw.Valid || raw.String == "" {
+		return nil, nil
+	}
+	var offered []booking.AdHocSlot
+	if err := json.Unmarshal([]byte(raw.String), &offered); err != nil || len(offered) == 0 {
+		return nil, booking.ErrAdHocSlotMismatch
+	}
+	return offered, nil
 }

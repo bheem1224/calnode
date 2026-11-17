@@ -175,5 +175,8 @@
   "directory_empty": "Nothing bookable here right now.",
   "directory_members": "Team members",
   "directory_person_subtitle": "Book time with %s",
-  "directory_team_subtitle": "Book time with the %s team"
+  "directory_team_subtitle": "Book time with the %s team",
+  "add_to_calendar": "Add to calendar",
+  "download_ics": "Download .ics",
+  "time_format": "Time format"
 }

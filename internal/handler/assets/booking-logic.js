@@ -66,9 +66,10 @@
 
 
   // formatTime — "1:30 PM" in the selected tz.
-  function formatTime(iso, tz, locale) {
+  function formatTime(iso, tz, locale, clockFormat) {
     return new Intl.DateTimeFormat(locale || [], {
-      timeZone: tz, hour: 'numeric', minute: '2-digit'
+      timeZone: tz, hour: 'numeric', minute: '2-digit',
+      ...(clockFormat === '12h' || clockFormat === '24h' ? { hour12: clockFormat === '12h' } : {})
     }).format(new Date(iso));
   }
 
@@ -138,7 +139,32 @@
   // consolidated onto it. If these are ever unified, the shared version must take the
   // locale's list_separator/list_conjunction, not hardcode punctuation.
 
+  function calendarActions(data, labels) {
+    var root = document.createElement('div'); root.className = 'calendar-actions';
+    var title = document.createElement('p'); title.textContent = labels.title; root.appendChild(title);
+    var row = document.createElement('div'); row.className = 'calendar-actions-row'; root.appendChild(row);
+    var start = new Date(data.start), end = new Date(data.end);
+    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return root;
+    var stamp = function (d) { return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, ''); };
+    var details = [data.description, data.manageURL].filter(Boolean).join('\n\n');
+    function link(label, base, params) {
+      var a = document.createElement('a'); a.textContent = label; a.href = base + new URLSearchParams(params); a.target = '_blank'; a.rel = 'noopener noreferrer'; row.appendChild(a);
+    }
+    link('Google Calendar', 'https://calendar.google.com/calendar/render?', { action: 'TEMPLATE', text: data.title, dates: stamp(start) + '/' + stamp(end), details: details, location: data.location || '' });
+    link('Outlook', 'https://outlook.office.com/calendar/0/action/compose?', { rru: 'addevent', subject: data.title, startdt: start.toISOString(), enddt: end.toISOString(), body: details, location: data.location || '' });
+    var download = document.createElement('button'); download.type = 'button'; download.textContent = labels.download;
+    download.addEventListener('click', function () {
+      var escape = function (v) { return String(v || '').replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;'); };
+      // Fold at 75 UTF-8 octets, without splitting a Unicode code point.
+      function fold(line) { var out = '', bytes = 0; for (var c of line) { var n = new TextEncoder().encode(c).length; if (bytes + n > 75) { out += '\r\n '; bytes = 1; } out += c; bytes += n; } return out; }
+      var lines = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Calnode//Booking//EN','BEGIN:VEVENT','UID:' + escape(data.uid || stamp(start) + '@calnode'),'DTSTAMP:' + stamp(new Date()),'DTSTART:' + stamp(start),'DTEND:' + stamp(end),'SUMMARY:' + escape(data.title),'DESCRIPTION:' + escape(details),'LOCATION:' + escape(data.location),'END:VEVENT','END:VCALENDAR'];
+      var url = URL.createObjectURL(new Blob([lines.map(fold).join('\r\n') + '\r\n'], {type: 'text/calendar;charset=utf-8'}));
+      var a = document.createElement('a'); a.href = url; a.download = 'booking.ics'; a.click(); setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }); row.appendChild(download); return root;
+  }
+
   return {
+    calendarActions: calendarActions,
     dateKeyFromISO: dateKeyFromISO,
     ymd: ymd,
     groupSlotsByDay: groupSlotsByDay,

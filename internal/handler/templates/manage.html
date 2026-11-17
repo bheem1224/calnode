@@ -189,6 +189,7 @@ body {
         {{call .T "back"}}
       </button>
       <p class="slots-header" id="slots-date">{{call .T "select_a_date"}}</p>
+      <div class="clock-format" role="group" aria-label="{{call .T "time_format"}}"><button type="button" data-clock="12h">12h</button><button type="button" data-clock="24h">24h</button></div>
       <div id="slots-list" class="slots-list"><p class="hint">{{call .T "pick_day_hint"}}</p></div>
     </div>
 
@@ -293,7 +294,18 @@ body {
 
   // LOCALE (resolved server-side), not [] (the browser's own) — see the matching
   // comment in book.html / internal-docs/i18n-plan.md.
-  function fmtTime(iso) { return BookingLogic.formatTime(iso, TZ, LOCALE); }
+  let clockFormat = (() => { try { const saved = localStorage.getItem('fp-clock-fmt'); if (saved === '12h' || saved === '24h') return saved; } catch (_) {} return t('clock_format') === '12h' ? '12h' : '24h'; })();
+  function fmtTime(iso) { return BookingLogic.formatTime(iso, TZ, LOCALE, clockFormat); }
+  document.querySelectorAll('[data-clock]').forEach(button => {
+    const sync = () => button.setAttribute('aria-pressed', String(button.dataset.clock === clockFormat));
+    sync();
+    button.addEventListener('click', () => {
+      clockFormat = button.dataset.clock;
+      try { localStorage.setItem('fp-clock-fmt', clockFormat); } catch (_) {}
+      document.querySelectorAll('[data-clock]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.clock === clockFormat)));
+      if (pickedDate) fillSlots($('slots-list'), toDateStr(pickedDate.getFullYear(), pickedDate.getMonth(), pickedDate.getDate()));
+    });
+  });
   function fmtDate(d) {
     return d.toLocaleDateString(LOCALE, { weekday: 'long', month: 'long', day: 'numeric' });
   }
@@ -464,7 +476,7 @@ body {
     const notice = noticeDates.has(ds) ? noticeHintText() : '';
     // Shown whenever an external calendar check failed: the busy data behind this
     // list is incomplete, and booking stays fail-closed at commit time.
-    const degraded = slotsDegraded ? hintP(t('calendar_degraded_notice'), 'notice-hint') : null;
+    const degraded = slotsDegraded ? hintP(t('calendar_degraded_notice'), 'calendar-warning') : null;
     if (!slotsCache.length) {
       // Name the day, and the host when there is exactly one. A bare "No available times."
       // never told the visitor whether another day would help (#20).
@@ -593,7 +605,9 @@ body {
         errEl.textContent = data.error || t('reschedule_failed_error');
         btn.disabled = false; btn.textContent = t('confirm_reschedule'); return;
       }
+      const rescheduled = await r.json();
       $('success-new-time').textContent = fmtDate(pickedDate) + ' · ' + fmtTime(pickedSlot.start);
+      $('success-reschedule-view').querySelector('.state-page').appendChild(BookingLogic.calendarActions({ title: {{.EventTypeName}}, description: {{.EventDescription}}, location: {{.CalendarLocation}}, start: pickedSlot.start, end: pickedSlot.end || new Date(Date.parse(pickedSlot.start) + {{.DurationMinutes}} * 60000).toISOString(), uid: {{.BookingID}}, manageURL: rescheduled.manage_url || '' }, { title: t('add_to_calendar'), download: t('download_ics') }));
       showView('success-reschedule-view');
       if (window.__CALNODE_DL && typeof calnodePush === 'function') {
         calnodePush('calnode_booking_rescheduled', {

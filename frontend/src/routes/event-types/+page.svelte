@@ -13,6 +13,9 @@
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import * as Popover from '$lib/components/ui/popover';
 	import { toast } from 'svelte-sonner';
+	import OfferCustomTimes from '$lib/components/OfferCustomTimes.svelte';
+	let customOpen = $state(false);
+	let customEvent = $state<EventType | null>(null);
 
 	let items: EventType[] = $state([]);
 	let teams: Team[] = $state([]);
@@ -263,6 +266,8 @@
 	}
 </script>
 
+<OfferCustomTimes bind:open={customOpen} event={customEvent} />
+
 <ConfirmDialog
 	bind:open={deleteOpen}
 	title={$t('eventTypes.confirm.delete.title')}
@@ -437,6 +442,7 @@
 							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
 						</Button>
 
+						<Button variant="ghost" size="sm" disabled={!et.is_active || !!et.archived} onclick={() => { customEvent = et; customOpen = true; }}>{$t('customTimes.title')}</Button>
 						<Popover.Root open={openMenuSlug === et.slug} onOpenChange={(o) => (openMenuSlug = o ? et.slug : null)}>
 							<Popover.Trigger
 								class="inline-flex h-8 w-8 items-center justify-center rounded-r-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"

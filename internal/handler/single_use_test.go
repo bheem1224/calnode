@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/calnode/calnode/internal/calendar"
+	"github.com/calnode/calnode/internal/slots"
 )
 
 func seedAvailabilityWindow(t *testing.T, h interface {
@@ -322,5 +325,70 @@ func TestSingleUseLinks_lifecycleBookReplayAndManageReschedule(t *testing.T) {
 	h.SingleUseBookPage(revokedPageRec, revokedPageReq)
 	if revokedPageRec.Code != http.StatusGone {
 		t.Errorf("revoked GET /t/{token} status = %d; want 410", revokedPageRec.Code)
+	}
+}
+
+func TestAdHocSingleUseSlots(t *testing.T) {
+	h, database, key, owner := setupWorkspaceWithDB(t)
+	slug, id := seedEventTypeHTTP(t, h, key)
+	if _, err := database.Exec(`DELETE FROM availability_rules WHERE user_id = ?`, owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`UPDATE event_types SET min_notice_minutes = 10080 WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now().UTC().Truncate(time.Hour).Add(24 * time.Hour)
+	blocked := start.Add(2 * time.Hour)
+	provider := &conflictCalendar{name: "google", busy: map[string][]slots.Interval{owner: {{Start: blocked, End: blocked.Add(30 * time.Minute)}}}}
+	svc := calendar.NewService(database)
+	svc.Register(provider)
+	h.SetCalendar(svc)
+	body := fmt.Sprintf(`{"custom_slots":[{"start_at":%q,"end_at":%q},{"start_at":%q,"end_at":%q}]}`, start.Format(time.RFC3339), start.Add(30*time.Minute).Format(time.RFC3339), blocked.Format(time.RFC3339), blocked.Add(30*time.Minute).Format(time.RFC3339))
+	req := authReq(http.MethodPost, "/v1/event-types/"+id+"/single-use-links", body, key)
+	req.SetPathValue("id", id)
+	rec := httptest.NewRecorder()
+	h.RequireAuth(h.CreateSingleUseLink)(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var created struct {
+		Token string `json:"token"`
+		Slots []any  `json:"custom_slots"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil || len(created.Slots) != 2 {
+		t.Fatalf("response: %s %v", rec.Body, err)
+	}
+	day := start.Format("2006-01-02")
+	get := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/v1/event-types/%s/slots?from=%s&to=%s&tz=UTC&token=%s", slug, day, day, created.Token), nil)
+	get.SetPathValue("slug", slug)
+	out := httptest.NewRecorder()
+	h.GetSlots(out, get)
+	var got struct {
+		Slots []struct {
+			Start string `json:"start"`
+		} `json:"slots"`
+	}
+	if err := json.Unmarshal(out.Body.Bytes(), &got); err != nil || out.Code != 200 || len(got.Slots) != 1 || got.Slots[0].Start != start.Format(time.RFC3339) {
+		t.Fatalf("slots: %d %s (%v)", out.Code, out.Body, err)
+	}
+	book := func(at time.Time) *httptest.ResponseRecorder {
+		b := fmt.Sprintf(`{"event_type_slug":%q,"start_at":%q,"name":"Visitor","email":"adhoc@example.com","timezone":"UTC","single_use_token":%q}`, slug, at.Format(time.RFC3339), created.Token)
+		r := httptest.NewRequest(http.MethodPost, "/v1/bookings", strings.NewReader(b))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.CreateBooking(w, r)
+		return w
+	}
+	if w := book(start.Add(time.Hour)); w.Code != http.StatusConflict {
+		t.Fatalf("unoffered: %d %s", w.Code, w.Body)
+	}
+	if w := book(blocked); w.Code != http.StatusConflict {
+		t.Fatalf("busy: %d %s", w.Code, w.Body)
+	}
+	if w := book(start); w.Code != http.StatusCreated {
+		t.Fatalf("book: %d %s", w.Code, w.Body)
+	}
+	if w := book(start); w.Code != http.StatusGone {
+		t.Fatalf("replay: %d %s", w.Code, w.Body)
 	}
 }

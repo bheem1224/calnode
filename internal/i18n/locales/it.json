@@ -168,5 +168,8 @@
   "directory_empty": "Niente da prenotare al momento.",
   "directory_members": "Membri del team",
   "directory_person_subtitle": "Prenota del tempo con %s",
-  "directory_team_subtitle": "Prenota del tempo con il team %s"
+  "directory_team_subtitle": "Prenota del tempo con il team %s",
+  "add_to_calendar": "Aggiungi al calendario",
+  "download_ics": "Scarica .ics",
+  "time_format": "Formato ora"
 }

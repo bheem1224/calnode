@@ -168,5 +168,8 @@
   "directory_empty": "Derzeit ist nichts buchbar.",
   "directory_members": "Teammitglieder",
   "directory_person_subtitle": "Zeit mit %s buchen",
-  "directory_team_subtitle": "Zeit mit dem Team %s buchen"
+  "directory_team_subtitle": "Zeit mit dem Team %s buchen",
+  "add_to_calendar": "Zum Kalender hinzufügen",
+  "download_ics": ".ics herunterladen",
+  "time_format": "Zeitformat"
 }

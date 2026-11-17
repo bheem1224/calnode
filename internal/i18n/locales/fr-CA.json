@@ -168,5 +168,8 @@
   "directory_empty": "Rien à réserver pour le moment.",
   "directory_members": "Membres de l'équipe",
   "directory_person_subtitle": "Réservez du temps avec %s",
-  "directory_team_subtitle": "Réservez du temps avec l'équipe %s"
+  "directory_team_subtitle": "Réservez du temps avec l'équipe %s",
+  "add_to_calendar": "Ajouter au calendrier",
+  "download_ics": "Télécharger .ics",
+  "time_format": "Format de l’heure"
 }

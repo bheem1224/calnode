@@ -214,6 +214,7 @@ body {
         {{call .T "back"}}
       </button>
       <p class="slots-header" id="slots-date"></p>
+      <div class="clock-format" role="group" aria-label="{{call .T "time_format"}}"><button type="button" data-clock="12h">12h</button><button type="button" data-clock="24h">24h</button></div>
       <div id="slots-list" class="slots-list"></div>
     </div>
 
@@ -491,7 +492,18 @@ body {
   // [] — otherwise a visitor who picked a language via the switcher, or whose
   // Accept-Language differs from navigator.language, would see translated chrome next
   // to month/day names in a different language. See internal-docs/i18n-plan.md.
-  function fmtTime(iso) { return BookingLogic.formatTime(iso, TZ, LOCALE); }
+  let clockFormat = (() => { try { const saved = localStorage.getItem('fp-clock-fmt'); if (saved === '12h' || saved === '24h') return saved; } catch (_) {} return t('clock_format') === '12h' ? '12h' : '24h'; })();
+  function fmtTime(iso) { return BookingLogic.formatTime(iso, TZ, LOCALE, clockFormat); }
+  document.querySelectorAll('[data-clock]').forEach(button => {
+    const sync = () => button.setAttribute('aria-pressed', String(button.dataset.clock === clockFormat));
+    sync();
+    button.addEventListener('click', () => {
+      clockFormat = button.dataset.clock;
+      try { localStorage.setItem('fp-clock-fmt', clockFormat); } catch (_) {}
+      document.querySelectorAll('[data-clock]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.clock === clockFormat)));
+      if (pickedDate) fillSlots($('slots-list'), toDateStr(pickedDate.getFullYear(), pickedDate.getMonth(), pickedDate.getDate()));
+    });
+  });
   function fmtDate(d) {
     return d.toLocaleDateString(LOCALE, { weekday: 'short', month: 'short', day: 'numeric' });
   }
@@ -713,7 +725,7 @@ body {
     const noticeHTML = noticeLine ? `<p class="hint notice-hint">${esc(noticeLine)}</p>` : '';
     // Shown whenever an external calendar check failed: the busy data behind this
     // list is incomplete, and booking stays fail-closed at commit time.
-    const degradedHTML = slotsDegraded ? `<p class="hint notice-hint">${esc(t('calendar_degraded_notice'))}</p>` : '';
+    const degradedHTML = slotsDegraded ? `<p class="hint calendar-warning">${esc(t('calendar_degraded_notice'))}</p>` : '';
     if (!slotsCache.length) {
       // Name the day, and the host when there is exactly one. A bare "No available times."
       // never told the visitor whether another day would help, which is the whole
@@ -871,6 +883,7 @@ body {
       const d = parseInt(btn.dataset.duration || '0', 10);
       if (!d || d === selectedDuration) return;
       selectedDuration = d;
+      $('summary-duration').textContent = `${d} min`;
       document.querySelectorAll('.dur-pill').forEach(b => b.classList.toggle('active', b === btn));
       pickedSlot = null;
       await loadMonthAvailability(navYear, navMonth);
@@ -1060,6 +1073,8 @@ body {
       }
 
       $('confirm-time').textContent = `${fmtDate(pickedDate)} · ${fmtTime(pickedSlot.start)}`;
+      const actions = BookingLogic.calendarActions({ title: EVENT_NAME, description: document.querySelector('.description')?.textContent || '', location: booked?.location_value || {{.LocationLabel}}, start: booked?.start_at || pickedSlot.start, end: booked?.end_at || pickedSlot.end, uid: booked?.id, manageURL: booked?.manage_url }, { title: t('add_to_calendar'), download: t('download_ics') });
+      document.querySelector('#confirm-view .confirm-view').appendChild(actions);
       if (booked && (booked.status === 'pending' || booked.pending_approval)) {
         const heading = document.querySelector('#confirm-view h2, #confirm-view .confirm-title');
         if (heading) heading.textContent = 'Booking request sent — awaiting host confirmation';

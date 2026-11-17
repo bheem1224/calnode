@@ -32,6 +32,8 @@ type managePageData struct {
 	Token            string
 	BookingID        string
 	EventTypeName    string
+	EventDescription string
+	CalendarLocation string
 	EventTypeSlug    string
 	HostName         string
 	HostInitial      string
@@ -99,18 +101,18 @@ func (h *Handler) ManagePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var etName, etSlug, locType, locValue, requireCancelReason string
+	var etName, etSlug, eventDescription, locType, locValue, requireCancelReason string
 	var durMins, maxDays, minNotice int
 	var disableCancel, disableReschedule, allowReschedulePast int
 	var hostName, accentColor string
 	if err := h.db.QueryRowContext(r.Context(), `
-		SELECT et.name, et.slug, et.duration_minutes, et.max_future_days, et.min_notice_minutes,
+		SELECT et.name, et.slug, COALESCE(et.description,''), et.duration_minutes, et.max_future_days, et.min_notice_minutes,
 		       et.location_type, COALESCE(et.location_value,''),
 		       et.disable_cancel, et.disable_reschedule, et.require_cancel_reason, et.allow_reschedule_past,
 		       u.name, u.booking_accent
 		FROM event_types et JOIN users u ON u.id = et.user_id
 		WHERE et.id = ?`, b.EventTypeID).
-		Scan(&etName, &etSlug, &durMins, &maxDays, &minNotice, &locType, &locValue,
+		Scan(&etName, &etSlug, &eventDescription, &durMins, &maxDays, &minNotice, &locType, &locValue,
 			&disableCancel, &disableReschedule, &requireCancelReason, &allowReschedulePast,
 			&hostName, &accentColor); err != nil {
 		h.logger.ErrorContext(r.Context(), "manage page: load event type", "error", err)
@@ -157,6 +159,8 @@ func (h *Handler) ManagePage(w http.ResponseWriter, r *http.Request) {
 		Token:               token,
 		BookingID:           b.ID,
 		EventTypeName:       etName,
+		EventDescription:    eventDescription,
+		CalendarLocation:    locValue,
 		EventTypeSlug:       etSlug,
 		HostName:            hostName,
 		HostInitial:         hostInitial,
@@ -300,9 +304,16 @@ func (h *Handler) RescheduleByToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.writeJSON(w, http.StatusOK, toBookingJSON(updated))
+	response := toBookingJSON(updated)
+	rotated, err := h.bookingSvc.RotateManageToken(r.Context(), updated.ID)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "reschedule: rotate manage token", "error", err)
+	} else {
+		response.ManageURL = h.publicURL() + "/manage/" + rotated
+	}
+	h.writeJSON(w, http.StatusOK, response)
 
-	go h.rescheduleSideEffects(*updated, b.EventTypeID, previousStart, previousEnd) // #nosec G118 -- deliberately its own context.Background(); see rescheduleSideEffects' doc comment
+	go h.rescheduleSideEffects(*updated, b.EventTypeID, previousStart, previousEnd, rotated) // #nosec G118 -- deliberately its own context.Background(); see rescheduleSideEffects' doc comment
 }
 
 // rescheduleSideEffects moves the calendar event(s) to the new time, rotates the
@@ -310,7 +321,7 @@ func (h *Handler) RescheduleByToken(w http.ResponseWriter, r *http.Request) {
 // reschedules reminders. Intended to run in its own goroutine; every failure is
 // logged, never fatal. Shared by the manage-link RescheduleByToken handler and the
 // MCP reschedule_booking tool.
-func (h *Handler) rescheduleSideEffects(bCopy booking.Booking, capturedEtID string, previousStart, previousEnd time.Time) {
+func (h *Handler) rescheduleSideEffects(bCopy booking.Booking, capturedEtID string, previousStart, previousEnd time.Time, rotatedToken ...string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -335,7 +346,9 @@ func (h *Handler) rescheduleSideEffects(bCopy booking.Booking, capturedEtID stri
 	h.rescheduleZoomMeeting(ctx, &bCopy)
 
 	// Rotate the token so the original confirmation-email link is invalidated.
-	if tok, err := h.bookingSvc.RotateManageToken(ctx, bCopy.ID); err == nil {
+	if len(rotatedToken) > 0 && rotatedToken[0] != "" {
+		d.ManageURL = h.publicURL() + "/manage/" + rotatedToken[0]
+	} else if tok, err := h.bookingSvc.RotateManageToken(ctx, bCopy.ID); err == nil {
 		d.ManageURL = h.publicURL() + "/manage/" + tok
 	}
 	h.applyInviteDelivery(ctx, &d, bCopy.InviteDelivery, bCopy.HostID)

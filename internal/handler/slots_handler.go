@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -78,12 +79,19 @@ func (h *Handler) GetSlots(w http.ResponseWriter, r *http.Request) {
 	}
 	// The public booking page is the one surface that may see taken slots, and only
 	// when the event type opted in; computeSlots enforces the second half.
+	token := r.URL.Query().Get("single_use_token")
+	if token == "" {
+		token = r.URL.Query().Get("token")
+	}
 	res, err := h.computeSlots(r.Context(), slug, tzName,
 		r.URL.Query().Get("from"), r.URL.Query().Get("to"),
-		slotsWanted{Taken: true, NoticeGap: true, SingleUseToken: r.URL.Query().Get("single_use_token"), DurationMinutes: reqDuration})
+		slotsWanted{Taken: true, NoticeGap: true, SingleUseToken: token, DurationMinutes: reqDuration})
 	switch {
 	case errors.Is(err, errEventTypeNotFound):
 		h.writeError(w, http.StatusNotFound, "event type not found")
+		return
+	case errors.Is(err, booking.ErrSingleUseTokenGone):
+		h.writeError(w, http.StatusGone, "single-use link expired or used")
 		return
 	case errors.Is(err, errInvalidTimezone):
 		h.writeError(w, http.StatusBadRequest, "invalid tz: "+tzName)
@@ -202,6 +210,10 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 	if err != nil {
 		return slotsResult{}, err
 	}
+	offered, err := h.adHocSlots(ctx, want.SingleUseToken, et.ID)
+	if err != nil {
+		return slotsResult{}, err
+	}
 	if want.DurationMinutes > 0 && want.DurationMinutes != et.DurationMinutes {
 		if !et.AllowMultipleDurations || !et.allowsDuration(want.DurationMinutes) {
 			return slotsResult{}, errInvalidDuration
@@ -259,6 +271,21 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 	// Calendar free/busy round-trip (one per host); fetching them in parallel turns
 	// N sequential network calls into ~one call's latency. The DB queries inside
 	// serialize on the single-connection pool (fast) — only the network overlaps.
+	// Custom intervals can extend beyond the requested calendar day. Query busy
+	// through their full end so an overnight offer cannot hide a later conflict.
+	busyDateFrom, busyDateTo := dateFrom, dateTo
+	if offered != nil {
+		busyDateFrom = dateFrom.Add(-24 * time.Hour)
+	}
+	for _, candidate := range offered {
+		day := candidate.StartAt.In(bookerTZ).Format("2006-01-02")
+		if day >= dateFrom.Format("2006-01-02") && day <= dateTo.Format("2006-01-02") {
+			endDay := candidate.EndAt.UTC().Truncate(24 * time.Hour)
+			if endDay.After(busyDateTo) {
+				busyDateTo = endDay
+			}
+		}
+	}
 	hostAvails := make([]slots.HostAvailability, len(pool))
 	errsByHost := make([]error, len(pool))
 	degradedByHost := make([]bool, len(pool))
@@ -267,7 +294,7 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 		wg.Add(1)
 		go func(i int, ph poolHost) {
 			defer wg.Done()
-			ha, degraded, err := h.hostAvailability(ctx, ph.id, et.ID, dateFrom, dateTo)
+			ha, degraded, err := h.hostAvailability(ctx, ph.id, et.ID, busyDateFrom, busyDateTo)
 			if err != nil {
 				errsByHost[i] = err
 				return
@@ -286,6 +313,52 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 	degraded := false
 	for _, d := range degradedByHost {
 		degraded = degraded || d
+	}
+
+	if offered != nil {
+		poolIDs := make([]string, 0, len(pool))
+		for _, ph := range pool {
+			poolIDs = append(poolIDs, ph.id)
+		}
+		res := slotsResult{Slots: []slotJSON{}, Hosts: h.hostDisplayMap(ctx, poolIDs), Degraded: degraded}
+		if degraded {
+			return res, nil
+		}
+		for _, candidate := range offered {
+			day := candidate.StartAt.In(bookerTZ).Format("2006-01-02")
+			if day < dateFrom.Format("2006-01-02") || day > dateTo.Format("2006-01-02") || candidate.StartAt.Before(now) || !booking.WithinFutureLimit(now, candidate.StartAt, booking.LoadLocationOrUTC(et.OwnerTimezone), et.FutureLimitMode, et.MaxFutureDays, et.FutureRangeStart, et.FutureRangeEnd) {
+				continue
+			}
+			var fixed, rotation []string
+			unavailable := false
+			for _, ha := range hostAvails {
+				free := true
+				for _, busy := range ha.Busy {
+					if candidate.StartAt.Add(-time.Duration(et.BufferAfterMinutes)*time.Minute).Before(busy.End) && busy.Start.Before(candidate.EndAt.Add(time.Duration(et.BufferBeforeMinutes)*time.Minute)) {
+						free = false
+						break
+					}
+				}
+				if ha.Role == "rotation" {
+					if free {
+						rotation = append(rotation, ha.HostID)
+					}
+				} else if !free {
+					unavailable = true
+				} else {
+					fixed = append(fixed, ha.HostID)
+				}
+			}
+			if unavailable || (et.RoutingMode == "round_robin" && len(rotation) == 0) {
+				continue
+			}
+			if et.RoutingMode == "round_robin" {
+				fixed = append(fixed, rotation[0])
+			}
+			res.Slots = append(res.Slots, slotJSON{Start: candidate.StartAt.UTC().Format(time.RFC3339), End: candidate.EndAt.UTC().Format(time.RFC3339), HostIDs: fixed})
+		}
+		sort.Slice(res.Slots, func(i, j int) bool { return res.Slots[i].Start < res.Slots[j].Start })
+		return res, nil
 	}
 
 	maxFutureDays := et.MaxFutureDays

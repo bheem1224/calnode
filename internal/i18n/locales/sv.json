@@ -168,5 +168,8 @@
   "directory_empty": "Inget att boka just nu.",
   "directory_members": "Teammedlemmar",
   "directory_person_subtitle": "Boka tid med %s",
-  "directory_team_subtitle": "Boka tid med %s-teamet"
+  "directory_team_subtitle": "Boka tid med %s-teamet",
+  "add_to_calendar": "Lägg till i kalendern",
+  "download_ics": "Ladda ner .ics",
+  "time_format": "Tidsformat"
 }

@@ -147,8 +147,8 @@ a,
 input,
 select,
 textarea {
-	transition-duration: 160ms;
-	transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+	transition-duration: 180ms;
+	transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
 }
 
 :focus-visible {
@@ -166,3 +166,5 @@ textarea {
 		scroll-behavior: auto !important;
 	}
 }
+
+button:not(:disabled):active { scale: 0.985; }
