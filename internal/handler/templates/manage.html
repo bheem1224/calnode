@@ -231,7 +231,14 @@ body {
       <div class="state-page">
         <div class="state-icon check" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
         <h2>{{call .T "booking_rescheduled_title"}}</h2>
-        <p>{{call .T "booking_rescheduled_prefix"}}<strong id="success-new-time"></strong>. {{call .T "confirmation_email_sent"}}</p>
+        <p>{{call .T "confirmation_email_sent"}}</p>
+        <div class="confirmation-details">
+          <strong>{{.EventTypeName}}</strong>
+          <p>{{.HostName}}</p>
+          <p id="success-new-time"></p>
+          <p id="success-timezone"></p>
+          <p>{{.LocationLabel}}</p>
+        </div>
       </div>
     </div>
 
@@ -332,6 +339,7 @@ body {
     TEXT_VIEWS.forEach(v => $(v).classList.toggle('hidden', v !== id));
     $('cal-col').classList.toggle('hidden', id !== 'reschedule-view');
     if (id !== 'reschedule-view' && card) card.classList.remove('m-rcal', 'm-rslots');
+    if (card) card.classList.toggle('is-success', id === 'success-reschedule-view');
   }
 
   $('current-time').textContent = fmtDatetime(CURRENT_ISO);
@@ -350,7 +358,7 @@ body {
     const lastDay = new Date(y, m + 1, 0).getDate();
     const to = toDateStr(y, m, lastDay);
     try {
-      const r = await fetch(`/v1/event-types/${SLUG}/slots?from=${from}&to=${to}&tz=${encodeURIComponent(TZ)}`);
+      const r = await fetch(`/v1/event-types/${SLUG}/slots?from=${from}&to=${to}&tz=${encodeURIComponent(TZ)}&duration={{.DurationMinutes}}`);
       if (!r.ok) throw new Error(r.status);
       const data = await r.json();
       // Cache the month's slots grouped by the SELECTED-timezone day (BookingLogic — tested,
@@ -527,7 +535,7 @@ body {
     // Fallback (clicked before the month load finished): fetch just this day.
     list.innerHTML = `<p class="hint">${t('loading')}</p>`;
     try {
-      const r = await fetch(`/v1/event-types/${SLUG}/slots?from=${ds}&to=${ds}&tz=${encodeURIComponent(TZ)}`);
+      const r = await fetch(`/v1/event-types/${SLUG}/slots?from=${ds}&to=${ds}&tz=${encodeURIComponent(TZ)}&duration={{.DurationMinutes}}`);
       if (!r.ok) throw new Error(r.status);
       const data = await r.json();
       ((data.min_notice && data.min_notice.dates) || []).forEach(k => noticeDates.add(k));
@@ -606,7 +614,8 @@ body {
         btn.disabled = false; btn.textContent = t('confirm_reschedule'); return;
       }
       const rescheduled = await r.json();
-      $('success-new-time').textContent = fmtDate(pickedDate) + ' · ' + fmtTime(pickedSlot.start);
+      $('success-new-time').textContent = fmtDate(pickedDate) + ' · ' + fmtTime(pickedSlot.start) + ' – ' + fmtTime(pickedSlot.end || new Date(Date.parse(pickedSlot.start) + {{.DurationMinutes}} * 60000).toISOString());
+      $('success-timezone').textContent = TZ.replace(/_/g, ' ');
       $('success-reschedule-view').querySelector('.state-page').appendChild(BookingLogic.calendarActions({ title: {{.EventTypeName}}, description: {{.EventDescription}}, location: {{.CalendarLocation}}, start: pickedSlot.start, end: pickedSlot.end || new Date(Date.parse(pickedSlot.start) + {{.DurationMinutes}} * 60000).toISOString(), uid: {{.BookingID}}, manageURL: rescheduled.manage_url || '' }, { title: t('add_to_calendar'), download: t('download_ics') }));
       showView('success-reschedule-view');
       if (window.__CALNODE_DL && typeof calnodePush === 'function') {

@@ -21,6 +21,8 @@ type bookingPreviewRequest struct {
 	Date      string          `json:"date,omitempty"`
 	Timezone  string          `json:"timezone,omitempty"`
 	Notice    string          `json:"notice,omitempty"`
+	Duration  int             `json:"duration,omitempty"`
+	Slot      string          `json:"slot,omitempty"`
 }
 
 type previewHost struct {
@@ -235,6 +237,7 @@ func (h *Handler) previewCSP(r *http.Request, slug string) string {
 func (p *bookingPreview) configJSON(slug string) template.JS {
 	config, _ := json.Marshal(map[string]any{
 		"draft": p.Request, "mode": p.Request.Mode, "date": p.Request.Date, "timezone": p.Request.Timezone,
+		"duration": p.Request.Duration, "slot": p.Request.Slot,
 		"slotsURL": "/v1/event-types/" + url.PathEscape(slug) + "/preview/slots",
 	})
 	return template.JS(config) // #nosec G203 -- json.Marshal escapes HTML-sensitive characters.

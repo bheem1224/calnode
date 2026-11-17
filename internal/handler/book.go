@@ -149,6 +149,7 @@ type bookPageData struct {
 	Name             string
 	Description      template.HTML
 	DurationLabel    string
+	DurationText     func(int) string
 	DurationMinutes  int
 	HostName         string
 	HostInitial      string
@@ -780,6 +781,7 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		Name:                name,
 		Description:         renderMarkdown(description),
 		DurationLabel:       durationLabel(durMins, loc),
+		DurationText:        func(minutes int) string { return durationLabel(minutes, loc) },
 		DurationMinutes:     durMins,
 		HostName:            hosts[0].Name,
 		HostInitial:         hosts[0].Initial,

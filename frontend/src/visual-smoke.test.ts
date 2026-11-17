@@ -55,6 +55,21 @@ describe('email template modal layout', () => {
 });
 
 describe('booking preview sizing', () => {
+	test.each([
+		{ mode: 'form' as const, maxWidth: 720 },
+		{ mode: 'confirmation' as const, maxWidth: 520 },
+	])('keeps the $mode step compact on a wide editor', async ({ mode, maxWidth }) => {
+		const submit = vi.spyOn(HTMLFormElement.prototype, 'requestSubmit').mockImplementation(() => {});
+		const { container } = await render(BookingPreviewCard, { props: { slug: 'preview-event', draft: {}, mode } });
+		container.style.width = '1100px';
+		await expect.poll(() => submit.mock.calls.length).toBeGreaterThan(0);
+		const frame = container.querySelector('iframe')!;
+		const bounds = frame.getBoundingClientRect();
+		expect(bounds.width).toBeLessThanOrEqual(maxWidth);
+		expect(bounds.width).toBeGreaterThan(maxWidth - 4);
+		expect(frame.parentElement!.scrollWidth).toBeLessThanOrEqual(maxWidth);
+	});
+
 	test.each([440, 612])('scales the public document inside a %ipx preview', async (width) => {
 		vi.spyOn(HTMLFormElement.prototype, 'requestSubmit').mockImplementation(() => {});
 		const { container } = await render(BookingPreviewCard, { props: { slug: 'preview-event', draft: { event_type: { name: 'Unsaved name', slot_interval_minutes: 45 } } } });

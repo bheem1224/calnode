@@ -24,7 +24,10 @@
   let mounted = $state(false);
   let lastDate = '';
   let lastTimezone = '';
-  const frameWidth = $derived(Math.max(1, minWidth, width));
+  let lastDuration = 0;
+  let lastSlot = '';
+  const stageWidth = $derived(mode === 'confirmation' ? 520 : mode === 'form' ? 720 : 860);
+  const frameWidth = $derived(Math.max(1, Math.min(minWidth, stageWidth), width));
   const scale = $derived(width / frameWidth);
   const action = $derived(`/v1/event-types/${encodeURIComponent(slug)}/preview?lang=${$locale}`);
 
@@ -35,12 +38,12 @@
   // Draft changes reload the public document. Tab/theme switches use messages,
   // preserving the selected date while moving between calendar and form views.
   $effect(() => {
-    if (!mounted || width === 0) return;
+    if (!mounted) return;
     const settings = JSON.stringify(draft);
     const notice = $t('bookingPreview.readOnly');
     void action;
     const timer = setTimeout(async () => {
-      payload = JSON.stringify({ ...JSON.parse(settings), notice, mode: untrack(() => mode), date: lastDate, timezone: lastTimezone });
+      payload = JSON.stringify({ ...JSON.parse(settings), notice, mode: untrack(() => mode), date: lastDate, timezone: lastTimezone, duration: lastDuration, slot: lastSlot });
       loading = true;
       error = '';
       // Start with a new initial frame so each POST replaces its about:blank
@@ -55,6 +58,7 @@
   $effect(() => {
     void mode;
     void theme.resolved;
+    void frameWidth;
     if (mounted) sendView();
   });
 
@@ -88,6 +92,8 @@
       } else if (event.data?.type === 'calnode-preview-state') {
         if (/^\d{4}-\d{2}-\d{2}$/.test(event.data.date)) lastDate = event.data.date;
         if (typeof event.data.timezone === 'string') lastTimezone = event.data.timezone;
+        if (Number.isInteger(event.data.duration) && event.data.duration > 0) lastDuration = event.data.duration;
+        if (typeof event.data.slot === 'string') lastSlot = event.data.slot;
       }
     };
     window.addEventListener('message', receive);
@@ -100,7 +106,7 @@
   });
 </script>
 
-<div class="w-full overflow-hidden rounded-xl border bg-card shadow-sm" bind:this={container}>
+<div class="mx-auto w-full overflow-hidden rounded-xl border bg-card shadow-sm" style:max-width={`${stageWidth}px`} bind:this={container}>
   <div class="flex items-center justify-between gap-2 border-b bg-muted/30 px-4 py-2">
     <span class="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{$t('bookingPreview.title')}</span>
     <span class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">

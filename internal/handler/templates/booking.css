@@ -248,7 +248,11 @@ html.dark .tz-opt.active,
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: transparent;
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
 }
+.dur-picker[hidden] { display: none; }
 .dur-pill {
   border: none;
   background: transparent;
@@ -1029,3 +1033,36 @@ html.dark .clock-format button[aria-pressed="true"], :host-context(.dark) .clock
 /* Keep the fixed theme control clear of the optional demo notice. */
 body:has(.fp-theme-switcher) .demo-banner { margin-top: 2.5rem; }
 html.dark .calendar-actions-row a, html.dark .calendar-actions-row button, :host-context(.dark) .calendar-actions-row a, :host-context(.dark) .calendar-actions-row button { background: #22242a; color: #f4f4f5; border-color: #3f3f46; }
+
+/* The details form is a compact two-pane step; success is a single summary. */
+.card.is-confirm:not(.is-success) { max-width: 720px; margin-inline: auto; }
+.card.is-confirm:not(.is-success) .info { width: 220px; padding: 1.5rem; }
+.card.is-confirm:not(.is-success) .right-col { padding: 1.5rem; }
+.card.is-success { max-width: 520px; min-height: 0; margin-inline: auto; }
+.card.is-confirm.is-success, .card.manage-card.is-success { min-height: 0; }
+.card.is-success .info, .card.is-success .cal-col { display: none; }
+.card.is-success .right-col { display: block; width: 100%; max-width: none; flex: 1; padding: 2rem; opacity: 1; }
+.is-success #confirm-view { min-width: 0; }
+.is-success .confirm-icon, .is-success .state-icon { margin: 0 auto 1rem; }
+.is-success .confirm-view, .is-success .state-page { text-align: center; }
+.is-success .state-page { min-height: 0; padding: 0; width: 100%; }
+.is-success .confirm-view h3, .is-success .state-page h2 { font-size: 1.25rem; line-height: 1.4; }
+.is-success .sub, .is-success .state-page > p { line-height: 1.6; }
+.confirmation-details { margin-top: 1.5rem; padding: 1.25rem; border: 1px solid #e5e7eb; border-radius: 10px; text-align: left; display: grid; gap: .5rem; width: 100%; overflow-wrap: anywhere; }
+.confirmation-details strong { font-size: .875rem; line-height: 1.5; }
+.confirmation-details p, .confirm-view .confirmation-details .when { font-size: .8125rem; line-height: 1.5; margin: 0; color: #6b7280; }
+.confirmation-details p:empty, .confirmation-details:not(:has(strong:not(:empty))) { display: none; }
+.confirmation-manage { display: inline-block; margin-top: 1.25rem; font-size: .75rem; color: inherit; text-underline-offset: 3px; }
+.is-success .calendar-actions { width: 100%; padding-top: 1.25rem; border-top: 1px solid #e5e7eb; }
+.is-success .calendar-actions-row { justify-content: center; }
+.is-success .calendar-actions > p { text-align: center; }
+.calendar-actions-row button:disabled { cursor: default; opacity: .6; }
+html.dark .confirmation-details, html.dark .is-success .calendar-actions,
+:host-context(.dark) .confirmation-details, :host-context(.dark) .is-success .calendar-actions { border-color: #272930; }
+html.dark .confirmation-details p, html.dark .confirm-view .confirmation-details .when,
+:host-context(.dark) .confirmation-details p, :host-context(.dark) .confirm-view .confirmation-details .when { color: #a1a1aa; }
+@media (max-width: 700px) {
+  .card.is-confirm:not(.is-success) .info { width: 100%; padding: 1.25rem 1rem; }
+  .card.is-confirm:not(.is-success) .right-col { padding: 1.25rem 1rem; }
+  .card.is-success .right-col { padding: 1.5rem; flex: 0 0 auto; }
+}

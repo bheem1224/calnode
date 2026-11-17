@@ -201,6 +201,10 @@ func TestRescheduleByToken_success(t *testing.T) {
 	slug, _ := seedEventTypeHTTP(t, h, apiKey)
 
 	bookingID := createBookingViaHTTP(t, h, slug, "2026-06-20T09:00:00Z")
+	// Changing the event default must not shorten the already-booked meeting.
+	if _, err := database.Exec(`UPDATE event_types SET duration_minutes = 15, allow_multiple_durations = 1, duration_options = '[15,30]' WHERE slug = ?`, slug); err != nil {
+		t.Fatal(err)
+	}
 	tok := issueTestToken(t, database, bookingID)
 
 	body := `{"start_at":"2026-06-20T10:00:00Z"}`
@@ -215,6 +219,7 @@ func TestRescheduleByToken_success(t *testing.T) {
 	}
 	var resp struct {
 		StartAt string `json:"start_at"`
+		EndAt   string `json:"end_at"`
 		Status  string `json:"status"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -225,6 +230,9 @@ func TestRescheduleByToken_success(t *testing.T) {
 	}
 	if resp.Status != "confirmed" {
 		t.Errorf("status = %q; want confirmed", resp.Status)
+	}
+	if !strings.HasPrefix(resp.EndAt, "2026-06-20T10:30:00") {
+		t.Errorf("end_at = %q; want original 30-minute duration", resp.EndAt)
 	}
 }
 

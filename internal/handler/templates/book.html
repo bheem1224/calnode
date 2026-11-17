@@ -83,7 +83,7 @@ body {
 <meta name="robots" content="noindex,nofollow">
 <style>
   html body { min-height: 0; padding: 0; gap: 0; background: transparent; }
-  .card, .card.has-day, .card.is-confirm { min-height: 0; max-width: none; border-radius: 0; box-shadow: none; }
+  .card, .card.has-day, .card.is-confirm { min-height: 0; border-radius: 0; box-shadow: none; }
 </style>
 {{end}}
 </head>
@@ -157,7 +157,7 @@ body {
     {{if and .AllowMultipleDurations (gt (len .DurationOptions) 1)}}
     <div id="duration-picker" class="dur-picker">
       {{range .DurationOptions}}
-      <button type="button" class="dur-pill{{if eq . $.DurationMinutes}} active{{end}}" data-duration="{{.}}">{{.}}m</button>
+      <button type="button" class="dur-pill{{if eq . $.DurationMinutes}} active{{end}}" data-duration="{{.}}" data-duration-label="{{call $.DurationText .}}">{{.}}m</button>
       {{end}}
     </div>
     {{end}}
@@ -387,8 +387,16 @@ body {
       </div>
       <div class="confirm-view">
         <h3>{{call .T "booking_confirmed"}}</h3>
-        <p class="when" id="confirm-time"></p>
         <p class="sub">{{if .Preview}}{{.PreviewNotice}}{{else}}{{call .T "confirmation_email_sent"}}{{end}}</p>
+        <div class="confirmation-details">
+          <strong id="confirm-event"></strong>
+          <p id="confirm-host"></p>
+          <p class="when" id="confirm-time"></p>
+          <p id="confirm-zone"></p>
+          <p id="confirm-location"></p>
+          <p id="confirm-attendee"></p>
+        </div>
+        <div id="confirm-actions"></div>
       </div>
     </div>
 
@@ -413,6 +421,8 @@ body {
   const REDIRECT_URL     = "{{.RedirectURL}}";
   const REQUIRE_EMAIL_VERIFY = {{if .RequireEmailVerification}}true{{else}}false{{end}};
   let selectedDuration = {{.DurationMinutes}};
+  if (PREVIEW?.duration && (PREVIEW.duration === selectedDuration || [...document.querySelectorAll('.dur-pill')].some(button => Number(button.dataset.duration) === PREVIEW.duration))) selectedDuration = PREVIEW.duration;
+  let previewPickedStart = PREVIEW?.slot || '';
   let verificationToken = '';
   let verifiedEmail = '';
   const MAX_DAYS = {{.MaxFutureDays}};
@@ -449,6 +459,14 @@ body {
 
   const $ = id => document.getElementById(id);
   const pad = n => String(n).padStart(2, '0');
+  if (PREVIEW) {
+    const selectedPill = document.querySelector(`.dur-pill[data-duration="${selectedDuration}"]`);
+    if (selectedPill) $('summary-duration').textContent = selectedPill.dataset.durationLabel;
+    document.querySelectorAll('.dur-pill').forEach(button => button.classList.toggle('active', Number(button.dataset.duration) === selectedDuration));
+  }
+  function sendPreviewState() {
+    if (PREVIEW && pickedDate) window.parent.postMessage({ type: 'calnode-preview-state', date: toDateStr(pickedDate.getFullYear(), pickedDate.getMonth(), pickedDate.getDate()), timezone: TZ, duration: selectedDuration, slot: previewPickedStart }, window.location.origin);
+  }
 
   // ── Host faces ──────────────────────────────────────────────────────────────
   // hostMeta maps host id → {name, avatar_url}, accumulated from /slots responses.
@@ -531,6 +549,29 @@ body {
     if (cardEl) {
       cardEl.classList.add('has-day');
       cardEl.classList.toggle('is-confirm', id === 'form-view' || id === 'confirm-view');
+      cardEl.classList.toggle('is-success', id === 'confirm-view');
+    }
+    const locked = id !== 'slots-view';
+    if ($('duration-picker')) $('duration-picker').hidden = locked;
+    document.querySelectorAll('.dur-pill').forEach(button => { button.disabled = locked; });
+  }
+
+  function renderConfirmation(booked = null) {
+    $('confirm-event').textContent = EVENT_NAME;
+    $('confirm-host').textContent = document.querySelector('.host-name')?.textContent || '';
+    const start = booked?.start_at || pickedSlot?.start;
+    const end = booked?.end_at || pickedSlot?.end;
+    $('confirm-time').textContent = start ? `${BookingLogic.formatDay(start, TZ, 'long', LOCALE)} · ${fmtTime(start)}${end ? ' – ' + fmtTime(end) : ''}` : '';
+    $('confirm-zone').textContent = TZ.replace(/_/g, ' ');
+    $('confirm-location').textContent = booked?.location_value || {{.LocationLabel}};
+    $('confirm-attendee').textContent = [$('f-name')?.value, $('f-email')?.value].filter(Boolean).join(' · ');
+    const actions = $('confirm-actions');
+    actions.replaceChildren();
+    if (start && end) actions.appendChild(BookingLogic.calendarActions({ title: EVENT_NAME, description: document.querySelector('.description')?.textContent || '', location: booked?.location_value || {{.LocationLabel}}, start, end, uid: booked?.id, manageURL: booked?.manage_url }, { title: t('add_to_calendar'), download: t('download_ics'), disabled: !!PREVIEW }));
+    if (!PREVIEW && booked?.manage_url) {
+      const link = document.createElement('a');
+      link.className = 'confirmation-manage'; link.href = booked.manage_url; link.textContent = `${t('reschedule')} / ${t('cancel_booking')}`;
+      actions.appendChild(link);
     }
   }
 
@@ -791,7 +832,7 @@ body {
   async function pickDate(ds, y, m, d) {
     pickedDate = new Date(y, m, d);
     pickedSlot = null;
-    if (PREVIEW) window.parent.postMessage({ type: 'calnode-preview-state', date: ds, timezone: TZ }, window.location.origin);
+    sendPreviewState();
     restoreDefaultHosts();
     renderCal();
     $('empty-hint').classList.add('hidden');
@@ -841,6 +882,8 @@ body {
     if (i < 0 || i >= slotsCache.length) return;
     if (slotsCache[i].taken) return; // never bookable, whatever route got us here
     pickedSlot = slotsCache[i];
+    previewPickedStart = pickedSlot.start;
+    sendPreviewState();
     renderHosts(pickedSlot.host_ids);
     document.querySelectorAll('.slot-btn').forEach(b =>
       b.classList.toggle('sel', Number(b.dataset.i) === i)
@@ -906,10 +949,12 @@ body {
 
   document.querySelectorAll('.dur-pill').forEach(btn => {
     btn.addEventListener('click', async () => {
+      if (!$('form-view').classList.contains('hidden') || !$('confirm-view').classList.contains('hidden')) return;
       const d = parseInt(btn.dataset.duration || '0', 10);
       if (!d || d === selectedDuration) return;
       selectedDuration = d;
-      $('summary-duration').textContent = `${d} min`;
+      previewPickedStart = '';
+      $('summary-duration').textContent = btn.dataset.durationLabel;
       document.querySelectorAll('.dur-pill').forEach(b => b.classList.toggle('active', b === btn));
       pickedSlot = null;
       await loadMonthAvailability(navYear, navMonth);
@@ -1099,11 +1144,9 @@ body {
         renderHosts(booked.hosts.map(h => h.id));
       }
 
-      $('confirm-time').textContent = `${fmtDate(pickedDate)} · ${fmtTime(pickedSlot.start)}`;
-      const actions = BookingLogic.calendarActions({ title: EVENT_NAME, description: document.querySelector('.description')?.textContent || '', location: booked?.location_value || {{.LocationLabel}}, start: booked?.start_at || pickedSlot.start, end: booked?.end_at || pickedSlot.end, uid: booked?.id, manageURL: booked?.manage_url }, { title: t('add_to_calendar'), download: t('download_ics') });
-      document.querySelector('#confirm-view .confirm-view').appendChild(actions);
+      renderConfirmation(booked);
       if (booked && (booked.status === 'pending' || booked.pending_approval)) {
-        const heading = document.querySelector('#confirm-view h2, #confirm-view .confirm-title');
+        const heading = document.querySelector('#confirm-view h3');
         if (heading) heading.textContent = 'Booking request sent — awaiting host confirmation';
       }
       showView('confirm-view');
@@ -1308,11 +1351,12 @@ body {
       slotsCache = []; pickedSlot = null;
     }
     if (previewMode === 'form' || previewMode === 'confirmation') {
-      const first = slotsCache.findIndex(s => !s.taken);
+      const remembered = slotsCache.findIndex(s => !s.taken && s.start === previewPickedStart);
+      const first = remembered >= 0 ? remembered : slotsCache.findIndex(s => !s.taken);
       if (first >= 0) pickSlot(first);
       else { $('form-slot-label').textContent = ''; showView('form-view'); }
       if (previewMode === 'confirmation') {
-        $('confirm-time').textContent = pickedSlot ? `${fmtDate(pickedDate)} · ${fmtTime(pickedSlot.start)}` : '';
+        renderConfirmation();
         showView('confirm-view');
       }
     } else {

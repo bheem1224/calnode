@@ -148,11 +148,12 @@
     var stamp = function (d) { return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, ''); };
     var details = [data.description, data.manageURL].filter(Boolean).join('\n\n');
     function link(label, base, params) {
+      if (labels.disabled) { var button = document.createElement('button'); button.type = 'button'; button.textContent = label; button.disabled = true; row.appendChild(button); return; }
       var a = document.createElement('a'); a.textContent = label; a.href = base + new URLSearchParams(params); a.target = '_blank'; a.rel = 'noopener noreferrer'; row.appendChild(a);
     }
     link('Google Calendar', 'https://calendar.google.com/calendar/render?', { action: 'TEMPLATE', text: data.title, dates: stamp(start) + '/' + stamp(end), details: details, location: data.location || '' });
     link('Outlook', 'https://outlook.office.com/calendar/0/action/compose?', { rru: 'addevent', subject: data.title, startdt: start.toISOString(), enddt: end.toISOString(), body: details, location: data.location || '' });
-    var download = document.createElement('button'); download.type = 'button'; download.textContent = labels.download;
+    var download = document.createElement('button'); download.type = 'button'; download.textContent = labels.download; download.disabled = !!labels.disabled;
     download.addEventListener('click', function () {
       var escape = function (v) { return String(v || '').replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;'); };
       // Fold at 75 UTF-8 octets, without splitting a Unicode code point.

@@ -700,13 +700,23 @@
     }
 
     confirmView(slot) {
+      var start = (this.booked && this.booked.start_at) || slot.start;
+      var end = (this.booked && this.booked.end_at) || slot.end;
+      var format = this.clockOverride || clockFormat(this.i18n);
       return el('div', {}, [
         el('div', { class: 'confirm-icon', html: SVG_CHECK }),
         el('div', { class: 'confirm-view' }, [
           el('h3', { text: t(this.i18n, 'booking_confirmed') }),
-          el('p', { class: 'when', text: shortDay(slot.start, this.locale) + ' · ' + timeLabel(slot.start, this.locale, (this.clockOverride || clockFormat(this.i18n))) }),
           el('p', { class: 'sub', text: t(this.i18n, 'confirmation_email_sent') }),
+          el('div', { class: 'confirmation-details' }, [
+            el('strong', { text: this.info.name }),
+            el('p', { text: hostsLabel((this.booked && this.booked.hosts) || this.info.hosts || [], this.i18n) }),
+            el('p', { class: 'when', text: shortDay(start, this.locale) + ' · ' + timeLabel(start, this.locale, format) + (end ? ' – ' + timeLabel(end, this.locale, format) : '') }),
+            el('p', { text: TZ.replace(/_/g, ' ') }),
+            el('p', { text: (this.booked && this.booked.location_value) || this.info.location_label || '' }),
+          ]),
           calendarActions({ title: this.info.name, description: this.info.description, location: (this.booked && this.booked.location_value) || this.info.location_label, start: (this.booked && this.booked.start_at) || slot.start, end: (this.booked && this.booked.end_at) || slot.end, uid: this.booked && this.booked.id, manageURL: this.booked && this.booked.manage_url }, { title: t(this.i18n, 'add_to_calendar'), download: t(this.i18n, 'download_ics') }),
+          this.booked && this.booked.manage_url ? el('a', { class: 'confirmation-manage', href: this.booked.manage_url, target: '_blank', rel: 'noopener noreferrer', text: t(this.i18n, 'reschedule') + ' / ' + t(this.i18n, 'cancel_booking') }) : null,
         ]),
       ]);
     }
@@ -721,8 +731,10 @@
     // applyStep toggles which panes show when narrow (step-flow). Wide = all visible.
     applyStep() {
       if (!this.card) return;
-      this.card.classList.remove('step', 'step-cal', 'step-right', 'has-day', 'is-confirm');
+      this.card.classList.remove('step', 'step-cal', 'step-right', 'has-day', 'is-confirm', 'is-success');
       if (this.state.view === 'confirm') {
+        this.card.classList.add('is-confirm', 'is-success');
+      } else if (this.state.view === 'form') {
         this.card.classList.add('is-confirm');
       } else if (this.state.day || this.state.view === 'form') {
         this.card.classList.add('has-day');

@@ -120,6 +120,10 @@ func (h *Handler) ManagePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accentColor = accentOrDefault(accentColor)
+	// A chosen duration belongs to the booking, even if the event's default changes.
+	if bookedMinutes := int(b.EndAt.Sub(b.StartAt) / time.Minute); bookedMinutes > 0 {
+		durMins = bookedMinutes
+	}
 
 	if b.LocationType != "" {
 		locType = b.LocationType
@@ -269,7 +273,11 @@ func (h *Handler) RescheduleByToken(w http.ResponseWriter, r *http.Request) {
 
 	previousStart := b.StartAt
 	previousEnd := b.EndAt
-	newEnd := newStart.Add(time.Duration(durMins) * time.Minute)
+	length := b.EndAt.Sub(b.StartAt)
+	if length <= 0 {
+		length = time.Duration(durMins) * time.Minute
+	}
+	newEnd := newStart.Add(length)
 
 	if err := h.validateRescheduleTime(r.Context(), b.ID, b.EventTypeID, b.HostID, newStart, newEnd); err != nil {
 		if errors.Is(err, errSlotUnavailable) {
