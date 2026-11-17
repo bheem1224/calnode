@@ -9,6 +9,7 @@
 	import { theme, type ThemeMode } from '$lib/theme.svelte';
 	import { t } from '$lib/i18n';
 	import { Toaster } from '$lib/components/ui/sonner';
+	import { toast } from 'svelte-sonner';
 	import { buttonVariants } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import DemoBanner from '$lib/components/demo-banner.svelte';
@@ -386,8 +387,40 @@
 			</nav>
 
 			<!-- Footer -->
-			<div class="border-t border-sidebar-border p-2">
-				<div class="mb-2 px-1" role="radiogroup" aria-label="Theme">
+			<div class="border-t border-sidebar-border p-2 space-y-1">
+				{#if $currentUser}
+					{@const myHandle = $currentUser.handle || $currentUser.email.split('@')[0]}
+					{@const myBookingUrl = `/u/${myHandle}`}
+					<div class="flex items-center gap-1 {isCompactNav && !sidebarHovered ? 'md:justify-center' : ''}">
+						<a
+							href={myBookingUrl}
+							target="_blank"
+							rel="noopener noreferrer"
+							title="Open my booking page"
+							class="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-sidebar-foreground/75 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground {isCompactNav && !sidebarHovered ? 'md:flex-none md:justify-center md:px-2' : ''}"
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+								<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+							</svg>
+							<span class="truncate {isCompactNav && !sidebarHovered ? 'md:hidden' : ''}">My booking page</span>
+						</a>
+						<button
+							type="button"
+							title="Copy my booking page link"
+							aria-label="Copy my booking page link"
+							onclick={() => {
+								const full = `${window.location.origin}${myBookingUrl}`;
+								navigator.clipboard?.writeText(full);
+								toast.success(`Copied ${full}`);
+							}}
+							class="shrink-0 rounded-md p-1.5 text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground {isCompactNav && !sidebarHovered ? 'md:hidden' : ''}"
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+						</button>
+					</div>
+				{/if}
+
+				<div class="mb-1 px-1 {isCompactNav && !sidebarHovered ? 'md:hidden' : ''}" role="radiogroup" aria-label="Theme">
 					<div class="grid grid-cols-3 gap-0.5 rounded-md border border-sidebar-border bg-sidebar-accent/40 p-0.5">
 						{#each (['light', 'dark', 'system'] as ThemeMode[]) as modeOption}
 							<button
@@ -417,34 +450,26 @@
 						sidebarOpen = false;
 						reportOpen = true;
 					}}
-					class="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-sidebar-foreground/45 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground/70"
+					title={$t('layout.reportIssue')}
+					class="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-sidebar-foreground/45 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground/70 {isCompactNav && !sidebarHovered ? 'md:justify-center md:px-0' : ''}"
 				>
 					<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
 						<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
 					</svg>
-					{$t('layout.reportIssue')}
+					<span class="truncate {isCompactNav && !sidebarHovered ? 'md:hidden' : ''}">{$t('layout.reportIssue')}</span>
 				</button>
 				<button
 					onclick={logout}
-					class="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+					title={$t('layout.signOut')}
+					class="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground {isCompactNav && !sidebarHovered ? 'md:justify-center md:px-0' : ''}"
 				>
 					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
 						<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
 						<polyline points="16 17 21 12 16 7"/>
 						<line x1="21" y1="12" x2="9" y2="12"/>
 					</svg>
-					{$t('layout.signOut')}
+					<span class="truncate {isCompactNav && !sidebarHovered ? 'md:hidden' : ''}">{$t('layout.signOut')}</span>
 				</button>
-				{#if version}
-					<a
-						href={RELEASES_URL}
-						target="_blank"
-						rel="noopener noreferrer"
-						class="mt-1 block px-2.5 py-1 text-xs text-sidebar-foreground/35 transition-colors hover:text-sidebar-foreground/60"
-					>
-						{version}
-					</a>
-				{/if}
 			</div>
 		</aside>
 

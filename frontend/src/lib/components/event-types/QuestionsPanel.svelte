@@ -62,6 +62,22 @@
   });
   let qAdding = $state(false);
   let addQOpen = $state(false);
+  let identifierTouched = $state(false);
+
+  function slugifyIdentifier(label: string): string {
+    const words = label
+      .trim()
+      .replace(/[^a-zA-Z0-9\s]+/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (words.length === 0) return "";
+    return words
+      .map((w, i) =>
+        i === 0 ? w.toLowerCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+      )
+      .join("");
+  }
 
   let editingQId = $state<string | null>(null);
   let deleteQOpen = $state(false);
@@ -862,6 +878,11 @@
         <Input
           id="q-label"
           bind:value={qForm.label}
+          oninput={() => {
+            if (!identifierTouched) {
+              qForm.identifier = slugifyIdentifier(qForm.label);
+            }
+          }}
           placeholder={$t("eventTypeEditor.questions.labelPlaceholder")}
         />
       </div>
@@ -883,6 +904,9 @@
         <Input
           id="q-identifier"
           bind:value={qForm.identifier}
+          oninput={() => {
+            identifierTouched = qForm.identifier.trim().length > 0;
+          }}
           placeholder={$t("eventTypeEditor.questions.identifierPlaceholder")}
         />
       </div>

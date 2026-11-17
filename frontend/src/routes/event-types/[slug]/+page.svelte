@@ -110,6 +110,16 @@
   let unsavedOpen = $state(false);
   let pendingNavHref = $state("");
   let allowNav = $state(false);
+  let calTitleModalOpen = $state(false);
+  const CAL_TITLE_VARS = [
+    { token: "{Event}", desc: "The event type title" },
+    { token: "{Duration}", desc: "The event duration" },
+    { token: "{Host}", desc: "Your full name" },
+    { token: "{HostFirst}", desc: "Your first name" },
+    { token: "{Scheduler}", desc: "The full name of the person booking" },
+    { token: "{SchedulerFirst}", desc: "The first name of the person booking" },
+    { token: "{Location}", desc: "The location of the event" },
+  ];
 
   // Connected calendar (the owner's) — drives the meeting-link auto-generation hint.
   // Only fetched when the viewer owns the event type: the status endpoints describe the
@@ -733,7 +743,7 @@
         future_limit_mode: et.future_limit_mode ?? "calendar_days",
         future_range_start: et.future_range_start ?? "",
         future_range_end: et.future_range_end ?? "",
-        calendar_event_title: et.calendar_event_title ?? "",
+        calendar_event_title: et.calendar_event_title || "{Event} between {Host} and {Scheduler}",
         redirect_url: et.redirect_url ?? "",
         reply_to: et.reply_to ?? "",
         disable_cancel: !!et.disable_cancel,
@@ -1203,6 +1213,15 @@
           >
           <Switch bind:checked={form.is_active} />
         </div>
+        <div
+          class="flex items-center gap-2 rounded-md border bg-card px-2.5 py-1"
+          title="Show on your public profile directory (direct link always works while Active)"
+        >
+          <span class="text-xs text-muted-foreground"
+            >{form.is_public ? "Public" : "Hidden"}</span
+          >
+          <Switch bind:checked={form.is_public} />
+        </div>
         <Button
           variant="ghost"
           size="icon"
@@ -1652,22 +1671,6 @@
                   class="resize-y"
                 />
               </div>
-              <div
-                class="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 min-w-0"
-              >
-                <Label for="is-active" class="cursor-pointer font-normal"
-                  >{$t("eventTypeEditor.general.active")}</Label
-                >
-                <Switch id="is-active" bind:checked={form.is_active} />
-              </div>
-              <div
-                class="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 min-w-0"
-              >
-                <Label for="is-public" class="cursor-pointer font-normal"
-                  >{$t("eventTypeEditor.general.public")}</Label
-                >
-                <Switch id="is-public" bind:checked={form.is_public} />
-              </div>
             </div>
 
             <div class="mt-4">
@@ -1853,9 +1856,9 @@
               </div>
             </div>
 
-            <!-- Calendar invites -->
+            <!-- Additional location options -->
             <div class="mt-6 border-t pt-5">
-              <div class="mt-4 space-y-2 border-t pt-4">
+              <div class="space-y-2">
                 <div class="flex items-center justify-between gap-2">
                   <div>
                     <Label>{$t("eventTypeEditor.location.multiOptionsTitle")}</Label>
@@ -3431,9 +3434,20 @@
           <div class="rounded-lg border bg-card p-6 space-y-4">
             <h3 class="text-sm font-semibold">{$t("eventTypeEditor.overrides.title")}</h3>
             <div class="space-y-1.5">
-              <div class="flex items-center gap-1.5">
-                <Label for="et-cal-title">{$t("eventTypeEditor.overrides.calendarTitle")}</Label>
-                {@render infoTip($t("eventTypeEditor.overrides.calendarTitleHint"))}
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5">
+                  <Label for="et-cal-title">{$t("eventTypeEditor.overrides.calendarTitle")}</Label>
+                  {@render infoTip($t("eventTypeEditor.overrides.calendarTitleHint"))}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  class="h-7 px-2 text-xs"
+                  onclick={() => (calTitleModalOpen = true)}
+                >
+                  &#123; &#125; Variables &amp; preview
+                </Button>
               </div>
               <Input
                 id="et-cal-title"
@@ -3479,8 +3493,8 @@
       {/if}
     </div>
 
-    <!-- Live Interactive Booking Preview (Right, vertically centered, hidden on < 1280px) -->
-    <aside class="hidden w-full min-w-[380px] max-w-[520px] justify-self-center xl:sticky xl:top-6 xl:flex xl:min-h-[calc(100vh-9rem)] xl:items-center xl:justify-center">
+    <!-- Live Interactive Booking Preview (Right, vertically centered, scales with viewport, hidden on < 1280px) -->
+    <aside class="hidden w-full min-w-[380px] max-w-[680px] justify-self-center xl:sticky xl:top-6 xl:flex xl:min-h-[calc(100vh-9rem)] xl:items-center xl:justify-center">
       <div class="w-full">
         <BookingPreviewCard
           name={form.name}
@@ -3501,6 +3515,68 @@
       </div>
     </aside>
   </div>
+
+  <Dialog.Root bind:open={calTitleModalOpen}>
+    <Dialog.Content class="max-w-lg">
+      <Dialog.Header>
+        <Dialog.Title>Custom event name</Dialog.Title>
+        <Dialog.Description>
+          Customize the title shown on calendar invites. Click any variable below to insert it.
+        </Dialog.Description>
+      </Dialog.Header>
+      <div class="space-y-4 py-1">
+        <div class="space-y-1.5">
+          <Label for="modal-cal-title">Calendar event name</Label>
+          <Input
+            id="modal-cal-title"
+            bind:value={form.calendar_event_title}
+            maxlength={200}
+          />
+        </div>
+        <div class="rounded-lg border bg-muted/20 p-3 space-y-2">
+          <p class="text-xs font-semibold">Available variables</p>
+          <div class="max-h-44 space-y-1 overflow-y-auto">
+            {#each CAL_TITLE_VARS as v (v.token)}
+              <button
+                type="button"
+                onclick={() => {
+                  form.calendar_event_title = (form.calendar_event_title ? form.calendar_event_title + " " : "") + v.token;
+                }}
+                class="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs hover:bg-accent"
+              >
+                <code class="font-mono text-foreground">{v.token}</code>
+                <span class="text-muted-foreground">{v.desc}</span>
+              </button>
+            {/each}
+          </div>
+        </div>
+        <div class="space-y-1.5">
+          <p class="text-xs font-semibold">Preview</p>
+          <div class="rounded-lg border bg-background p-3">
+            <div class="flex items-start gap-3">
+              <span class="text-[11px] text-muted-foreground w-12 shrink-0 pt-0.5">9 AM</span>
+              <div class="flex-1 rounded-md bg-foreground/90 px-3 py-2 text-background">
+                <p class="text-xs font-semibold leading-snug">
+                  {(form.calendar_event_title || "{Event} between {Host} and {Scheduler}")
+                    .replaceAll("{Event}", form.name || "30-minute call")
+                    .replaceAll("{Duration}", `${form.duration_minutes}m`)
+                    .replaceAll("{Host}", $currentUser?.name || "Host")
+                    .replaceAll("{HostFirst}", ($currentUser?.name || "Host").split(" ")[0])
+                    .replaceAll("{Scheduler}", "Jane Doe")
+                    .replaceAll("{SchedulerFirst}", "Jane")
+                    .replaceAll("{Location}", LOCATION_TYPES.find((l) => l.value === form.location_type)?.label ?? "Google Meet")}
+                </p>
+                <p class="mt-0.5 text-[10px] opacity-75">9:00 – 9:{String(form.duration_minutes).padStart(2, "0")} AM</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <Dialog.Footer>
+        <Button onclick={() => (calTitleModalOpen = false)}>Done</Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
 
   <Dialog.Root bind:open={unsavedOpen}>
     <Dialog.Content class="max-w-md">

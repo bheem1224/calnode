@@ -59,6 +59,22 @@ body {
   flex-shrink: 0; background: #111827; color: #fff; font-weight: 600; font-size: 0.875rem;
   padding: 0.55rem 1.1rem; border-radius: 0.5rem; text-decoration: none; white-space: nowrap;
 }
+.dir-copy {
+  flex-shrink: 0; background: transparent; color: #4b5563; border: 1px solid #d1d5db;
+  border-radius: 0.5rem; padding: 0.5rem 0.65rem; cursor: pointer; display: inline-flex;
+  align-items: center; justify-content: center; transition: background .15s, color .15s;
+}
+.dir-copy:hover { background: #f3f4f6; color: #111827; }
+html.dark .dir-copy { color: #a1a1aa; border-color: #3f3f46; }
+html.dark .dir-copy:hover { background: #27272a; color: #f4f4f5; }
+.dir-toast {
+  position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
+  background: #18181b; color: #f4f4f5; border: 1px solid #3f3f46;
+  padding: 0.5rem 0.9rem; border-radius: 0.5rem; font-size: 0.8125rem;
+  box-shadow: 0 10px 25px rgba(0,0,0,.3); opacity: 0; pointer-events: none;
+  transition: opacity .2s ease; z-index: 9999;
+}
+.dir-toast.show { opacity: 1; }
 .dir-empty { color: #6b7280; margin: 1.25rem 0 0; }
 </style>
 </head>
@@ -91,6 +107,9 @@ body {
         <p class="dir-item-name"><a href="/book/{{.Slug}}">{{.Name}}</a></p>
         <p class="dir-item-meta">{{.Meta}}</p>
       </div>
+      <button type="button" class="dir-copy" data-copy-slug="{{.Slug}}" title="Copy booking link" aria-label="Copy booking link">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      </button>
       <a class="dir-book" href="/book/{{.Slug}}">{{call $.T "directory_book"}}</a>
     </li>{{end}}
   </ul>
@@ -98,6 +117,28 @@ body {
   <p class="dir-empty">{{call .T "directory_empty"}}</p>
   {{end}}
 </main>
+<div id="dir-toast" class="dir-toast" role="status" aria-live="polite">Link copied</div>
+<script>
+(function(){
+  var toast = document.getElementById('dir-toast');
+  var timer;
+  document.querySelectorAll('.dir-copy').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var slug = btn.getAttribute('data-copy-slug');
+      var url = window.location.origin + '/book/' + slug;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url);
+      }
+      if (toast) {
+        toast.textContent = 'Copied ' + url;
+        toast.classList.add('show');
+        clearTimeout(timer);
+        timer = setTimeout(function() { toast.classList.remove('show'); }, 2200);
+      }
+    });
+  });
+})();
+</script>
 {{template "legalFooter" .}}
 {{template "consentBanner" .}}
 </body>

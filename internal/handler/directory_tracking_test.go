@@ -40,7 +40,7 @@ func TestDirectoryPages_headHTMLAndCSP(t *testing.T) {
 			if _, err := database.Exec(`UPDATE users SET handle = 'host' WHERE id = ?`, userID); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := database.Exec(`INSERT INTO teams (id, name, slug) VALUES ('t1', 'Design', 'design')`); err != nil {
+			if _, err := database.Exec(`INSERT INTO teams (id, name, slug, show_members_publicly) VALUES ('t1', 'Design', 'design', 1)`); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := database.Exec(`INSERT INTO team_members (id, team_id, user_id) VALUES ('tm1', 't1', ?)`, userID); err != nil {

@@ -282,34 +282,23 @@
 		</p>
 	</div>
 	<div class="flex flex-wrap items-center gap-2">
-		{#if teams.length > 0 || isAdmin}
-			<div class="inline-flex flex-wrap rounded-md border p-0.5">
-				<button
-					class="rounded px-3 py-1 text-sm font-medium transition-colors {scope === 'mine' ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}"
-					onclick={() => setScope('mine')}
-				>{$t('eventTypes.scope.mine')}</button>
-				{#each teams as tm (tm.id)}
-					<button
-						class="rounded px-3 py-1 text-sm font-medium transition-colors {scope === tm.id ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}"
-						onclick={() => setScope(tm.id)}
-					>{tm.name}</button>
-				{/each}
-				{#if isAdmin}
-					<button
-						class="rounded px-3 py-1 text-sm font-medium transition-colors {scope === 'all' ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}"
-						onclick={() => setScope('all')}
-					>{$t('eventTypes.scope.all')}</button>
-				{/if}
-			</div>
-		{/if}
+		<div class="inline-flex rounded-md border p-0.5 text-xs">
+			<button type="button" class="rounded px-2.5 py-1 transition-colors {filter === 'active' ? 'bg-muted font-medium' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (filter = 'active')}>{$t('eventTypes.filter.active', { count: activeCount })}</button>
+			<button type="button" class="rounded px-2.5 py-1 transition-colors {filter === 'archived' ? 'bg-muted font-medium' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (filter = 'archived')}>{$t('eventTypes.filter.archived', { count: archivedCount })}</button>
+		</div>
 		{#if canCreateInScope}
-			<div class="inline-flex items-center">
-				<Button onclick={createDirect} disabled={creating} class="rounded-r-none border-r border-primary-foreground/20">
+			<div class="inline-flex h-9 items-stretch overflow-hidden rounded-md bg-primary text-primary-foreground shadow-xs">
+				<button
+					type="button"
+					onclick={createDirect}
+					disabled={creating}
+					class="inline-flex items-center px-3.5 text-sm font-medium transition-colors hover:bg-primary/90 disabled:opacity-50"
+				>
 					{creating ? 'Creating...' : activeTeam ? `+ New ${activeTeam.name} event type` : '+ New event type'}
-				</Button>
+				</button>
 				<Popover.Root bind:open={newMenuOpen}>
 					<Popover.Trigger
-						class="inline-flex h-9 items-center justify-center rounded-r-md bg-primary px-2 text-primary-foreground transition-colors hover:bg-primary/90"
+						class="inline-flex items-center justify-center border-l border-primary-foreground/20 px-2.5 text-primary-foreground transition-colors hover:bg-primary/90"
 						aria-label="More link options"
 					>
 						<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -342,6 +331,27 @@
 	</div>
 </div>
 
+{#if teams.length > 0 || isAdmin}
+	<div class="mb-4 inline-flex flex-wrap rounded-md border p-0.5">
+		<button
+			class="rounded px-3 py-1.5 text-sm font-medium transition-colors {scope === 'mine' ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}"
+			onclick={() => setScope('mine')}
+		>{$currentUser?.name || $t('eventTypes.scope.mine')}</button>
+		{#each teams as tm (tm.id)}
+			<button
+				class="rounded px-3 py-1.5 text-sm font-medium transition-colors {scope === tm.id ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}"
+				onclick={() => setScope(tm.id)}
+			>{tm.name}</button>
+		{/each}
+		{#if isAdmin}
+			<button
+				class="rounded px-3 py-1.5 text-sm font-medium transition-colors {scope === 'all' ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}"
+				onclick={() => setScope('all')}
+			>{$t('eventTypes.scope.all')}</button>
+		{/if}
+	</div>
+{/if}
+
 {#if loading}
 	<p class="py-8 text-sm text-muted-foreground">{$t('common.loading')}</p>
 {:else if scopedItems.length === 0}
@@ -350,10 +360,6 @@
 		<p class="mt-1 text-sm text-muted-foreground">{$t('eventTypes.empty.description')}</p>
 	</div>
 {:else}
-	<div class="mb-4 inline-flex rounded-md border p-0.5 text-sm">
-		<button type="button" class="rounded px-3 py-1 transition-colors {filter === 'active' ? 'bg-muted font-medium' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (filter = 'active')}>{$t('eventTypes.filter.active', { count: activeCount })}</button>
-		<button type="button" class="rounded px-3 py-1 transition-colors {filter === 'archived' ? 'bg-muted font-medium' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (filter = 'archived')}>{$t('eventTypes.filter.archived', { count: archivedCount })}</button>
-	</div>
 	{#if visible.length === 0}
 		<div class="rounded-lg border border-dashed bg-card p-12 text-center">
 			<p class="text-sm text-muted-foreground">{$t('eventTypes.filter.none', { filter: filterEmptyWord })}</p>

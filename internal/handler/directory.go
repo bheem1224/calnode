@@ -159,12 +159,14 @@ func (h *Handler) PersonPage(w http.ResponseWriter, r *http.Request) {
 }
 
 // TeamPage handles GET /team/{slug} — a team's public booking page: its public, active
-// event types plus the member roster (each linking to /u/{handle} when set).
+// event types plus (when opted in) the member roster.
 func (h *Handler) TeamPage(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
-	var teamID, teamName string
+	var teamID, teamName, teamDesc, teamLogo, teamLoc string
+	var showMembersPublicly int
 	err := h.db.QueryRowContext(r.Context(),
-		`SELECT id, name FROM teams WHERE slug = ?`, slug).Scan(&teamID, &teamName)
+		`SELECT id, name, description, logo_url, location, show_members_publicly FROM teams WHERE slug = ?`, slug).
+		Scan(&teamID, &teamName, &teamDesc, &teamLogo, &teamLoc, &showMembersPublicly)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Page not found", http.StatusNotFound)
 		return
@@ -175,32 +177,34 @@ func (h *Handler) TeamPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mRows, err := h.db.QueryContext(r.Context(), `
-		SELECT u.name, COALESCE(u.handle,'') FROM team_members tm
-		JOIN users u ON u.id = tm.user_id
-		WHERE tm.team_id = ? AND u.archived_at IS NULL
-		ORDER BY u.name`, teamID)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "team page: load members", "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	members := []directoryMember{}
-	for mRows.Next() {
-		var m directoryMember
-		if err := mRows.Scan(&m.Name, &m.Handle); err != nil {
-			mRows.Close() // #nosec G104 -- already returning the scan error; nothing more actionable
-			h.logger.ErrorContext(r.Context(), "team page: scan member", "error", err)
+	var members []directoryMember
+	if showMembersPublicly != 0 {
+		mRows, err := h.db.QueryContext(r.Context(), `
+			SELECT u.name, COALESCE(u.handle,'') FROM team_members tm
+			JOIN users u ON u.id = tm.user_id
+			WHERE tm.team_id = ? AND u.archived_at IS NULL
+			ORDER BY u.name`, teamID)
+		if err != nil {
+			h.logger.ErrorContext(r.Context(), "team page: load members", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
-		members = append(members, m)
-	}
-	mRows.Close() // #nosec G104 -- rows already fully consumed above; nothing actionable on close error
-	if err := mRows.Err(); err != nil {
-		h.logger.ErrorContext(r.Context(), "team page: members rows", "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
+		for mRows.Next() {
+			var m directoryMember
+			if err := mRows.Scan(&m.Name, &m.Handle); err != nil {
+				mRows.Close() // #nosec G104 -- already returning the scan error; nothing more actionable
+				h.logger.ErrorContext(r.Context(), "team page: scan member", "error", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+			members = append(members, m)
+		}
+		mRows.Close() // #nosec G104 -- rows already fully consumed above; nothing actionable on close error
+		if err := mRows.Err(); err != nil {
+			h.logger.ErrorContext(r.Context(), "team page: members rows", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	brand := h.loadBranding(r.Context())
@@ -212,11 +216,19 @@ func (h *Handler) TeamPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+	subtitle := strings.TrimSpace(teamDesc)
+	if subtitle == "" {
+		subtitle = loc.Tf("directory_team_subtitle", teamName)
+	}
+	if strings.TrimSpace(teamLoc) != "" && subtitle != "" {
+		subtitle = subtitle + " · " + strings.TrimSpace(teamLoc)
+	}
 	h.renderDirectory(w, r, directoryPageData{
-		Title:    teamName,
-		Subtitle: loc.Tf("directory_team_subtitle", teamName),
-		Initial:  firstRune(teamName),
-		Members:  members,
-		Items:    items,
+		Title:     teamName,
+		Subtitle:  subtitle,
+		AvatarURL: teamLogo,
+		Initial:   firstRune(teamName),
+		Members:   members,
+		Items:     items,
 	})
 }

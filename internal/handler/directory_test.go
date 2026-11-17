@@ -116,12 +116,27 @@ func TestPersonPage_archivedAndUnknown404(t *testing.T) {
 func TestTeamPage_listsMembersAndEventTypes(t *testing.T) {
 	h, database, key, _ := setupWorkspaceWithDB(t)
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin,handle) VALUES ('u2','miri@example.com','Miri','UTC',0,'miri')`) //nolint:errcheck
-	database.Exec(`INSERT INTO teams (id,name,slug) VALUES ('t1','Design','design')`)                                                       //nolint:errcheck
-	database.Exec(`INSERT INTO team_members (id,team_id,user_id) VALUES ('tm1','t1','u2')`)                                                 //nolint:errcheck
+	database.Exec(`INSERT INTO teams (id,name,slug) VALUES ('t1','Design','design')`) //nolint:errcheck
+	database.Exec(`INSERT INTO team_members (id,team_id,user_id) VALUES ('tm1','t1','u2')`) //nolint:errcheck
 
 	// Team-owned event type.
 	slug, etID := seedEventTypeHTTP(t, h, key)
 	database.Exec(`UPDATE event_types SET team_id = 't1' WHERE id = ?`, etID) //nolint:errcheck
+
+	// By default (show_members_publicly = 0), members are hidden on /team/{slug}.
+	recHidden := httptest.NewRecorder()
+	reqHidden := httptest.NewRequest(http.MethodGet, "/team/design", nil)
+	reqHidden.SetPathValue("slug", "design")
+	h.TeamPage(recHidden, reqHidden)
+	if recHidden.Code != http.StatusOK {
+		t.Fatalf("team page: status = %d — %.200s", recHidden.Code, recHidden.Body.String())
+	}
+	if strings.Contains(recHidden.Body.String(), "/u/miri") {
+		t.Errorf("team page should hide member link when show_members_publicly = 0")
+	}
+
+	// Opt-in show_members_publicly = 1 reveals member links.
+	database.Exec(`UPDATE teams SET show_members_publicly = 1 WHERE id = 't1'`) //nolint:errcheck
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/team/design", nil)

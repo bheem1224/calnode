@@ -45,17 +45,18 @@ type teamMemberJSON struct {
 }
 
 type teamJSON struct {
-	ID          string           `json:"id"`
-	Name        string           `json:"name"`
-	Slug        string           `json:"slug"`
-	Description string           `json:"description,omitempty"`
-	LogoURL     string           `json:"logo_url,omitempty"`
-	Location    string           `json:"location,omitempty"`
-	BrandColor  string           `json:"brand_color,omitempty"`
-	CreatedAt   string           `json:"created_at"`
-	MemberCount int              `json:"member_count"`
-	MyRole      string           `json:"my_role,omitempty"`
-	Members     []teamMemberJSON `json:"members,omitempty"`
+	ID                  string           `json:"id"`
+	Name                string           `json:"name"`
+	Slug                string           `json:"slug"`
+	Description         string           `json:"description,omitempty"`
+	LogoURL             string           `json:"logo_url,omitempty"`
+	Location            string           `json:"location,omitempty"`
+	BrandColor          string           `json:"brand_color,omitempty"`
+	ShowMembersPublicly bool             `json:"show_members_publicly"`
+	CreatedAt           string           `json:"created_at"`
+	MemberCount         int              `json:"member_count"`
+	MyRole              string           `json:"my_role,omitempty"`
+	Members             []teamMemberJSON `json:"members,omitempty"`
 }
 
 func (h *Handler) userTeamRole(ctx context.Context, userID, teamID string) (string, error) {
@@ -138,18 +139,18 @@ func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if user.IsAdmin {
 		rows, err = h.db.QueryContext(r.Context(), `
-			SELECT t.id, t.name, t.slug, t.description, t.logo_url, t.location, t.brand_color, t.created_at, COUNT(tm.user_id),
+			SELECT t.id, t.name, t.slug, t.description, t.logo_url, t.location, t.brand_color, t.show_members_publicly, t.created_at, COUNT(tm.user_id),
 			       COALESCE((SELECT role FROM team_members WHERE team_id = t.id AND user_id = ?), '')
 			FROM teams t LEFT JOIN team_members tm ON tm.team_id = t.id
-			GROUP BY t.id, t.name, t.slug, t.description, t.logo_url, t.location, t.brand_color, t.created_at
+			GROUP BY t.id, t.name, t.slug, t.description, t.logo_url, t.location, t.brand_color, t.show_members_publicly, t.created_at
 			ORDER BY t.name ASC`, user.ID)
 	} else {
 		rows, err = h.db.QueryContext(r.Context(), `
-			SELECT t.id, t.name, t.slug, t.description, t.logo_url, t.location, t.brand_color, t.created_at, COUNT(tm.user_id), my.role
+			SELECT t.id, t.name, t.slug, t.description, t.logo_url, t.location, t.brand_color, t.show_members_publicly, t.created_at, COUNT(tm.user_id), my.role
 			FROM teams t
 			JOIN team_members my ON my.team_id = t.id AND my.user_id = ?
 			LEFT JOIN team_members tm ON tm.team_id = t.id
-			GROUP BY t.id, t.name, t.slug, t.description, t.logo_url, t.location, t.brand_color, t.created_at, my.role
+			GROUP BY t.id, t.name, t.slug, t.description, t.logo_url, t.location, t.brand_color, t.show_members_publicly, t.created_at, my.role
 			ORDER BY t.name ASC`, user.ID)
 	}
 	if err != nil {
@@ -162,9 +163,11 @@ func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
 	out := []teamJSON{}
 	for rows.Next() {
 		var t teamJSON
-		if err := rows.Scan(&t.ID, &t.Name, &t.Slug, &t.Description, &t.LogoURL, &t.Location, &t.BrandColor, &t.CreatedAt, &t.MemberCount, &t.MyRole); err != nil {
+		var showPub int
+		if err := rows.Scan(&t.ID, &t.Name, &t.Slug, &t.Description, &t.LogoURL, &t.Location, &t.BrandColor, &showPub, &t.CreatedAt, &t.MemberCount, &t.MyRole); err != nil {
 			continue
 		}
+		t.ShowMembersPublicly = showPub != 0
 		out = append(out, t)
 	}
 	h.writeJSON(w, http.StatusOK, map[string]any{"items": out})
@@ -190,9 +193,13 @@ func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var t teamJSON
+	var showPub int
 	err = h.db.QueryRowContext(r.Context(),
-		`SELECT id, name, slug, description, logo_url, location, brand_color, created_at FROM teams WHERE id = ?`, id).
-		Scan(&t.ID, &t.Name, &t.Slug, &t.Description, &t.LogoURL, &t.Location, &t.BrandColor, &t.CreatedAt)
+		`SELECT id, name, slug, description, logo_url, location, brand_color, show_members_publicly, created_at FROM teams WHERE id = ?`, id).
+		Scan(&t.ID, &t.Name, &t.Slug, &t.Description, &t.LogoURL, &t.Location, &t.BrandColor, &showPub, &t.CreatedAt)
+	if err == nil {
+		t.ShowMembersPublicly = showPub != 0
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		h.writeError(w, http.StatusNotFound, "team not found")
 		return
@@ -250,12 +257,13 @@ func (h *Handler) PatchTeam(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var req struct {
-		Name        *string `json:"name"`
-		Slug        *string `json:"slug"`
-		Description *string `json:"description"`
-		LogoURL     *string `json:"logo_url"`
-		Location    *string `json:"location"`
-		BrandColor  *string `json:"brand_color"`
+		Name                *string `json:"name"`
+		Slug                *string `json:"slug"`
+		Description         *string `json:"description"`
+		LogoURL             *string `json:"logo_url"`
+		Location            *string `json:"location"`
+		BrandColor          *string `json:"brand_color"`
+		ShowMembersPublicly *bool   `json:"show_members_publicly"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -297,6 +305,14 @@ func (h *Handler) PatchTeam(w http.ResponseWriter, r *http.Request) {
 	if req.BrandColor != nil {
 		sets = append(sets, "brand_color = ?")
 		args = append(args, strings.TrimSpace(*req.BrandColor))
+	}
+	if req.ShowMembersPublicly != nil {
+		sets = append(sets, "show_members_publicly = ?")
+		if *req.ShowMembersPublicly {
+			args = append(args, 1)
+		} else {
+			args = append(args, 0)
+		}
 	}
 	if len(sets) == 0 {
 		h.writeError(w, http.StatusBadRequest, "nothing to update")

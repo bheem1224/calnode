@@ -29,7 +29,7 @@
 	let renamingId = $state<string | null>(null);
 	let renameValue = $state('');
 	// Team profile edits (teamId -> fields)
-	let profileEdits = $state<Record<string, { description: string; logo_url: string; location: string; brand_color: string }>>({});
+	let profileEdits = $state<Record<string, { description: string; logo_url: string; location: string; brand_color: string; show_members_publicly: boolean }>>({});
 	let savingProfile = $state<string | null>(null);
 
 	function initProfileEdit(detail: Team) {
@@ -40,6 +40,7 @@
 				logo_url: detail.logo_url ?? '',
 				location: detail.location ?? '',
 				brand_color: detail.brand_color ?? '',
+				show_members_publicly: !!detail.show_members_publicly,
 			},
 		};
 	}
@@ -422,6 +423,17 @@
 										<Label class="text-xs">Location</Label>
 										<Input bind:value={profileEdits[team.id].location} placeholder="e.g. San Francisco, CA / Remote" class="h-8 text-xs" />
 									</div>
+									<label class="sm:col-span-2 flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2">
+										<div>
+											<span class="text-xs font-medium">Show team members on public page</span>
+											<p class="text-[11px] text-muted-foreground">Keep off so visitors book the team directly without picking a specific member.</p>
+										</div>
+										<input
+											type="checkbox"
+											bind:checked={profileEdits[team.id].show_members_publicly}
+											class="h-4 w-4 rounded border-border accent-primary"
+										/>
+									</label>
 								</div>
 							</div>
 						{/if}

@@ -362,6 +362,7 @@ export type Team = {
 	logo_url?: string;
 	location?: string;
 	brand_color?: string;
+	show_members_publicly?: boolean;
 	created_at: string;
 	member_count: number;
 	my_role?: 'owner' | 'member' | '';

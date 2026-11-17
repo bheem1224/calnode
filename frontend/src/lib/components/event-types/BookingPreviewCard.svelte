@@ -33,6 +33,8 @@
     questions?: Question[];
   } = $props();
 
+  let selectedDay = $state<number | null>(18);
+  let selectedSlot = $state("10:00 AM");
   let previewDuration = $state<number | null>(null);
   const activeDuration = $derived(
     allowMultipleDurations && durationOptions.length > 0
@@ -40,9 +42,9 @@
       : duration || 30
   );
 
-  let selectedDay = $state(18);
   const days = Array.from({ length: 30 }, (_, i) => i + 1);
-  const weekdays = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+  const weekdays = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+  const slots = ["9:00 AM", "9:30 AM", "10:00 AM", "11:00 AM", "2:00 PM", "3:30 PM"];
 
   const locationLabel = $derived.by(() => {
     switch (locationType) {
@@ -62,235 +64,214 @@
         return locationValue || "Web conferencing";
     }
   });
+
+  const resolvedTitle = $derived(
+    (calendarEventTitle?.trim() || "{Event} between {Host} and {Scheduler}")
+      .replaceAll("{Event}", name || "30-minute call")
+      .replaceAll("{Duration}", `${activeDuration}m`)
+      .replaceAll("{Host}", hostName || "Host")
+      .replaceAll("{HostFirst}", (hostName || "Host").split(" ")[0])
+      .replaceAll("{Scheduler}", "Jane Doe")
+      .replaceAll("{SchedulerFirst}", "Jane")
+      .replaceAll("{Location}", locationLabel)
+  );
 </script>
 
-<div class="sticky top-20 rounded-xl border bg-card p-4 shadow-sm">
-  <div class="mb-3 flex items-center justify-between border-b pb-2.5">
-    <span
-      class="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
-      >Live Preview</span
-    >
-    <span
-      class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
-      >Interactive</span
-    >
+<div class="w-full overflow-hidden rounded-xl border bg-card shadow-sm">
+  <div class="flex items-center justify-between border-b bg-muted/30 px-4 py-2">
+    <span class="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Live Preview</span>
+    <span class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+      {mode === "confirmation" ? "Confirmation page" : mode === "form" ? "Booking form" : "Booking page"}
+    </span>
   </div>
 
-  <div class="space-y-4">
-    <div>
-      <div class="mb-2 flex items-center gap-2">
-        {#if hostAvatar}
-          <img
-            src={hostAvatar}
-            alt={hostName}
-            class="h-7 w-7 rounded-full object-cover"
-          />
-        {:else}
-          <div
-            class="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground"
-          >
-            {(hostName || "H").slice(0, 1).toUpperCase()}
-          </div>
-        {/if}
-        <span class="truncate text-xs font-medium text-muted-foreground"
-          >{hostName}</span
-        >
-      </div>
-      <h3 class="truncate text-base font-semibold tracking-tight">
-        {name || "Untitled Event"}
-      </h3>
-      {#if description}
-        <p class="mt-1 line-clamp-2 text-xs text-muted-foreground">
-          {description}
-        </p>
-      {/if}
-      <div
-        class="mt-2.5 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground"
-      >
-        {#if allowMultipleDurations && durationOptions.length > 1}
-          {#each durationOptions as d}
-            <button
-              type="button"
-              onclick={() => (previewDuration = d)}
-              class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-medium transition-colors {activeDuration === d
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-foreground hover:bg-muted/80'}"
-            >
-              {d}m
-            </button>
-          {/each}
-        {:else}
-          <span
-            class="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 font-medium text-foreground"
-          >
-            {activeDuration}m
-          </span>
-        {/if}
-        <span
-          class="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5"
-        >
-          {locationLabel}
-        </span>
-      </div>
-    </div>
-
-    {#if mode === "confirmation"}
-      <div class="rounded-lg border bg-background/60 p-4 space-y-3">
-        <div class="flex flex-col items-center text-center space-y-1.5">
-          <div class="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-500 text-base font-bold">
+  {#if mode === "confirmation"}
+    <div class="p-6">
+      <div class="mx-auto max-w-md space-y-4 rounded-xl border bg-background/60 p-5">
+        <div class="flex flex-col items-center space-y-1.5 text-center">
+          <div class="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/15 text-lg font-bold text-emerald-500">
             ✓
           </div>
-          <p class="text-sm font-semibold text-foreground">This meeting is scheduled</p>
-          <p class="text-[11px] text-muted-foreground">
+          <h3 class="text-base font-semibold text-foreground">This meeting is scheduled</h3>
+          <p class="text-xs text-muted-foreground">
             A calendar invitation has been sent to your email address.
           </p>
         </div>
-        <div class="border-t pt-3 space-y-2 text-[11px]">
-          <div class="flex justify-between gap-2">
+        <div class="space-y-2.5 border-t pt-3.5 text-xs">
+          <div class="flex justify-between gap-3">
             <span class="text-muted-foreground">What</span>
-            <span class="font-medium text-foreground text-right truncate">
-              {calendarEventTitle?.trim() || `${name || "Meeting"} between ${hostName} and Jane Doe`}
-            </span>
+            <span class="text-right font-medium text-foreground">{resolvedTitle}</span>
           </div>
-          <div class="flex justify-between gap-2">
+          <div class="flex justify-between gap-3">
             <span class="text-muted-foreground">When</span>
-            <span class="font-medium text-foreground">Fri, Nov {selectedDay} · 10:00 AM ({activeDuration}m)</span>
+            <span class="font-medium text-foreground">Wed, Nov {selectedDay ?? 18} · {selectedSlot} ({activeDuration}m)</span>
           </div>
-          <div class="flex justify-between gap-2">
+          <div class="flex justify-between gap-3">
+            <span class="text-muted-foreground">Who</span>
+            <span class="font-medium text-foreground">{hostName}, Jane Doe</span>
+          </div>
+          <div class="flex justify-between gap-3">
             <span class="text-muted-foreground">Where</span>
             <span class="font-medium text-foreground">{locationLabel}</span>
           </div>
           {#if redirectUrl?.trim()}
-            <div class="rounded bg-muted/60 px-2 py-1.5 text-[10px] text-muted-foreground truncate">
+            <div class="truncate rounded bg-muted px-2.5 py-1.5 text-[11px] text-muted-foreground">
               Redirects to: <span class="font-mono text-foreground">{redirectUrl}</span>
             </div>
           {/if}
         </div>
-        <div class="flex justify-center gap-2 border-t pt-2.5 text-[10px] text-muted-foreground">
-          <span class="rounded border px-2 py-0.5">Reschedule</span>
-          <span class="rounded border px-2 py-0.5">Cancel</span>
+        <div class="flex justify-center gap-2 border-t pt-3 text-[11px] text-muted-foreground">
+          <span class="rounded-md border px-2.5 py-1">Reschedule</span>
+          <span class="rounded-md border px-2.5 py-1">Cancel</span>
         </div>
       </div>
-    {:else if mode === "form"}
-      <div class="rounded-lg border bg-background/60 p-3 space-y-2.5">
-        <div
-          class="flex items-center justify-between border-b pb-2 text-[11px]"
-        >
-          <span class="font-medium text-foreground"
-            >Fri, Nov {selectedDay} · 10:00 AM</span
-          >
-          <span class="text-muted-foreground">UTC</span>
-        </div>
-        <div class="space-y-2 text-[11px]">
-          <div>
-            <div class="mb-1 font-medium text-foreground">
-              Your name <span class="text-destructive">*</span>
-            </div>
-            <div
-              class="rounded border bg-background px-2 py-1.5 text-muted-foreground"
-            >
-              Jane Doe
-            </div>
-          </div>
-          <div>
-            <div class="mb-1 font-medium text-foreground">
-              Email address <span class="text-destructive">*</span>
-            </div>
-            <div
-              class="rounded border bg-background px-2 py-1.5 text-muted-foreground"
-            >
-              jane@example.com
-            </div>
-          </div>
-          {#if allowPhoneCall}
-            <div>
-              <div class="mb-1 font-medium text-foreground">
-                Phone number <span class="text-muted-foreground font-normal"
-                  >(optional)</span
-                >
-              </div>
-              <div
-                class="rounded border bg-background px-2 py-1.5 text-muted-foreground"
-              >
-                +1 (555) 000-0000
-              </div>
+    </div>
+  {:else}
+    <!-- Mirrors /book/[slug] 2-3 column booking card -->
+    <div class="grid md:grid-cols-[200px_1fr]">
+      <!-- Left info panel -->
+      <div class="border-b p-5 md:border-b-0 md:border-r">
+        <div class="mb-3">
+          {#if hostAvatar}
+            <img src={hostAvatar} alt={hostName} class="h-10 w-10 rounded-full object-cover" />
+          {:else}
+            <div class="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
+              {(hostName || "H").slice(0, 1).toUpperCase()}
             </div>
           {/if}
-          {#each questions.filter((q) => !q.hidden) as q (q.id)}
-            <div>
-              {#if q.type === "checkbox"}
-                <div class="flex items-center gap-1.5 py-0.5">
-                  <div
-                    class="h-3.5 w-3.5 rounded border bg-background shrink-0"
-                  ></div>
-                  <span class="font-medium text-foreground"
-                    >{q.label}{#if q.required}
-                      <span class="text-destructive">*</span>{/if}</span
-                  >
-                </div>
-              {:else if q.type === "select"}
-                <div class="mb-1 font-medium text-foreground">
-                  {q.label}{#if q.required}
-                    <span class="text-destructive">*</span>{/if}
-                </div>
-                <div
-                  class="flex items-center justify-between rounded border bg-background px-2 py-1.5 text-muted-foreground"
-                >
-                  <span>{q.options?.[0] ?? "Choose an option"}</span>
-                  <span>▾</span>
-                </div>
-              {:else}
-                <div class="mb-1 font-medium text-foreground">
-                  {q.label}{#if q.required}
-                    <span class="text-destructive">*</span>{/if}
-                </div>
-                <div
-                  class="rounded border bg-background px-2 py-2 text-muted-foreground"
-                >
-                  Answer...
-                </div>
-              {/if}
-            </div>
-          {/each}
-          <div class="pt-1">
-            <div
-              class="w-full rounded-md bg-primary py-1.5 text-center font-medium text-primary-foreground"
-            >
-              Confirm booking
-            </div>
+        </div>
+        <p class="truncate text-xs font-medium text-muted-foreground">{hostName}</p>
+        <h3 class="mt-0.5 text-base font-semibold tracking-tight">{name || "Untitled Event"}</h3>
+        {#if description}
+          <p class="mt-2 line-clamp-3 text-xs leading-relaxed text-muted-foreground">{description}</p>
+        {/if}
+
+        <div class="mt-4 space-y-2 text-xs text-muted-foreground">
+          <div class="flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            {#if allowMultipleDurations && durationOptions.length > 1}
+              <div class="flex flex-wrap gap-1">
+                {#each durationOptions as d}
+                  <button
+                    type="button"
+                    onclick={() => (previewDuration = d)}
+                    class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors {activeDuration === d
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted text-foreground hover:bg-muted/80'}"
+                  >{d}m</button>
+                {/each}
+              </div>
+            {:else}
+              <span>{activeDuration} min</span>
+            {/if}
+          </div>
+          <div class="flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+            <span class="truncate">{locationLabel}</span>
           </div>
         </div>
       </div>
-    {:else}
-      <div class="rounded-lg border bg-background/60 p-3">
-        <div class="mb-2 flex items-center justify-between text-xs font-medium">
-          <span>November 2026</span>
-          <span class="text-[11px] text-muted-foreground">UTC</span>
+
+      <!-- Right pane: Calendar+Slots OR Booking Form -->
+      {#if mode === "form"}
+        <div class="space-y-3 p-5">
+          <div class="flex items-center justify-between border-b pb-2.5 text-xs">
+            <span class="font-medium text-foreground">Wed, Nov {selectedDay ?? 18} · {selectedSlot}</span>
+            <span class="text-muted-foreground">America/New York</span>
+          </div>
+          <div class="space-y-2.5 text-xs">
+            <div>
+              <div class="mb-1 font-medium text-foreground">Your name <span class="text-destructive">*</span></div>
+              <div class="rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">Jane Doe</div>
+            </div>
+            <div>
+              <div class="mb-1 font-medium text-foreground">Email address <span class="text-destructive">*</span></div>
+              <div class="rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">jane@example.com</div>
+            </div>
+            {#if allowPhoneCall}
+              <div>
+                <div class="mb-1 font-medium text-foreground">Phone number <span class="font-normal text-muted-foreground">(optional)</span></div>
+                <div class="rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">+1 (555) 000-0000</div>
+              </div>
+            {/if}
+            {#each questions.filter((q) => !q.hidden) as q (q.id)}
+              <div>
+                {#if q.type === "checkbox"}
+                  <div class="flex items-center gap-2 py-0.5">
+                    <div class="h-3.5 w-3.5 shrink-0 rounded border bg-background"></div>
+                    <span class="font-medium text-foreground">{q.label}{#if q.required}<span class="text-destructive">*</span>{/if}</span>
+                  </div>
+                {:else if q.type === "select"}
+                  <div class="mb-1 font-medium text-foreground">{q.label}{#if q.required}<span class="text-destructive">*</span>{/if}</div>
+                  <div class="flex items-center justify-between rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">
+                    <span>{q.options?.[0] ?? "Choose an option"}</span>
+                    <span>▾</span>
+                  </div>
+                {:else}
+                  <div class="mb-1 font-medium text-foreground">{q.label}{#if q.required}<span class="text-destructive">*</span>{/if}</div>
+                  <div class="rounded-md border bg-background px-2.5 py-2 text-muted-foreground">Answer...</div>
+                {/if}
+              </div>
+            {/each}
+            <div class="pt-1">
+              <div class="w-full rounded-md bg-primary py-2 text-center text-xs font-medium text-primary-foreground">
+                Confirm booking
+              </div>
+            </div>
+          </div>
         </div>
-        <div
-          class="grid grid-cols-7 gap-1 text-center text-[10px] text-muted-foreground"
-        >
-          {#each weekdays as wd}
-            <div class="py-0.5 font-medium">{wd}</div>
-          {/each}
-          {#each days as d}
-            {@const isWeekend = d % 7 === 0 || d % 7 === 6}
-            <button
-              type="button"
-              disabled={isWeekend}
-              onclick={() => (selectedDay = d)}
-              class="h-6 rounded text-[11px] font-medium transition-colors {selectedDay ===
-              d
-                ? 'bg-primary text-primary-foreground'
-                : isWeekend
-                  ? 'text-muted-foreground/35 cursor-default'
-                  : 'bg-muted/60 text-foreground hover:bg-muted'}"
-            >
-              {d}
-            </button>
-          {/each}
+      {:else}
+        <div class="grid sm:grid-cols-[1fr_140px]">
+          <div class="p-5">
+            <div class="mb-3 flex items-center justify-between text-xs font-semibold">
+              <span>November 2026</span>
+              <div class="flex gap-1 text-muted-foreground">
+                <span class="rounded border px-1.5 py-0.5">&lsaquo;</span>
+                <span class="rounded border px-1.5 py-0.5">&rsaquo;</span>
+              </div>
+            </div>
+            <div class="mb-1.5 grid grid-cols-7 gap-1 text-center text-[10px] font-medium text-muted-foreground">
+              {#each weekdays as w}<span>{w}</span>{/each}
+            </div>
+            <div class="grid grid-cols-7 gap-1 text-center text-[11px]">
+              {#each days as d}
+                {@const isAvail = d >= 17 && (d % 7 !== 0 && d % 7 !== 6)}
+                <button
+                  type="button"
+                  disabled={!isAvail}
+                  onclick={() => (selectedDay = d)}
+                  class="aspect-square rounded-md font-medium transition-colors {selectedDay === d
+                    ? 'bg-primary text-primary-foreground'
+                    : isAvail
+                      ? 'border border-border/60 bg-muted/40 hover:bg-accent text-foreground'
+                      : 'text-muted-foreground/35 cursor-default'}"
+                >
+                  {d}
+                </button>
+              {/each}
+            </div>
+            <div class="mt-3 inline-flex items-center gap-1 rounded-md border bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">
+              America/New York ▾
+            </div>
+          </div>
+          <div class="border-t p-4 sm:border-l sm:border-t-0">
+            <p class="mb-2 text-[11px] font-medium text-muted-foreground">Wed, Nov {selectedDay ?? 18}</p>
+            <div class="space-y-1.5">
+              {#each slots as s}
+                <button
+                  type="button"
+                  onclick={() => (selectedSlot = s)}
+                  class="w-full rounded-md border px-2 py-1.5 text-center text-[11px] font-medium transition-colors {selectedSlot === s
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'hover:bg-accent'}"
+                >
+                  {s}
+                </button>
+              {/each}
+            </div>
+          </div>
         </div>
-      </div>
-    {/if}
-  </div>
+      {/if}
+    </div>
+  {/if}
 </div>

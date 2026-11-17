@@ -185,6 +185,37 @@ html.dark .business-name-text {
 .tz-wrapper:hover { border-color: #d1d5db; }
 .tz-wrapper:hover select,
 .tz-wrapper:hover svg { color: #111827; }
+.tz-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: transparent; border: none; padding: 0; cursor: pointer;
+  font-size: .75rem; font-family: inherit; color: #374151; outline: none;
+}
+.tz-popover {
+  position: absolute; bottom: 100%; left: 0; margin-bottom: 6px; width: 250px;
+  background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(0,0,0,.15); z-index: 60; padding: 6px;
+}
+.tz-search {
+  width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: .75rem;
+  border: 1px solid #e5e7eb; border-radius: 6px; outline: none; margin-bottom: 4px;
+  background: #f9fafb; color: #111827;
+}
+.tz-list {
+  list-style: none; margin: 0; padding: 0; max-height: 210px; overflow-y: auto;
+}
+.tz-opt {
+  width: 100%; text-align: left; background: transparent; border: none;
+  padding: 6px 8px; font-size: .75rem; border-radius: 5px; cursor: pointer; color: #111827;
+}
+.tz-opt:hover { background: #f3f4f6; }
+.tz-opt.active { background: #111827; color: #ffffff; font-weight: 600; }
+.tz-empty { padding: 8px; font-size: .75rem; color: #6b7280; text-align: center; }
+html.dark .tz-btn { color: #e4e4e7; }
+html.dark .tz-popover { background: #18181b; border-color: #3f3f46; box-shadow: 0 12px 30px rgba(0,0,0,.45); }
+html.dark .tz-search { background: #27272a; border-color: #3f3f46; color: #f4f4f5; }
+html.dark .tz-opt { color: #e4e4e7; }
+html.dark .tz-opt:hover { background: #27272a; }
+html.dark .tz-opt.active { background: #f4f4f5; color: #09090b; }
 
 /* ── Right column ────────────────────────────────── */
 .right-col {
