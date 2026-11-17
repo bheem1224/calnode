@@ -23,6 +23,10 @@
 	// Mobile nav drawer. Only ever opened from the md:hidden header button, so it is
 	// always false at desktop widths — which is what makes `inert` on <main> safe.
 	let sidebarOpen = $state(false);
+	let sidebarHovered = $state(false);
+	const isCompactNav = $derived(
+		$page.route.id === '/event-types/[slug]' || ($page.route.id?.startsWith('/settings') ?? false)
+	);
 	// Focus handling: opening moves focus into the drawer, closing returns it to the
 	// trigger. Without this, opening leaves focus on the button the backdrop covers,
 	// and closing hides the focused element (`visibility: hidden`), dropping focus to
@@ -320,14 +324,22 @@
 				onclick={() => (sidebarOpen = false)}
 			></button>
 		{/if}
+		{#if isCompactNav}
+			<div class="hidden md:block md:w-14 md:shrink-0" aria-hidden="true"></div>
+		{/if}
 		<aside
 			id="app-sidebar"
 			bind:this={sidebarEl}
-			class="fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-sidebar-border bg-sidebar shadow-xl transition-transform duration-200 md:static md:z-auto md:w-56 md:max-w-none md:translate-x-0 md:shadow-none md:transition-none
+			onmouseenter={() => { if (isCompactNav) sidebarHovered = true; }}
+			onmouseleave={() => { sidebarHovered = false; }}
+			class="fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-sidebar-border bg-sidebar shadow-xl transition-all duration-150 md:max-w-none md:translate-x-0
+				{isCompactNav
+					? (sidebarHovered ? 'md:fixed md:inset-y-0 md:left-0 md:z-50 md:w-56 md:shadow-xl' : 'md:fixed md:inset-y-0 md:left-0 md:z-40 md:w-14 md:shadow-none')
+					: 'md:static md:z-auto md:w-56 md:shadow-none'}
 				{sidebarOpen ? 'translate-x-0' : '-translate-x-full invisible md:visible'}"
 		>
 			<!-- User section -->
-			<a href="{base}/settings/profile" onclick={() => (sidebarOpen = false)} class="flex items-center gap-3 border-b border-sidebar-border px-4 py-3 hover:bg-sidebar-accent/60 transition-colors">
+			<a href="{base}/settings/profile" onclick={() => (sidebarOpen = false)} class="flex items-center gap-3 border-b border-sidebar-border px-3.5 py-3 hover:bg-sidebar-accent/60 transition-colors {isCompactNav && !sidebarHovered ? 'md:justify-center md:px-0' : ''}">
 				<!-- Fixed-size clip container: the image fills it and is clipped by the
 				     parent's overflow-hidden (not its own border-radius). A rounded,
 				     object-cover image on its own composited layer gets mis-painted by
@@ -340,7 +352,7 @@
 						{initials($currentUser?.name ?? 'U')}
 					{/if}
 				</span>
-				<div class="min-w-0 flex-1">
+				<div class="min-w-0 flex-1 {isCompactNav && !sidebarHovered ? 'md:hidden' : ''}">
 					<p class="truncate text-sm font-medium text-sidebar-foreground">{$currentUser?.name ?? ''}</p>
 				</div>
 			</a>
@@ -349,7 +361,7 @@
 			<nav class="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
 				{#each visibleNavItems as item, i}
 					{#if item.section && item.section !== visibleNavItems[i - 1]?.section}
-						<p class="mb-1 px-2.5 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/40 first:mt-0 mt-4">
+						<p class="mb-1 px-2.5 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/40 first:mt-0 mt-4 {isCompactNav && !sidebarHovered ? 'md:hidden' : ''}">
 							{item.section}
 						</p>
 					{:else if !item.section && visibleNavItems[i - 1]?.section}
@@ -360,14 +372,15 @@
 						: $page.url.pathname.startsWith(item.href)}
 					<a
 						href={item.href}
+						title={item.label}
 						onclick={() => (sidebarOpen = false)}
-						class="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors
+						class="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors {isCompactNav && !sidebarHovered ? 'md:justify-center md:px-0' : ''}
 							{active
 								? 'bg-sidebar-accent text-sidebar-accent-foreground'
 								: 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground'}"
 					>
 						<span class="shrink-0 {active ? 'opacity-100' : 'opacity-60'}">{@html item.icon}</span>
-						{item.label}
+						<span class="truncate {isCompactNav && !sidebarHovered ? 'md:hidden' : ''}">{item.label}</span>
 					</a>
 				{/each}
 			</nav>

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, type EventType, type Team, type SingleUseLink, type CreateSingleUseLinkPayload } from '$lib/api';
+	import { api, type EventType, type Team, type TeamMember, type SingleUseLink, type CreateSingleUseLinkPayload } from '$lib/api';
 	import { currentUser } from '$lib/stores';
 	import { t, tr } from '$lib/i18n';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
@@ -16,7 +16,15 @@
 
 	let items: EventType[] = $state([]);
 	let teams: Team[] = $state([]);
+	let users: TeamMember[] = $state([]);
 	let loading = $state(true);
+
+	let newMenuOpen = $state(false);
+	let dynamicModalOpen = $state(false);
+	let dynamicSearch = $state('');
+	let dynamicSelected = $state<string[]>([]);
+	let oneTimeQuickOpen = $state(false);
+	let oneTimeQuickSlug = $state('');
 
 	let creating = $state(false);
 	let deleteOpen = $state(false);
@@ -52,12 +60,14 @@
 
 	async function load() {
 		try {
-			const [res, teamsRes] = await Promise.all([
+			const [res, teamsRes, usersRes] = await Promise.all([
 				api.get<{ items: EventType[] }>(scope === 'all' && isAdmin ? '/v1/event-types?scope=all' : '/v1/event-types'),
 				api.get<{ items: Team[] }>('/v1/teams').catch(() => ({ items: [] as Team[] })),
+				api.get<TeamMember[]>('/v1/users').catch(() => [] as TeamMember[]),
 			]);
 			items = res.items;
 			teams = teamsRes.items ?? [];
+			users = (usersRes ?? []).filter((u) => !u.archived);
 		} catch (e: any) {
 			toast.error(e.message || tr('eventTypes.toast.errors.load'));
 		} finally {
@@ -293,9 +303,41 @@
 			</div>
 		{/if}
 		{#if canCreateInScope}
-			<Button onclick={createDirect} disabled={creating}>
-				{creating ? 'Creating...' : activeTeam ? `+ New ${activeTeam.name} event type` : '+ New event type'}
-			</Button>
+			<div class="inline-flex items-center">
+				<Button onclick={createDirect} disabled={creating} class="rounded-r-none border-r border-primary-foreground/20">
+					{creating ? 'Creating...' : activeTeam ? `+ New ${activeTeam.name} event type` : '+ New event type'}
+				</Button>
+				<Popover.Root bind:open={newMenuOpen}>
+					<Popover.Trigger
+						class="inline-flex h-9 items-center justify-center rounded-r-md bg-primary px-2 text-primary-foreground transition-colors hover:bg-primary/90"
+						aria-label="More link options"
+					>
+						<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+					</Popover.Trigger>
+					<Popover.Content align="end" class="w-56 p-1">
+						<button
+							type="button"
+							class="flex w-full flex-col items-start rounded-sm px-2.5 py-2 text-left hover:bg-accent"
+							onclick={() => { newMenuOpen = false; dynamicSelected = []; dynamicSearch = ''; dynamicModalOpen = true; }}
+						>
+							<span class="text-sm font-medium">Dynamic link</span>
+							<span class="text-xs text-muted-foreground">Group call with 2+ people</span>
+						</button>
+						<button
+							type="button"
+							class="flex w-full flex-col items-start rounded-sm px-2.5 py-2 text-left hover:bg-accent"
+							onclick={() => {
+								newMenuOpen = false;
+								oneTimeQuickSlug = items.find((i) => i.is_active && !i.archived)?.slug ?? '';
+								oneTimeQuickOpen = true;
+							}}
+						>
+							<span class="text-sm font-medium">1-time link</span>
+							<span class="text-xs text-muted-foreground">Single-use private booking URL</span>
+						</button>
+					</Popover.Content>
+				</Popover.Root>
+			</div>
 		{/if}
 	</div>
 </div>
@@ -460,6 +502,128 @@
 	</div>
 	{/if}
 {/if}
+
+<Dialog.Root bind:open={dynamicModalOpen}>
+	<Dialog.Content class="max-w-md">
+		<Dialog.Header>
+			<Dialog.Title>Dynamic link</Dialog.Title>
+			<Dialog.Description>
+				Create a group link for multiple users to find a time where everyone is available.
+			</Dialog.Description>
+		</Dialog.Header>
+
+		{@const filteredUsers = users.filter((u) => {
+			const q = dynamicSearch.trim().toLowerCase();
+			if (!q) return true;
+			return u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || (u.handle || '').toLowerCase().includes(q);
+		})}
+		{@const dynamicPath = dynamicSelected.length >= 2 ? `/u/${dynamicSelected.join('+')}` : ''}
+
+		<div class="space-y-3 py-1">
+			<Label class="text-xs font-medium">Select users</Label>
+			<Input bind:value={dynamicSearch} placeholder="Search" />
+			<div class="max-h-56 divide-y overflow-y-auto rounded-lg border">
+				{#if filteredUsers.length === 0}
+					<p class="p-4 text-center text-xs text-muted-foreground">No matching users</p>
+				{:else}
+					{#each filteredUsers as u (u.id)}
+						{@const handle = (u.handle || u.email.split('@')[0] || '').trim()}
+						{@const checked = dynamicSelected.includes(handle)}
+						<label class="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-accent/50">
+							<input
+								type="checkbox"
+								{checked}
+								onchange={() => {
+									if (checked) {
+										dynamicSelected = dynamicSelected.filter((x) => x !== handle);
+									} else {
+										dynamicSelected = [...dynamicSelected, handle];
+									}
+								}}
+								class="h-4 w-4 rounded border-border accent-primary"
+							/>
+							<span class="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-xs font-semibold">
+								{#if u.avatar_url}
+									<img src={u.avatar_url} alt={u.name} class="h-full w-full object-cover" />
+								{:else}
+									{u.name.slice(0, 1).toUpperCase()}
+								{/if}
+							</span>
+							<div class="min-w-0 flex-1">
+								<p class="truncate text-sm font-medium leading-tight">{u.name}</p>
+								<p class="truncate text-xs text-muted-foreground">@{handle}</p>
+							</div>
+						</label>
+					{/each}
+				{/if}
+			</div>
+			{#if dynamicSelected.length < 2}
+				<p class="text-xs text-muted-foreground">Select at least two users to generate a dynamic link.</p>
+			{:else}
+				<p class="truncate rounded bg-muted px-2.5 py-1.5 font-mono text-xs">{dynamicPath}</p>
+			{/if}
+		</div>
+
+		<Dialog.Footer class="flex items-center justify-end gap-2">
+			<Button variant="ghost" onclick={() => (dynamicModalOpen = false)}>Close</Button>
+			{#if dynamicSelected.length >= 2}
+				<Button
+					variant="outline"
+					onclick={() => {
+						copyText(`${window.location.origin}${dynamicPath}`, 'Dynamic link copied to clipboard');
+					}}
+				>
+					Copy link
+				</Button>
+				<Button
+					onclick={() => {
+						window.open(dynamicPath, '_blank', 'noopener,noreferrer');
+						dynamicModalOpen = false;
+					}}
+				>
+					Continue
+				</Button>
+			{/if}
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root bind:open={oneTimeQuickOpen}>
+	<Dialog.Content class="max-w-md">
+		<Dialog.Header>
+			<Dialog.Title>Create 1-time link</Dialog.Title>
+			<Dialog.Description>
+				Generate a private single-use booking link that expires after one booking.
+			</Dialog.Description>
+		</Dialog.Header>
+		<div class="space-y-3 py-2">
+			<Label for="quick-onetime-et">Event type</Label>
+			<select
+				id="quick-onetime-et"
+				bind:value={oneTimeQuickSlug}
+				class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+			>
+				{#each items.filter((i) => i.is_active && !i.archived) as et (et.id)}
+					<option value={et.slug}>{et.name} ({et.duration_minutes}m)</option>
+				{/each}
+			</select>
+		</div>
+		<Dialog.Footer>
+			<Button variant="ghost" onclick={() => (oneTimeQuickOpen = false)}>Cancel</Button>
+			<Button
+				disabled={!oneTimeQuickSlug || !!mintingId}
+				onclick={async () => {
+					const target = items.find((i) => i.slug === oneTimeQuickSlug);
+					if (!target) return;
+					await mintAndCopyOneTimeLink(target);
+					oneTimeQuickOpen = false;
+				}}
+			>
+				{mintingId ? 'Generating...' : 'Copy 1-time link'}
+			</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
 
 <Dialog.Root bind:open={linkModalOpen}>
 	<Dialog.Content class="max-w-lg">

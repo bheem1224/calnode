@@ -48,6 +48,10 @@ type teamJSON struct {
 	ID          string           `json:"id"`
 	Name        string           `json:"name"`
 	Slug        string           `json:"slug"`
+	Description string           `json:"description,omitempty"`
+	LogoURL     string           `json:"logo_url,omitempty"`
+	Location    string           `json:"location,omitempty"`
+	BrandColor  string           `json:"brand_color,omitempty"`
 	CreatedAt   string           `json:"created_at"`
 	MemberCount int              `json:"member_count"`
 	MyRole      string           `json:"my_role,omitempty"`
@@ -134,18 +138,18 @@ func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if user.IsAdmin {
 		rows, err = h.db.QueryContext(r.Context(), `
-			SELECT t.id, t.name, t.slug, t.created_at, COUNT(tm.user_id),
+			SELECT t.id, t.name, t.slug, t.description, t.logo_url, t.location, t.brand_color, t.created_at, COUNT(tm.user_id),
 			       COALESCE((SELECT role FROM team_members WHERE team_id = t.id AND user_id = ?), '')
 			FROM teams t LEFT JOIN team_members tm ON tm.team_id = t.id
-			GROUP BY t.id, t.name, t.slug, t.created_at
+			GROUP BY t.id, t.name, t.slug, t.description, t.logo_url, t.location, t.brand_color, t.created_at
 			ORDER BY t.name ASC`, user.ID)
 	} else {
 		rows, err = h.db.QueryContext(r.Context(), `
-			SELECT t.id, t.name, t.slug, t.created_at, COUNT(tm.user_id), my.role
+			SELECT t.id, t.name, t.slug, t.description, t.logo_url, t.location, t.brand_color, t.created_at, COUNT(tm.user_id), my.role
 			FROM teams t
 			JOIN team_members my ON my.team_id = t.id AND my.user_id = ?
 			LEFT JOIN team_members tm ON tm.team_id = t.id
-			GROUP BY t.id, t.name, t.slug, t.created_at, my.role
+			GROUP BY t.id, t.name, t.slug, t.description, t.logo_url, t.location, t.brand_color, t.created_at, my.role
 			ORDER BY t.name ASC`, user.ID)
 	}
 	if err != nil {
@@ -158,7 +162,7 @@ func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
 	out := []teamJSON{}
 	for rows.Next() {
 		var t teamJSON
-		if err := rows.Scan(&t.ID, &t.Name, &t.Slug, &t.CreatedAt, &t.MemberCount, &t.MyRole); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Slug, &t.Description, &t.LogoURL, &t.Location, &t.BrandColor, &t.CreatedAt, &t.MemberCount, &t.MyRole); err != nil {
 			continue
 		}
 		out = append(out, t)
@@ -187,8 +191,8 @@ func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
 
 	var t teamJSON
 	err = h.db.QueryRowContext(r.Context(),
-		`SELECT id, name, slug, created_at FROM teams WHERE id = ?`, id).
-		Scan(&t.ID, &t.Name, &t.Slug, &t.CreatedAt)
+		`SELECT id, name, slug, description, logo_url, location, brand_color, created_at FROM teams WHERE id = ?`, id).
+		Scan(&t.ID, &t.Name, &t.Slug, &t.Description, &t.LogoURL, &t.Location, &t.BrandColor, &t.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		h.writeError(w, http.StatusNotFound, "team not found")
 		return
@@ -246,8 +250,12 @@ func (h *Handler) PatchTeam(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var req struct {
-		Name *string `json:"name"`
-		Slug *string `json:"slug"`
+		Name        *string `json:"name"`
+		Slug        *string `json:"slug"`
+		Description *string `json:"description"`
+		LogoURL     *string `json:"logo_url"`
+		Location    *string `json:"location"`
+		BrandColor  *string `json:"brand_color"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -273,6 +281,22 @@ func (h *Handler) PatchTeam(w http.ResponseWriter, r *http.Request) {
 		}
 		sets = append(sets, "slug = ?")
 		args = append(args, slug)
+	}
+	if req.Description != nil {
+		sets = append(sets, "description = ?")
+		args = append(args, strings.TrimSpace(*req.Description))
+	}
+	if req.LogoURL != nil {
+		sets = append(sets, "logo_url = ?")
+		args = append(args, strings.TrimSpace(*req.LogoURL))
+	}
+	if req.Location != nil {
+		sets = append(sets, "location = ?")
+		args = append(args, strings.TrimSpace(*req.Location))
+	}
+	if req.BrandColor != nil {
+		sets = append(sets, "brand_color = ?")
+		args = append(args, strings.TrimSpace(*req.BrandColor))
 	}
 	if len(sets) == 0 {
 		h.writeError(w, http.StatusBadRequest, "nothing to update")

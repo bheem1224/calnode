@@ -151,26 +151,40 @@
   font-size: .6875rem;
   color: #9ca3af;
 }
+.business-name-text {
+  font-size: .9375rem;
+  font-weight: 600;
+  color: #111827;
+}
+html.dark .business-name-text {
+  color: #f4f4f5;
+}
 .tz-wrapper {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 5px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: #f9fafb;
+  transition: border-color .15s, background .15s;
 }
 .tz-wrapper select {
   appearance: none;
   -webkit-appearance: none;
-  font-size: .6875rem;
-  color: #9ca3af;
+  font-size: .75rem;
+  color: #4b5563;
   font-family: inherit;
-  background: none;
+  background: transparent;
   border: none;
   cursor: pointer;
   padding: 0;
   outline: none;
 }
-.tz-wrapper svg { pointer-events: none; color: #9ca3af; flex-shrink: 0; }
+.tz-wrapper svg { pointer-events: none; color: #6b7280; flex-shrink: 0; }
+.tz-wrapper:hover { border-color: #d1d5db; }
 .tz-wrapper:hover select,
-.tz-wrapper:hover svg { color: #6b7280; }
+.tz-wrapper:hover svg { color: #111827; }
 
 /* ── Right column ────────────────────────────────── */
 .right-col {
@@ -667,11 +681,30 @@ html.dark .btn-secondary,
 html.dark .cookie-btn,
 html.dark .field input,
 html.dark .field textarea,
-html.dark .field select,
-html.dark .tz-wrapper select {
+html.dark .field select {
   background: var(--fp-surface-muted);
   border-color: #3f3f46;
   color: var(--fp-text);
+}
+html.dark .tz-wrapper {
+  background: #27272a;
+  border-color: #3f3f46;
+}
+html.dark .tz-wrapper:hover {
+  border-color: #52525b;
+}
+html.dark .tz-wrapper select {
+  background: transparent;
+  color: #e4e4e7;
+  color-scheme: dark;
+}
+html.dark .tz-wrapper select option,
+html.dark .tz-wrapper select optgroup {
+  background: #18181b;
+  color: #f4f4f5;
+}
+html.dark .tz-wrapper svg {
+  color: #a1a1aa;
 }
 html.dark .cal-nav button:hover:not(:disabled),
 html.dark .slot-btn:hover,

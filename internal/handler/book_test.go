@@ -115,13 +115,13 @@ func TestBookPage_privateEventType_returns404(t *testing.T) {
 	h, apiKey, _ := setupWorkspace(t)
 	slug, _ := seedEventTypeHTTP(t, h, apiKey)
 
-	// Make the event type private.
-	patchReq := authReq(http.MethodPatch, "/v1/event-types/"+slug, `{"is_public":false}`, apiKey)
+	// Make the event type inactive.
+	patchReq := authReq(http.MethodPatch, "/v1/event-types/"+slug, `{"is_active":false}`, apiKey)
 	patchReq.SetPathValue("slug", slug)
 	patchRec := httptest.NewRecorder()
 	h.RequireAuth(h.PatchEventType)(patchRec, patchReq)
 	if patchRec.Code != http.StatusOK {
-		t.Fatalf("patch is_public=false: got %d — %s", patchRec.Code, patchRec.Body.String())
+		t.Fatalf("patch is_active=false: got %d — %s", patchRec.Code, patchRec.Body.String())
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/book/"+slug, nil)
@@ -130,7 +130,7 @@ func TestBookPage_privateEventType_returns404(t *testing.T) {
 	h.BookPage(rec, req)
 
 	if rec.Code != http.StatusNotFound {
-		t.Errorf("status = %d; want 404 for private event type", rec.Code)
+		t.Errorf("status = %d; want 404 for inactive event type", rec.Code)
 	}
 }
 

@@ -358,6 +358,10 @@ export type Team = {
 	id: string;
 	name: string;
 	slug: string;
+	description?: string;
+	logo_url?: string;
+	location?: string;
+	brand_color?: string;
 	created_at: string;
 	member_count: number;
 	my_role?: 'owner' | 'member' | '';

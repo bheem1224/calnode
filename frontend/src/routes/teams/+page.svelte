@@ -28,6 +28,37 @@
 	// Rename state
 	let renamingId = $state<string | null>(null);
 	let renameValue = $state('');
+	// Team profile edits (teamId -> fields)
+	let profileEdits = $state<Record<string, { description: string; logo_url: string; location: string; brand_color: string }>>({});
+	let savingProfile = $state<string | null>(null);
+
+	function initProfileEdit(detail: Team) {
+		profileEdits = {
+			...profileEdits,
+			[detail.id]: {
+				description: detail.description ?? '',
+				logo_url: detail.logo_url ?? '',
+				location: detail.location ?? '',
+				brand_color: detail.brand_color ?? '',
+			},
+		};
+	}
+
+	async function saveTeamProfile(teamId: string) {
+		const p = profileEdits[teamId];
+		if (!p) return;
+		savingProfile = teamId;
+		try {
+			const updated = await api.patch<Team>(`/v1/teams/${teamId}`, p);
+			expanded = { ...expanded, [teamId]: updated };
+			teams = teams.map((t) => (t.id === teamId ? { ...t, ...updated } : t));
+			toast.success('Team profile saved');
+		} catch (e: any) {
+			toast.error(e.message || tr('common.failed'));
+		} finally {
+			savingProfile = null;
+		}
+	}
 
 	// Dynamic Group Link (/u/alice+bob) builder
 	let groupHandles = $state<string[]>([]);
@@ -102,6 +133,7 @@
 		try {
 			const detail = await api.get<Team>(`/v1/teams/${team.id}`);
 			expanded = { ...expanded, [team.id]: detail };
+			initProfileEdit(detail);
 		} catch (e: any) {
 			toast.error(e.message || tr('common.failed'));
 		}
@@ -363,6 +395,36 @@
 							</div>
 						{/if}
 						<p class="mt-2 text-xs text-muted-foreground">{$t('teams.routingHint')}</p>
+
+						{#if canManage(team) && profileEdits[team.id]}
+							<div class="mt-5 border-t pt-4">
+								<div class="mb-3 flex items-center justify-between">
+									<h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Team Profile &amp; Branding</h3>
+									<Button size="sm" class="h-7 text-xs" disabled={savingProfile === team.id} onclick={() => saveTeamProfile(team.id)}>
+										{savingProfile === team.id ? 'Saving...' : 'Save profile'}
+									</Button>
+								</div>
+								<div class="grid gap-3 sm:grid-cols-2">
+									<div class="sm:col-span-2 space-y-1">
+										<Label class="text-xs">Description / About</Label>
+										<textarea
+											rows="2"
+											bind:value={profileEdits[team.id].description}
+											placeholder="A few sentences about your team for your public team booking page..."
+											class="flex w-full rounded-md border border-input bg-transparent px-3 py-1.5 text-sm shadow-xs outline-none focus-visible:ring-1 focus-visible:ring-ring dark:bg-input/30"
+										></textarea>
+									</div>
+									<div class="space-y-1">
+										<Label class="text-xs">Logo URL</Label>
+										<Input bind:value={profileEdits[team.id].logo_url} placeholder="https://..." class="h-8 text-xs" />
+									</div>
+									<div class="space-y-1">
+										<Label class="text-xs">Location</Label>
+										<Input bind:value={profileEdits[team.id].location} placeholder="e.g. San Francisco, CA / Remote" class="h-8 text-xs" />
+									</div>
+								</div>
+							</div>
+						{/if}
 					</div>
 				{/if}
 			</div>

@@ -1,0 +1,8 @@
+-- +goose Up
+ALTER TABLE teams ADD COLUMN description TEXT NOT NULL DEFAULT '';
+ALTER TABLE teams ADD COLUMN logo_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE teams ADD COLUMN location TEXT NOT NULL DEFAULT '';
+ALTER TABLE teams ADD COLUMN brand_color TEXT NOT NULL DEFAULT '';
+
+-- +goose Down
+SELECT 1;

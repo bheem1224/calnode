@@ -508,22 +508,24 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		durOptsRaw     sql.NullString
 		locOptsRaw     sql.NullString
 		ownerID        string
+		teamID         string
+		teamName       string
 	)
+	_ = allowPrivate
 	query := `
 		SELECT et.id, et.user_id, et.name, COALESCE(et.description, ''),
 		       et.duration_minutes, et.location_type, COALESCE(et.location_value, ''),
 		       et.max_future_days, et.min_notice_minutes, et.routing_mode, u.name, COALESCE(u.avatar_url, ''),
 		       et.price_cents, et.currency, et.msg_greeting, et.allow_phone_call, u.booking_accent,
 		       COALESCE(et.redirect_url, ''), et.require_email_verification,
-		       et.allow_multiple_durations, et.duration_options, et.location_options
+		       et.allow_multiple_durations, et.duration_options, et.location_options,
+		       COALESCE(et.team_id, ''), COALESCE(tm.name, '')
 		FROM event_types et
 		JOIN users u ON u.id = et.user_id
+		LEFT JOIN teams tm ON tm.id = et.team_id
 		WHERE et.slug = ? AND et.is_active = 1`
-	if !allowPrivate {
-		query += ` AND et.is_public = 1`
-	}
 	err := h.db.QueryRowContext(r.Context(), query, slug).
-		Scan(&etID, &ownerID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor, &redirectURL, &reqEmailVerify, &allowMultiDur, &durOptsRaw, &locOptsRaw)
+		Scan(&etID, &ownerID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor, &redirectURL, &reqEmailVerify, &allowMultiDur, &durOptsRaw, &locOptsRaw, &teamID, &teamName)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Page not found", http.StatusNotFound)
@@ -620,6 +622,13 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 
 	oooNote, oooRedirName, oooRedirHandle := h.ActiveOOONoticeForUser(r.Context(), ownerID)
 
+	displayHostsLabel := hostsLabel(hosts, loc)
+	displayBusinessName := ""
+	if teamID != "" && teamName != "" {
+		displayHostsLabel = teamName
+		displayBusinessName = brand.BusinessName
+	}
+
 	data := bookPageData{
 		OOONote:             oooNote,
 		OOORedirectName:     oooRedirName,
@@ -637,7 +646,7 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		AvatarURL:           hosts[0].AvatarURL,
 		Hosts:               capHostFaces(hosts, maxHostFaces),
 		HostsMore:           hostsOverflow(hosts, maxHostFaces),
-		HostsLabel:          hostsLabel(hosts, loc),
+		HostsLabel:          displayHostsLabel,
 		SoleHostName:        soleHostName(hosts),
 		MinNoticeLabel:      noticeLabel(minNotice, loc),
 		LocationLabel:       locationLabel(locType, locValue, loc),
@@ -662,7 +671,7 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		DataLayerFields:  template.JS(dlFields), // #nosec G203 -- json.Marshal output, which escapes <,>,& by default; safe for embedding in a <script> block
 		QuestionsJSON:    template.JS(qjson),    // #nosec G203 -- json.Marshal output, which escapes <,>,& by default; safe for embedding in a <script> block
 
-		BusinessName:             brand.BusinessName,
+		BusinessName:             displayBusinessName,
 		LogoURL:                  brand.LogoURL,
 		LogoHeight:               pageLogoHeight(brand.LogoHeight),
 		LogoOpacity:              opacityCSS(brand.LogoOpacity),

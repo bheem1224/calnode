@@ -100,7 +100,6 @@
     { id: "embed" as const, label: $t("eventTypeEditor.tabs.embed") },
   ]);
   let activeTab = $state<(typeof TABS)[number]["id"]>("general");
-  let sidebarCollapsed = $state(false);
   let durationMenuOpen = $state(false);
   const DURATION_PRESETS = [5, 10, 15, 20, 25, 30, 45, 60, 90, 120];
   let previewQuestions = $state<Question[]>([]);
@@ -679,6 +678,16 @@
     is_destination: boolean;
   };
   let connectedCalendars = $state<ConnectedCalendarItem[]>([]);
+  const displayCalendars = $derived.by(() => {
+    const personal = connectedCalendars.filter((c) => {
+      const lower = (c.name || "").toLowerCase();
+      if (lower.includes("holiday") || lower === "family" || (c.calendar_id || "").includes("#")) return false;
+      return c.is_destination || c.calendar_id === c.account_email || c.name === c.account_email || lower === "calendar";
+    });
+    return personal.length > 0
+      ? personal
+      : connectedCalendars.filter((c) => !(c.name || "").toLowerCase().includes("holiday") && (c.name || "").toLowerCase() !== "family");
+  });
   let availSchedules = $state<AvailabilitySchedule[]>([]);
 
   let allowPhoneCall = $state(false);
@@ -1341,47 +1350,28 @@
   {/if}
 
   <div
-    class="flex flex-col gap-6 pb-16 lg:grid lg:items-start {sidebarCollapsed
-      ? 'lg:grid-cols-[48px_minmax(340px,460px)] xl:grid-cols-[48px_minmax(340px,460px)_1fr]'
-      : 'lg:grid-cols-[176px_minmax(340px,460px)] xl:grid-cols-[176px_minmax(340px,460px)_1fr]'}"
+    class="flex flex-col gap-6 pb-16 lg:grid lg:items-start lg:grid-cols-[176px_minmax(340px,460px)] xl:grid-cols-[176px_minmax(340px,460px)_1fr]"
   >
     <!-- Sub-Navigation Rail (Left) -->
     <nav
       class="flex shrink-0 gap-1 overflow-x-auto pb-2 lg:flex-col lg:overflow-visible lg:pb-0"
       aria-label="Event type sections"
     >
-      <div class="hidden items-center justify-between px-2 pb-1 pt-1 lg:flex">
-        {#if !sidebarCollapsed}
-          <p class="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-            Setup
-          </p>
-        {/if}
-        <button
-          type="button"
-          onclick={() => (sidebarCollapsed = !sidebarCollapsed)}
-          class="rounded p-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-          title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-          aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-        >
-          {sidebarCollapsed ? "»" : "«"}
-        </button>
-      </div>
+      <p
+        class="hidden px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70 lg:block"
+      >
+        Setup
+      </p>
       {#each TABS as tab}
         <button
           type="button"
           onclick={() => (activeTab = tab.id)}
-          title={tab.label}
           class="shrink-0 rounded-md px-3 py-2 text-left text-sm font-medium transition-colors {activeTab ===
           tab.id
             ? 'bg-secondary text-secondary-foreground'
-            : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'} {sidebarCollapsed ? 'lg:px-2 lg:text-center' : ''}"
+            : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}"
         >
-          {#if sidebarCollapsed}
-            <span class="hidden lg:inline">{tab.label.slice(0, 2)}</span>
-            <span class="lg:hidden">{tab.label}</span>
-          {:else}
-            {tab.label}
-          {/if}
+          {tab.label}
         </button>
       {/each}
     </nav>
@@ -1466,7 +1456,7 @@
               {#if form.allow_multiple_durations}
                 <div class="sm:col-span-2 space-y-1.5 min-w-0">
                   <Label>{$t("eventTypeEditor.general.availableDurations")}</Label>
-                  <div class="flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border bg-background px-2.5 py-1.5">
+                  <div class="flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border border-input bg-transparent px-2.5 py-1.5 shadow-xs dark:bg-input/30">
                     {#each form.duration_options as d}
                       <span class="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs font-medium">
                         {d} mins
@@ -1949,12 +1939,14 @@
                       if (!form.destination_calendar_id) {
                         return $t("eventTypeEditor.location.addToCalendarDefault");
                       }
-                      const match = connectedCalendars.find(
+                      const match = displayCalendars.find(
+                        (c) => c.calendar_id === form.destination_calendar_id
+                      ) ?? connectedCalendars.find(
                         (c) => c.calendar_id === form.destination_calendar_id
                       );
-                      return match
-                        ? `${match.name || match.calendar_id}${match.account_email ? ` (${match.account_email})` : ""}`
-                        : form.destination_calendar_id;
+                      if (!match) return form.destination_calendar_id;
+                      const providerName = match.provider === "microsoft" ? "Outlook" : "Google Calendar";
+                      return `${providerName} · ${match.account_email || match.name || match.calendar_id}`;
                     })()}
                   </Select.Trigger>
                   <Select.Content>
@@ -1964,16 +1956,22 @@
                     >
                       {$t("eventTypeEditor.location.addToCalendarDefault")}
                     </Select.Item>
-                    {#each connectedCalendars as cal}
-                      {@const calLabel = `${cal.name || cal.calendar_id}${cal.account_email ? ` (${cal.account_email})` : ""}`}
+                    {#each displayCalendars as cal}
+                      {@const isMs = cal.provider === "microsoft"}
+                      {@const calLabel = `${isMs ? "Outlook" : "Google Calendar"} · ${cal.account_email || cal.name || cal.calendar_id}`}
                       <Select.Item value={cal.calendar_id} label={calLabel}>
-                        {calLabel}
+                        <span class="inline-flex items-center gap-2">
+                          <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-bold {isMs ? 'bg-sky-500/20 text-sky-400' : 'bg-blue-500/20 text-blue-400'}">
+                            {isMs ? "O" : "G"}
+                          </span>
+                          <span>{calLabel}</span>
+                        </span>
                       </Select.Item>
                     {/each}
                   </Select.Content>
                 </Select.Root>
                 <p class="text-xs text-muted-foreground">
-                  {$t("eventTypeEditor.location.addToCalendarHint")}
+                  Bookings always add to your main personal calendar; conflict checks still run across all enabled calendars.
                 </p>
               </div>
 
@@ -3481,24 +3479,26 @@
       {/if}
     </div>
 
-    <!-- Live Interactive Booking Preview (Right, hidden on mobile/tablet < 1280px) -->
-    <aside class="hidden w-full min-w-[380px] max-w-[520px] xl:block">
-      <BookingPreviewCard
-        name={form.name}
-        description={form.description}
-        duration={form.duration_minutes}
-        locationType={form.location_type}
-        locationValue={form.location_value}
-        hostName={$currentUser?.name ?? "Host"}
-        hostAvatar={$currentUser?.avatar_url ?? ""}
-        mode={activeTab === "questions" ? "form" : activeTab === "confirmation" ? "confirmation" : "calendar"}
-        allowPhoneCall={allowPhoneCall && isOnlineMeeting(form.location_type)}
-        allowMultipleDurations={form.allow_multiple_durations}
-        durationOptions={form.duration_options}
-        calendarEventTitle={form.calendar_event_title}
-        redirectUrl={form.redirect_url}
-        questions={previewQuestions}
-      />
+    <!-- Live Interactive Booking Preview (Right, vertically centered, hidden on < 1280px) -->
+    <aside class="hidden w-full min-w-[380px] max-w-[520px] justify-self-center xl:sticky xl:top-6 xl:flex xl:min-h-[calc(100vh-9rem)] xl:items-center xl:justify-center">
+      <div class="w-full">
+        <BookingPreviewCard
+          name={form.name}
+          description={form.description}
+          duration={form.duration_minutes}
+          locationType={form.location_type}
+          locationValue={form.location_value}
+          hostName={$currentUser?.name ?? "Host"}
+          hostAvatar={$currentUser?.avatar_url ?? ""}
+          mode={activeTab === "questions" ? "form" : activeTab === "confirmation" ? "confirmation" : "calendar"}
+          allowPhoneCall={allowPhoneCall && isOnlineMeeting(form.location_type)}
+          allowMultipleDurations={form.allow_multiple_durations}
+          durationOptions={form.duration_options}
+          calendarEventTitle={form.calendar_event_title}
+          redirectUrl={form.redirect_url}
+          questions={previewQuestions}
+        />
+      </div>
     </aside>
   </div>
 
