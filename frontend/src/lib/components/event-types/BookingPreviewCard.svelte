@@ -36,6 +36,8 @@
   let selectedDay = $state<number | null>(18);
   let selectedSlot = $state("10:00 AM");
   let previewDuration = $state<number | null>(null);
+  let previewGuestsOpen = $state(false);
+  let previewGuestsMode = $state<"single" | "list">("single");
   const activeDuration = $derived(
     allowMultipleDurations && durationOptions.length > 0
       ? (previewDuration && durationOptions.includes(previewDuration) ? previewDuration : durationOptions[0])
@@ -147,17 +149,29 @@
         {/if}
 
         <div class="mt-4 space-y-2 text-xs text-muted-foreground">
+          {#if mode === "form"}
+            <div class="space-y-1.5 border-b pb-2.5 text-foreground">
+              <div class="flex items-start gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mt-0.5 shrink-0 text-muted-foreground"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span class="font-medium">Wed, Nov {selectedDay ?? 18}, 2026<br/>{selectedSlot}</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                <span>America/New_York</span>
+              </div>
+            </div>
+          {/if}
           <div class="flex items-center gap-2">
             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             {#if allowMultipleDurations && durationOptions.length > 1}
-              <div class="flex flex-wrap gap-1">
+              <div class="inline-flex items-center gap-0.5 rounded-lg border p-0.5">
                 {#each durationOptions as d}
                   <button
                     type="button"
                     onclick={() => (previewDuration = d)}
-                    class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors {activeDuration === d
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-foreground hover:bg-muted/80'}"
+                    class="rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors {activeDuration === d
+                      ? 'bg-muted text-foreground font-semibold'
+                      : 'text-muted-foreground hover:text-foreground'}"
                   >{d}m</button>
                 {/each}
               </div>
@@ -175,10 +189,6 @@
       <!-- Right pane: Calendar+Slots OR Booking Form -->
       {#if mode === "form"}
         <div class="space-y-3 p-5">
-          <div class="flex items-center justify-between border-b pb-2.5 text-xs">
-            <span class="font-medium text-foreground">Wed, Nov {selectedDay ?? 18} · {selectedSlot}</span>
-            <span class="text-muted-foreground">America/New York</span>
-          </div>
           <div class="space-y-2.5 text-xs">
             <div>
               <div class="mb-1 font-medium text-foreground">Your name <span class="text-destructive">*</span></div>
@@ -188,12 +198,37 @@
               <div class="mb-1 font-medium text-foreground">Email address <span class="text-destructive">*</span></div>
               <div class="rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">jane@example.com</div>
             </div>
-            {#if allowPhoneCall}
-              <div>
-                <div class="mb-1 font-medium text-foreground">Phone number <span class="font-normal text-muted-foreground">(optional)</span></div>
-                <div class="rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">+1 (555) 000-0000</div>
-              </div>
-            {/if}
+            <div>
+              <div class="mb-1 font-medium text-foreground">Phone number <span class="font-normal text-muted-foreground">{allowPhoneCall ? "" : "(optional)"}</span></div>
+              <div class="rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">+1 (555) 000-0000</div>
+            </div>
+            <div>
+              <div class="mb-1 font-medium text-foreground">Additional notes</div>
+              <div class="rounded-md border bg-background px-2.5 py-2 text-muted-foreground">Please share anything that will help prepare...</div>
+            </div>
+            <div>
+              <button
+                type="button"
+                onclick={() => (previewGuestsOpen = !previewGuestsOpen)}
+                class="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+                Add guests
+              </button>
+              {#if previewGuestsOpen}
+                <div class="mt-2 space-y-2">
+                  <div class="inline-flex rounded-md border bg-muted/40 p-0.5 text-[11px]">
+                    <button type="button" onclick={() => (previewGuestsMode = "single")} class="rounded px-2 py-0.5 {previewGuestsMode === 'single' ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground'}">One at a time</button>
+                    <button type="button" onclick={() => (previewGuestsMode = "list")} class="rounded px-2 py-0.5 {previewGuestsMode === 'list' ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground'}">Add a list</button>
+                  </div>
+                  {#if previewGuestsMode === "single"}
+                    <div class="rounded-md border bg-background px-2.5 py-1.5 text-muted-foreground">Email</div>
+                  {:else}
+                    <div class="rounded-md border bg-background px-2.5 py-2 text-muted-foreground">john@doe.com, alex@smith.com</div>
+                  {/if}
+                </div>
+              {/if}
+            </div>
             {#each questions.filter((q) => !q.hidden) as q (q.id)}
               <div>
                 {#if q.type === "checkbox"}

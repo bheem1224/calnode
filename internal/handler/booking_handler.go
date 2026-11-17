@@ -828,12 +828,15 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		EventTypeSlug string `json:"event_type_slug"`
-		StartAt       string `json:"start_at"`
-		Name          string `json:"name"`
-		Email         string `json:"email"`
-		Phone         string `json:"phone"`
-		Timezone      string `json:"timezone"`
+		EventTypeSlug string   `json:"event_type_slug"`
+		StartAt       string   `json:"start_at"`
+		Name          string   `json:"name"`
+		Email         string   `json:"email"`
+		Phone         string   `json:"phone"`
+		ContactPhone  string   `json:"contact_phone"`
+		Notes         string   `json:"notes"`
+		Guests        []string `json:"guests"`
+		Timezone      string   `json:"timezone"`
 		// Language is the resolved page locale code (e.g. "es") the client already knows —
 		// sent explicitly rather than re-derived from Accept-Language/cookie server-side,
 		// since the embed widget's cross-origin fetch can't rely on the same-origin
@@ -1021,6 +1024,11 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		}
 		et.LocationType = "phone"
 		locValue = "tel:" + req.Phone
+	}
+	req.ContactPhone = strings.TrimSpace(req.ContactPhone)
+	if req.ContactPhone != "" && (len(req.ContactPhone) > 40 || !validPhone(req.ContactPhone)) {
+		h.writeError(w, http.StatusBadRequest, "invalid telephone number")
+		return
 	}
 	hosts, err := h.resolveEventTypeHosts(r.Context(), et.ID)
 	if err != nil {

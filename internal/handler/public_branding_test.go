@@ -33,6 +33,7 @@ func TestPublicPages_businessBranding(t *testing.T) {
 				t.Fatal(err)
 			}
 			slug, etID := seedEventTypeHTTP(t, h, key)
+			_, _ = database.Exec(`UPDATE event_types SET team_id = 'brand-team' WHERE id = ?`, etID)
 			seedBooking(t, database, "brand-booking", etID, userID, "2026-06-20T09:00:00Z", "2026-06-20T09:30:00Z", "confirmed")
 			token := issueTestToken(t, database, "brand-booking")
 			for _, page := range []struct {

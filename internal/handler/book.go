@@ -623,8 +623,12 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 	oooNote, oooRedirName, oooRedirHandle := h.ActiveOOONoticeForUser(r.Context(), ownerID)
 
 	displayHostsLabel := hostsLabel(hosts, loc)
+	displayBusinessName := ""
+	displayLogoURL := ""
 	if teamID != "" && teamName != "" {
 		displayHostsLabel = teamName
+		displayBusinessName = brand.BusinessName
+		displayLogoURL = brand.LogoURL
 	}
 
 	data := bookPageData{
@@ -669,8 +673,8 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		DataLayerFields:  template.JS(dlFields), // #nosec G203 -- json.Marshal output, which escapes <,>,& by default; safe for embedding in a <script> block
 		QuestionsJSON:    template.JS(qjson),    // #nosec G203 -- json.Marshal output, which escapes <,>,& by default; safe for embedding in a <script> block
 
-		BusinessName:             brand.BusinessName,
-		LogoURL:                  brand.LogoURL,
+		BusinessName:             displayBusinessName,
+		LogoURL:                  displayLogoURL,
 		LogoHeight:               pageLogoHeight(brand.LogoHeight),
 		LogoOpacity:              opacityCSS(brand.LogoOpacity),
 		BannerURL:                brand.BannerURL,
