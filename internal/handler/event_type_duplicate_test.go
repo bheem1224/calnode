@@ -129,6 +129,7 @@ func TestDuplicateEventType_copiesTheRowAndEveryChildDataset(t *testing.T) {
 	h, database, ownerKey, ownerID := setupWorkspaceWithDB(t)
 	memberID := seedMember(t, database, "u2", "member@example.com")
 	seedRichEventType(t, database, ownerID, memberID)
+	mustExec(t, database, `UPDATE event_types SET optimized_slots = 1, booking_form_config = ? WHERE id = 'src'`, `[{"key":"q:q2"},{"key":"name"},{"key":"q:q1"},{"key":"notes","hidden":true}]`)
 
 	rec := duplicate(t, h, ownerKey, "intro-call")
 	if rec.Code != http.StatusCreated {
@@ -193,6 +194,32 @@ func TestDuplicateEventType_copiesTheRowAndEveryChildDataset(t *testing.T) {
 	}
 	if got.MsgGreeting == nil || *got.MsgGreeting != "Hi! When suits you?" {
 		t.Errorf("msg_greeting: got %v", got.MsgGreeting)
+	}
+
+	var optimized int
+	var config string
+	if err := database.QueryRow(`SELECT optimized_slots, booking_form_config FROM event_types WHERE id = ?`, got.ID).Scan(&optimized, &config); err != nil {
+		t.Fatal(err)
+	}
+	if optimized != 1 {
+		t.Error("optimized_slots was not copied")
+	}
+	var entries []struct {
+		Key    string `json:"key"`
+		Hidden bool   `json:"hidden"`
+	}
+	if err := json.Unmarshal([]byte(config), &entries); err != nil || len(entries) != 4 {
+		t.Fatalf("copied form config: %q (%v)", config, err)
+	}
+	var q1, q2 string
+	if err := database.QueryRow(`SELECT id FROM event_type_questions WHERE event_type_id = ? AND label = ?`, got.ID, "What would you like to cover?").Scan(&q1); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT id FROM event_type_questions WHERE event_type_id = ? AND label = ?`, got.ID, "How did you hear about us?").Scan(&q2); err != nil {
+		t.Fatal(err)
+	}
+	if entries[0].Key != "q:"+q2 || entries[1].Key != "name" || entries[2].Key != "q:"+q1 || entries[3].Key != "notes" || !entries[3].Hidden {
+		t.Errorf("copied form layout not remapped: %s", config)
 	}
 
 	// seat_limit isn't in the API shape; check it on the row.
@@ -637,6 +664,8 @@ func TestDuplicateEventType_handlesEveryEventTypeColumn(t *testing.T) {
 		"location_options":            true,
 		"destination_calendar_id":     true,
 		"schedule_id":                 true,
+		"optimized_slots":             true,
+		"booking_form_config":         true,
 	}
 	// Deliberately not inherited, with the reason.
 	notInherited := map[string]string{

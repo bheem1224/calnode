@@ -3,9 +3,11 @@ package handler
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/calnode/calnode/internal/uid"
 )
@@ -22,8 +24,9 @@ const maxCopySlugAttempts = 50
 // errNoFreeCopySlug means every candidate slug up to maxCopySlugAttempts was taken.
 var errNoFreeCopySlug = errors.New("no free copy slug")
 
-// questionCopy is one intake question, without its id (the copy gets a fresh one).
+// questionCopy retains the source id to remap the form layout to its fresh copy.
 type questionCopy struct {
+	id              string
 	label           string
 	qType           string
 	options         sql.NullString // JSON array for option-based types; NULL otherwise
@@ -155,7 +158,8 @@ func (h *Handler) DuplicateEventType(w http.ResponseWriter, r *http.Request) {
 		  calendar_event_title, redirect_url, reply_to,
 		  hide_notes_in_calendar, hide_calendar_event_details, requires_confirmation,
 		  confirm_mode, confirm_notice_minutes, unconfirmed_blocks_slots, require_email_verification,
-		  allow_multiple_durations, duration_options, location_options, destination_calendar_id, schedule_id)
+		  allow_multiple_durations, duration_options, location_options, destination_calendar_id, schedule_id,
+		  optimized_slots, booking_form_config)
 		SELECT
 		  ?, user_id, team_id, ?, name, description,
 		  duration_minutes, slot_interval_minutes,
@@ -175,7 +179,8 @@ func (h *Handler) DuplicateEventType(w http.ResponseWriter, r *http.Request) {
 		  calendar_event_title, redirect_url, reply_to,
 		  hide_notes_in_calendar, hide_calendar_event_details, requires_confirmation,
 		  confirm_mode, confirm_notice_minutes, unconfirmed_blocks_slots, require_email_verification,
-		  allow_multiple_durations, duration_options, location_options, destination_calendar_id, schedule_id
+		  allow_multiple_durations, duration_options, location_options, destination_calendar_id, schedule_id,
+		  optimized_slots, booking_form_config
 		FROM event_types WHERE id = ?`, newID, newSlug, srcID); err != nil {
 		h.logger.ErrorContext(r.Context(), "duplicate event type: copy row", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -253,14 +258,14 @@ func loadEventTypeChildren(ctx context.Context, tx *sql.Tx, srcID string) (*even
 	var c eventTypeChildren
 
 	qRows, err := tx.QueryContext(ctx, `
-		SELECT label, type, options, required, position, COALESCE(identifier, ''), hidden, lock_if_prefilled
+		SELECT id, label, type, options, required, position, COALESCE(identifier, ''), hidden, lock_if_prefilled
 		FROM event_type_questions WHERE event_type_id = ? ORDER BY position`, srcID)
 	if err != nil {
 		return nil, err
 	}
 	for qRows.Next() {
 		var q questionCopy
-		if err := qRows.Scan(&q.label, &q.qType, &q.options, &q.required, &q.position, &q.identifier, &q.hidden, &q.lockIfPrefilled); err != nil {
+		if err := qRows.Scan(&q.id, &q.label, &q.qType, &q.options, &q.required, &q.position, &q.identifier, &q.hidden, &q.lockIfPrefilled); err != nil {
 			qRows.Close() // #nosec G104 -- already returning the scan error; nothing more actionable
 			return nil, err
 		}
@@ -340,12 +345,45 @@ func loadEventTypeChildren(ctx context.Context, tx *sql.Tx, srcID string) (*even
 // fresh id. Runs in the same transaction as the parent row copy, so any failure here
 // takes the whole duplicate with it.
 func insertEventTypeChildren(ctx context.Context, tx *sql.Tx, newID string, c *eventTypeChildren) error {
+	questionIDs := make(map[string]string, len(c.questions))
 	for _, q := range c.questions {
+		newQuestionID := uid.New()
+		questionIDs[q.id] = newQuestionID
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO event_type_questions (id, event_type_id, label, type, options, required, position, identifier, hidden, lock_if_prefilled)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			uid.New(), newID, q.label, q.qType, q.options, q.required, q.position, q.identifier, q.hidden, q.lockIfPrefilled); err != nil {
+			newQuestionID, newID, q.label, q.qType, q.options, q.required, q.position, q.identifier, q.hidden, q.lockIfPrefilled); err != nil {
 			return fmt.Errorf("copy question: %w", err)
+		}
+	}
+	// The saved layout interleaves system fields and question ids. Repoint those
+	// ids while retaining system settings, order and any future config fields.
+	var config string
+	if err := tx.QueryRowContext(ctx, `SELECT booking_form_config FROM event_types WHERE id = ?`, newID).Scan(&config); err != nil {
+		return fmt.Errorf("read booking form config: %w", err)
+	}
+	if strings.TrimSpace(config) != "" {
+		var entries []map[string]json.RawMessage
+		if json.Unmarshal([]byte(config), &entries) == nil {
+			changed := false
+			for _, entry := range entries {
+				var key string
+				if json.Unmarshal(entry["key"], &key) == nil && strings.HasPrefix(key, "q:") {
+					if replacement, ok := questionIDs[strings.TrimPrefix(key, "q:")]; ok {
+						entry["key"], _ = json.Marshal("q:" + replacement)
+						changed = true
+					}
+				}
+			}
+			if changed {
+				updated, err := json.Marshal(entries)
+				if err != nil {
+					return fmt.Errorf("encode booking form config: %w", err)
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE event_types SET booking_form_config = ? WHERE id = ?`, string(updated), newID); err != nil {
+					return fmt.Errorf("remap booking form config: %w", err)
+				}
+			}
 		}
 	}
 	for _, hc := range c.hosts {
