@@ -387,13 +387,15 @@ func (w *Worker) deliverWebhook(ctx context.Context, jobPayload string) error {
 		event           string
 		webhookURL      string
 		secretEnc       string
+		webhookID       string
+		bookingID       sql.NullString
 	)
 	err := w.db.QueryRowContext(ctx, `
-		SELECT d.payload, d.event, wh.url, wh.secret_enc
+		SELECT d.payload, d.event, wh.url, wh.secret_enc,wh.id,d.booking_id
 		FROM webhook_deliveries d
 		JOIN webhooks wh ON wh.id = d.webhook_id
 		WHERE d.id = ?`, p.WebhookDeliveryID).
-		Scan(&deliveryPayload, &event, &webhookURL, &secretEnc)
+		Scan(&deliveryPayload, &event, &webhookURL, &secretEnc, &webhookID, &bookingID)
 	if err == sql.ErrNoRows {
 		return nil // delivery or webhook deleted; skip silently
 	}
@@ -401,6 +403,22 @@ func (w *Worker) deliverWebhook(ctx context.Context, jobPayload string) error {
 		return fmt.Errorf("worker: fetch delivery: %w", err)
 	}
 
+	var envelope struct {
+		Data struct {
+			EventTypeID   string          `json:"event_type_id"`
+			EventTypeSlug string          `json:"event_type_slug"`
+			Answers       json.RawMessage `json:"answers"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal([]byte(deliveryPayload), &envelope)
+	eventID := envelope.Data.EventTypeID
+	if eventID == "" {
+		eventID = envelope.Data.EventTypeSlug
+	}
+	if !w.svc.DeliveryAuthorized(ctx, webhookID, bookingID.String, eventID, event) || (len(envelope.Data.Answers) > 0 && !w.svc.DeliveryAuthorized(ctx, webhookID, bookingID.String, eventID, "booking.answers")) {
+		_, _ = w.db.ExecContext(ctx, `UPDATE webhook_deliveries SET status='failed',last_attempted_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339), p.WebhookDeliveryID)
+		return nil
+	}
 	secret, err := w.svc.DecryptSecret(secretEnc)
 	if err != nil {
 		return fmt.Errorf("worker: decrypt secret: %w", err)

@@ -99,11 +99,22 @@ type listEventTypesOut struct {
 }
 
 func (h *Handler) mcpListEventTypes(ctx context.Context, _ *mcp.CallToolRequest, _ listEventTypesIn) (*mcp.CallToolResult, listEventTypesOut, error) {
+	authorizedCtx, authErr := h.authorizeMCPTool(ctx, "event_types.read", "", "")
+	if authErr != nil {
+		return nil, listEventTypesOut{}, authErr
+	}
+	ctx = authorizedCtx
+
+	scope, userID := "all", ""
+	if c, ok := mcpCallerFromContext(ctx); ok && c.Permissions != nil {
+		scope = c.Permissions["event_types.read"]
+		userID = c.UserID
+	}
 	rows, err := h.db.QueryContext(ctx, `
 		SELECT slug, name, duration_minutes, location_type, COALESCE(description, ''), max_per_day, max_per_week
 		FROM event_types
-		WHERE is_active = 1 AND is_public = 1
-		ORDER BY name`)
+		WHERE is_active = 1 AND is_public = 1 AND (?='all' OR user_id=? OR id IN(SELECT event_type_id FROM event_type_hosts WHERE user_id=?) OR (?='team' AND team_id IN(SELECT team_id FROM team_members WHERE user_id=?)))
+		ORDER BY name`, scope, userID, userID, scope, userID)
 	if err != nil {
 		return nil, listEventTypesOut{}, fmt.Errorf("list event types: %w", err)
 	}
@@ -154,6 +165,12 @@ type getEventTypeOut struct {
 }
 
 func (h *Handler) mcpGetEventType(ctx context.Context, _ *mcp.CallToolRequest, in getEventTypeIn) (*mcp.CallToolResult, getEventTypeOut, error) {
+	authorizedCtx, authErr := h.authorizeMCPTool(ctx, "event_types.read", "event", in.EventTypeID)
+	if authErr != nil {
+		return nil, getEventTypeOut{}, authErr
+	}
+	ctx = authorizedCtx
+
 	out := getEventTypeOut{ID: in.EventTypeID, Questions: []eventTypeQuestion{}}
 	var etID string
 	var isActive int
@@ -223,6 +240,12 @@ type getSlotsOut struct {
 }
 
 func (h *Handler) mcpGetAvailableSlots(ctx context.Context, _ *mcp.CallToolRequest, in getSlotsIn) (*mcp.CallToolResult, getSlotsOut, error) {
+	authorizedCtx, authErr := h.authorizeMCPTool(ctx, "availability.read", "event", in.EventTypeID)
+	if authErr != nil {
+		return nil, getSlotsOut{}, authErr
+	}
+	ctx = authorizedCtx
+
 	// includeTaken is false and must stay false. An agent that receives unbookable
 	// times alongside bookable ones will eventually offer one, and the caller has no
 	// way to tell them apart.
@@ -242,6 +265,12 @@ type getBookingIn struct {
 }
 
 func (h *Handler) mcpGetBooking(ctx context.Context, _ *mcp.CallToolRequest, in getBookingIn) (*mcp.CallToolResult, bookingJSON, error) {
+	authorizedCtx, authErr := h.authorizeMCPTool(ctx, "bookings.read", "booking", in.BookingID)
+	if authErr != nil {
+		return nil, bookingJSON{}, authErr
+	}
+	ctx = authorizedCtx
+
 	b, err := h.bookingSvc.Get(ctx, in.BookingID)
 	if err != nil {
 		if errors.Is(err, booking.ErrNotFound) {
@@ -282,6 +311,12 @@ type listBookingsOut struct {
 // into memory, and status="cancelled" could never match anything because the
 // underlying query hardcoded a cancelled exclusion.
 func (h *Handler) mcpListBookings(ctx context.Context, _ *mcp.CallToolRequest, in listBookingsIn) (*mcp.CallToolResult, listBookingsOut, error) {
+	authorizedCtx, authErr := h.authorizeMCPTool(ctx, "bookings.read", "", "")
+	if authErr != nil {
+		return nil, listBookingsOut{}, authErr
+	}
+	ctx = authorizedCtx
+
 	// Members see only bookings they host; admins/owner (and the local stdio operator)
 	// see the whole workspace.
 	userID, fullAccess := mcpCallerScope(ctx)
@@ -293,6 +328,9 @@ func (h *Handler) mcpListBookings(ctx context.Context, _ *mcp.CallToolRequest, i
 		Status: in.Status,
 		Limit:  bookingsPageDefault,
 		Offset: max(in.Offset, 0),
+	}
+	if c, ok := mcpCallerFromContext(ctx); ok && c.Permissions["bookings.read"] == "team" {
+		f.ViewerTeamID = c.UserID
 	}
 	if !fullAccess {
 		f.ViewerID = userID
@@ -387,6 +425,12 @@ type createBookingIn struct {
 }
 
 func (h *Handler) mcpCreateBooking(ctx context.Context, _ *mcp.CallToolRequest, in createBookingIn) (*mcp.CallToolResult, bookingJSON, error) {
+	authorizedCtx, authErr := h.authorizeMCPTool(ctx, "bookings.create", "event", in.EventTypeID)
+	if authErr != nil {
+		return nil, bookingJSON{}, authErr
+	}
+	ctx = authorizedCtx
+
 	if in.EventTypeID == "" || in.SlotStart == "" || in.AttendeeName == "" || in.AttendeeEmail == "" {
 		return nil, bookingJSON{}, fmt.Errorf("event_type_id, slot_start, attendee_name, and attendee_email are required")
 	}
@@ -442,6 +486,12 @@ type rescheduleBookingIn struct {
 }
 
 func (h *Handler) mcpRescheduleBooking(ctx context.Context, _ *mcp.CallToolRequest, in rescheduleBookingIn) (*mcp.CallToolResult, bookingJSON, error) {
+	authorizedCtx, authErr := h.authorizeMCPTool(ctx, "bookings.reschedule", "booking", in.BookingID)
+	if authErr != nil {
+		return nil, bookingJSON{}, authErr
+	}
+	ctx = authorizedCtx
+
 	if in.BookingID == "" || in.NewSlotStart == "" {
 		return nil, bookingJSON{}, fmt.Errorf("booking_id and new_slot_start are required")
 	}
@@ -500,6 +550,12 @@ type cancelBookingIn struct {
 }
 
 func (h *Handler) mcpCancelBooking(ctx context.Context, _ *mcp.CallToolRequest, in cancelBookingIn) (*mcp.CallToolResult, bookingJSON, error) {
+	authorizedCtx, authErr := h.authorizeMCPTool(ctx, "bookings.cancel", "booking", in.BookingID)
+	if authErr != nil {
+		return nil, bookingJSON{}, authErr
+	}
+	ctx = authorizedCtx
+
 	if in.BookingID == "" {
 		return nil, bookingJSON{}, fmt.Errorf("booking_id is required")
 	}
@@ -546,6 +602,12 @@ type meetingNotesOut struct {
 }
 
 func (h *Handler) mcpGetMeetingNotes(ctx context.Context, _ *mcp.CallToolRequest, in getMeetingNotesIn) (*mcp.CallToolResult, meetingNotesOut, error) {
+	authorizedCtx, authErr := h.authorizeMCPTool(ctx, "notes.read", "booking", in.BookingID)
+	if authErr != nil {
+		return nil, meetingNotesOut{}, authErr
+	}
+	ctx = authorizedCtx
+
 	// A member may only read meetings they host; don't reveal others' meeting content.
 	if userID, fullAccess := mcpCallerScope(ctx); !fullAccess && !h.userHostsBooking(ctx, userID, in.BookingID) {
 		return nil, meetingNotesOut{}, fmt.Errorf("booking not found: %s", in.BookingID)
@@ -574,6 +636,12 @@ type transcriptOut struct {
 }
 
 func (h *Handler) mcpGetTranscript(ctx context.Context, _ *mcp.CallToolRequest, in getTranscriptIn) (*mcp.CallToolResult, transcriptOut, error) {
+	authorizedCtx, authErr := h.authorizeMCPTool(ctx, "transcripts.read", "booking", in.BookingID)
+	if authErr != nil {
+		return nil, transcriptOut{}, authErr
+	}
+	ctx = authorizedCtx
+
 	if userID, fullAccess := mcpCallerScope(ctx); !fullAccess && !h.userHostsBooking(ctx, userID, in.BookingID) {
 		return nil, transcriptOut{}, fmt.Errorf("booking not found: %s", in.BookingID)
 	}

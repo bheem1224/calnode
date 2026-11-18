@@ -24,7 +24,7 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		SELECT u.id, u.email, u.name, u.iana_timezone, u.is_admin, u.is_owner, u.email_login,
 		       COALESCE(u.provider,''), COALESCE(u.avatar_url,''), COALESCE(u.handle,''), u.created_at,
 		       u.archived_at, COALESCE(u.archived_by,''), COALESCE(ab.name,''),
-		       COALESCE(u.custom_role_id,''), COALESCE(r.name,''), COALESCE(r.is_impersonatable, 1)
+		       COALESCE(u.custom_role_id,''), COALESCE(r.name,''), COALESCE(r.is_impersonatable, 1),u.legacy_permissions
 		FROM users u
 		LEFT JOIN users ab ON ab.id = u.archived_by
 		LEFT JOIN roles r ON r.id = u.custom_role_id
@@ -41,6 +41,7 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	type userRow struct {
+		LegacyAccess     bool      `json:"legacy_access"`
 		ID               string    `json:"id"`
 		Email            string    `json:"email"`
 		Name             string    `json:"name"`
@@ -70,7 +71,7 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		var archivedAt sql.NullString
 		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Timezone, &isAdmin, &isOwner, &emailLogin,
 			&u.Provider, &u.AvatarURL, &u.Handle, &u.CreatedAt, &archivedAt, &u.ArchivedBy, &u.ArchivedByName,
-			&u.CustomRoleID, &u.CustomRoleName, &isImpTarget); err != nil {
+			&u.CustomRoleID, &u.CustomRoleName, &isImpTarget, &u.LegacyAccess); err != nil {
 			continue
 		}
 		u.IsAdmin = isAdmin != 0
@@ -132,7 +133,7 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 // Guards (PRD §8.10):
 //   - cannot delete yourself;
 //   - the owner cannot be removed (transfer ownership first);
-//   - only the owner may remove another admin;
+//   - administrators may remove peers, while ownership stays protected;
 //   - removal is blocked while the user still has upcoming bookings as host —
 //     no silent orphaning; those must be reassigned or cancelled first.
 func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
@@ -162,10 +163,6 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if targetIsOwner != 0 {
 		h.writeError(w, http.StatusBadRequest, "cannot remove the workspace owner; transfer ownership first")
-		return
-	}
-	if targetIsAdmin != 0 && !admin.IsOwner {
-		h.writeError(w, http.StatusForbidden, "only the workspace owner can remove an admin")
 		return
 	}
 
@@ -212,7 +209,7 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := h.db.ExecContext(r.Context(), `DELETE FROM users WHERE id = ?`, targetID)
+	res, err := h.db.ExecContext(r.Context(), `DELETE FROM users WHERE id = ? AND is_owner=0`, targetID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "delete user: exec", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -222,6 +219,7 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusNotFound, "user not found")
 		return
 	}
+	h.securityAudit(r.Context(), admin.ID, "member.delete", targetID, nil)
 	h.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

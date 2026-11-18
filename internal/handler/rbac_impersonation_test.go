@@ -58,7 +58,7 @@ func TestRBAC_AdminImpersonatesMember_And_ProtectedCustomRoleBlocked(t *testing.
 	mustExec(t, database, `INSERT INTO users (id, email, name, iana_timezone) VALUES (?, 'vip@example.com', 'VIP Exec', 'UTC')`, vipID)
 
 	// 1. Create a protected custom role (is_impersonatable = false) and assign to VIP.
-	cReq := authReq(http.MethodPost, "/v1/roles", `{"name":"Executive","can_impersonate":false,"is_impersonatable":false}`, apiKey)
+	cReq := sessionRequest(t, database, ownerID, http.MethodPost, "/v1/roles", `{"name":"Executive","can_impersonate":false,"is_impersonatable":false}`)
 	cRec := httptest.NewRecorder()
 	h.RequireAuth(h.CreateRole)(cRec, cReq)
 	if cRec.Code != http.StatusCreated {
@@ -82,7 +82,7 @@ func TestRBAC_AdminImpersonatesMember_And_ProtectedCustomRoleBlocked(t *testing.
 	}
 
 	// Custom role CAN be edited.
-	uReq := authReq(http.MethodPatch, "/v1/roles/"+roleResp.ID, `{"name":"Executive VIP","can_impersonate":false,"is_impersonatable":false,"can_manage_teams":true}`, apiKey)
+	uReq := sessionRequest(t, database, ownerID, http.MethodPatch, "/v1/roles/"+roleResp.ID, `{"name":"Executive VIP","can_impersonate":false,"is_impersonatable":false,"can_manage_teams":true}`)
 	uReq.SetPathValue("id", roleResp.ID)
 	uRec := httptest.NewRecorder()
 	h.RequireAuth(h.UpdateRole)(uRec, uReq)
@@ -159,8 +159,8 @@ func TestRBAC_AdminImpersonatesMember_And_ProtectedCustomRoleBlocked(t *testing.
 }
 
 func TestRoleDescriptionCreateUpdateAndList(t *testing.T) {
-	h, _, key, _ := setupWorkspaceWithDB(t)
-	create := authReq(http.MethodPost, "/v1/roles", `{"name":"Support","description":"Handles customer requests","can_manage_users":true}`, key)
+	h, database, key, ownerID := setupWorkspaceWithDB(t)
+	create := sessionRequest(t, database, ownerID, http.MethodPost, "/v1/roles", `{"name":"Support","description":"Handles customer requests","can_manage_users":true}`)
 	out := httptest.NewRecorder()
 	h.RequireAuth(h.CreateRole)(out, create)
 	if out.Code != http.StatusCreated {
@@ -174,7 +174,7 @@ func TestRoleDescriptionCreateUpdateAndList(t *testing.T) {
 		t.Fatalf("create response: %s (%v)", out.Body, err)
 	}
 	// Existing clients that omit description on update must not erase it.
-	update := authReq(http.MethodPatch, "/v1/roles/"+role.ID, `{"name":"Support team","can_manage_users":true}`, key)
+	update := sessionRequest(t, database, ownerID, http.MethodPatch, "/v1/roles/"+role.ID, `{"name":"Support team","can_manage_users":true}`)
 	update.SetPathValue("id", role.ID)
 	changed := httptest.NewRecorder()
 	h.RequireAuth(h.UpdateRole)(changed, update)
@@ -184,7 +184,7 @@ func TestRoleDescriptionCreateUpdateAndList(t *testing.T) {
 	if err := json.Unmarshal(changed.Body.Bytes(), &role); err != nil || role.Description != "Handles customer requests" {
 		t.Fatalf("update response: %s (%v)", changed.Body, err)
 	}
-	edit := authReq(http.MethodPatch, "/v1/roles/"+role.ID, `{"name":"Support team","description":"Handles scheduling","can_manage_users":true}`, key)
+	edit := sessionRequest(t, database, ownerID, http.MethodPatch, "/v1/roles/"+role.ID, `{"name":"Support team","description":"Handles scheduling","can_manage_users":true}`)
 	edit.SetPathValue("id", role.ID)
 	edited := httptest.NewRecorder()
 	h.RequireAuth(h.UpdateRole)(edited, edit)

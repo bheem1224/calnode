@@ -44,10 +44,9 @@ func (h *Handler) createSession(ctx context.Context, w http.ResponseWriter, user
 //   - Omitted (or naming the caller): signs the caller out everywhere **except the
 //     session that made the request**. "Sign out my other devices" is the action people
 //     actually want; dropping the current session too would log the operator out of the
-//     page they clicked it on, which is what Logout is for. A caller authenticating with
-//     an API key has no current session, so for them every session goes.
+//     page they clicked it on, which is what Logout is for. API-key callers are refused.
 //   - Naming someone else: an offboarding tool. Admin-only, and mirroring roles.go's
-//     tiers — an admin may revoke a member, only the owner may revoke another admin, and
+//     protections — administrators may revoke peer sessions, and
 //     nobody may revoke the owner's sessions but the owner (there is exactly one owner,
 //     so that case is the self branch).
 //
@@ -80,7 +79,7 @@ func (h *Handler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// The actor's capability class is checked before the target is looked up, so a
 		// member cannot use this endpoint's 404 to probe which user ids exist.
-		if !actor.IsAdmin {
+		if actor.Permissions != nil && !actor.Permissions.Has("members.password") || actor.Permissions == nil && !actor.IsAdmin {
 			h.writeError(w, http.StatusForbidden, "admin access required")
 			return
 		}
@@ -99,10 +98,6 @@ func (h *Handler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		if targetIsOwner != 0 {
 			h.writeError(w, http.StatusForbidden, "the owner's sessions can only be revoked by the owner")
-			return
-		}
-		if targetIsAdmin != 0 && !actor.IsOwner {
-			h.writeError(w, http.StatusForbidden, "only the workspace owner can revoke another admin's sessions")
 			return
 		}
 	}
@@ -139,7 +134,7 @@ func (h *Handler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 			`DELETE FROM sessions WHERE user_id = ? AND id <> ?`, targetID, current)
 	} else {
 		sessionRes, err = tx.ExecContext(r.Context(),
-			`DELETE FROM sessions WHERE user_id = ?`, targetID)
+			`DELETE FROM sessions WHERE user_id = ? AND EXISTS(SELECT 1 FROM users WHERE id=? AND is_owner=0)`, targetID, targetID)
 	}
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "revoke sessions: delete sessions", "error", err)
@@ -148,7 +143,7 @@ func (h *Handler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tokenRes, err := tx.ExecContext(r.Context(),
-		`DELETE FROM oauth_access_tokens WHERE user_id = ?`, targetID)
+		`DELETE FROM oauth_access_tokens WHERE user_id = ? AND (?=1 OR EXISTS(SELECT 1 FROM users WHERE id=? AND is_owner=0))`, targetID, boolArg(self), targetID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "revoke sessions: delete oauth tokens", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")

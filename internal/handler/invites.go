@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/mailer"
 	"github.com/calnode/calnode/internal/uid"
 )
@@ -34,15 +35,28 @@ func (h *Handler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var req struct {
-		Email string `json:"email"`
+		Email        string `json:"email"`
+		Role         string `json:"role"`
+		CustomRoleID string `json:"custom_role_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	if req.Role == "" {
+		req.Role = "member"
+	}
+	if !h.validateInviteGrant(w, r, admin, req.Role, req.CustomRoleID) {
+		return
+	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	if req.Email == "" {
 		h.writeError(w, http.StatusBadRequest, "email is required")
+		return
+	}
+	// Replacing a pending invitation is also a revocation of its assigned role.
+	var pendingRole string
+	if h.db.QueryRowContext(r.Context(), `SELECT role FROM invite_tokens WHERE email=? AND used_at IS NULL LIMIT 1`, req.Email).Scan(&pendingRole) == nil && !h.validateInviteGrant(w, r, admin, pendingRole, "") {
 		return
 	}
 
@@ -59,7 +73,7 @@ func (h *Handler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, inviteURL, expiresAt, err := h.issueInvite(r.Context(), req.Email, admin.Name, admin.ID)
+	id, inviteURL, expiresAt, err := h.issueInvite(r.Context(), req.Email, admin.Name, admin.ID, req.Role, req.CustomRoleID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "invite: issue", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -67,19 +81,21 @@ func (h *Handler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusCreated, map[string]any{
-		"id":         id,
-		"email":      req.Email,
-		"invite_url": inviteURL,
-		"expires_at": expiresAt,
-		"email_sent": h.isEmailEnabled(),
-		"note":       "This link expires in 7 days and is locked to " + req.Email + ". It cannot be used by anyone else.",
+		"id":             id,
+		"email":          req.Email,
+		"role":           req.Role,
+		"custom_role_id": req.CustomRoleID,
+		"invite_url":     inviteURL,
+		"expires_at":     expiresAt,
+		"email_sent":     h.isEmailEnabled(),
+		"note":           "This link expires in 7 days and is locked to " + req.Email + ". It cannot be used by anyone else.",
 	})
 }
 
 // issueInvite invalidates any unused invite for email, mints a fresh token, emails
 // the link when SMTP is configured, and returns the invite URL + expiry. Shared by
 // CreateInvite and ResendInvite so the two never diverge.
-func (h *Handler) issueInvite(ctx context.Context, email, adminName, adminID string) (id, inviteURL, expiresAt string, err error) {
+func (h *Handler) issueInvite(ctx context.Context, email, adminName, adminID, role, customRoleID string) (id, inviteURL, expiresAt string, err error) {
 	// Only one live link per email — best effort. If this fails, the worst case is
 	// more than one valid invite link existing briefly; not a security issue.
 	//nolint:errcheck
@@ -95,9 +111,9 @@ func (h *Handler) issueInvite(ctx context.Context, email, adminName, adminID str
 	id = uid.New()
 	expiresAt = time.Now().UTC().Add(inviteDuration).Format(time.RFC3339)
 	if _, err := h.db.ExecContext(ctx, `
-		INSERT INTO invite_tokens (id, email, token_hash, created_by, expires_at)
-		VALUES (?, ?, ?, ?, ?)`,
-		id, email, hashInviteToken(token), adminID, expiresAt); err != nil {
+		INSERT INTO invite_tokens (id, email, token_hash, created_by, expires_at,role,custom_role_id)
+		VALUES (?, ?, ?, ?, ?,?,NULLIF(?,''))`,
+		id, email, hashInviteToken(token), adminID, expiresAt, role, customRoleID); err != nil {
 		return "", "", "", err
 	}
 
@@ -112,6 +128,7 @@ func (h *Handler) issueInvite(ctx context.Context, email, adminName, adminID str
 				"If you weren't expecting this invite, you can safely ignore this email.",
 		})
 	}
+	h.securityAudit(ctx, adminID, "invite.issue", id, map[string]string{"email": email, "role": role, "custom_role_id": customRoleID})
 	return id, inviteURL, expiresAt, nil
 }
 
@@ -126,9 +143,9 @@ func (h *Handler) ResendInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 
-	var email string
+	var email, role, customRoleID string
 	err := h.db.QueryRowContext(r.Context(),
-		`SELECT email FROM invite_tokens WHERE id = ? AND used_at IS NULL`, id).Scan(&email)
+		`SELECT email,role,COALESCE(custom_role_id,'') FROM invite_tokens WHERE id = ? AND used_at IS NULL`, id).Scan(&email, &role, &customRoleID)
 	if errors.Is(err, sql.ErrNoRows) {
 		h.writeError(w, http.StatusNotFound, "invite not found or already used")
 		return
@@ -139,7 +156,10 @@ func (h *Handler) ResendInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newID, inviteURL, expiresAt, err := h.issueInvite(r.Context(), email, admin.Name, admin.ID)
+	if !h.validateInviteGrant(w, r, admin, role, customRoleID) {
+		return
+	}
+	newID, inviteURL, expiresAt, err := h.issueInvite(r.Context(), email, admin.Name, admin.ID, role, customRoleID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "resend invite: issue", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -163,7 +183,7 @@ func (h *Handler) ListInvites(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	rows, err := h.db.QueryContext(r.Context(), `
-		SELECT id, email, expires_at, created_by
+		SELECT id, email, expires_at, created_by,role,COALESCE(custom_role_id,'')
 		FROM invite_tokens
 		WHERE used_at IS NULL AND expires_at > ?
 		ORDER BY expires_at ASC`, now)
@@ -175,15 +195,20 @@ func (h *Handler) ListInvites(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type invite struct {
-		ID        string `json:"id"`
-		Email     string `json:"email"`
-		ExpiresAt string `json:"expires_at"`
-		CreatedBy string `json:"created_by"`
+		ID           string `json:"id"`
+		Email        string `json:"email"`
+		ExpiresAt    string `json:"expires_at"`
+		CreatedBy    string `json:"created_by"`
+		Role         string `json:"role"`
+		CustomRoleID string `json:"custom_role_id"`
 	}
 	var out []invite
 	for rows.Next() {
 		var inv invite
-		if err := rows.Scan(&inv.ID, &inv.Email, &inv.ExpiresAt, &inv.CreatedBy); err != nil {
+		if err := rows.Scan(&inv.ID, &inv.Email, &inv.ExpiresAt, &inv.CreatedBy, &inv.Role, &inv.CustomRoleID); err != nil {
+			continue
+		}
+		if inv.Role == "admin" && !admin.Permissions.Has("members.invite_admin") {
 			continue
 		}
 		out = append(out, inv)
@@ -202,6 +227,14 @@ func (h *Handler) RevokeInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	var role string
+	if h.db.QueryRowContext(r.Context(), `SELECT role FROM invite_tokens WHERE id=? AND used_at IS NULL`, id).Scan(&role) != nil {
+		h.writeError(w, 404, "invite not found")
+		return
+	}
+	if !h.validateInviteGrant(w, r, admin, role, "") {
+		return
+	}
 	res, err := h.db.ExecContext(r.Context(),
 		`DELETE FROM invite_tokens WHERE id = ? AND used_at IS NULL`, id)
 	if err != nil {
@@ -213,6 +246,7 @@ func (h *Handler) RevokeInvite(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusNotFound, "invite not found or already used")
 		return
 	}
+	h.securityAudit(r.Context(), admin.ID, "invite.revoke", id, nil)
 	h.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -273,15 +307,39 @@ func (h *Handler) ClaimInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	var inviteID, email string
+	var inviteID, email, role, customRoleID, issuer string
 	if err := tx.QueryRowContext(r.Context(), `
-		SELECT id, email FROM invite_tokens
+		SELECT id, email,role,COALESCE(custom_role_id,''),created_by FROM invite_tokens
 		WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`,
-		tokenHash, now).Scan(&inviteID, &email); err != nil {
+		tokenHash, now).Scan(&inviteID, &email, &role, &customRoleID, &issuer); err != nil {
 		h.writeError(w, http.StatusNotFound, "invite not found or expired")
 		return
 	}
 
+	issuerGrants, grantErr := access.Load(r.Context(), tx, issuer)
+	if role == "admin" && customRoleID != "" {
+		h.writeError(w, 400, "admin invitations cannot also assign a custom role")
+		return
+	}
+	required := "members.invite_member"
+	if role == "admin" {
+		required = "members.invite_admin"
+	}
+	if grantErr != nil || !issuerGrants.Has(required) {
+		h.writeError(w, 403, "invitation no longer authorized")
+		return
+	}
+	if customRoleID != "" {
+		roleGrants, roleErr := access.Role(r.Context(), tx, customRoleID)
+		if roleErr != nil || access.Validate(roleGrants, issuerGrants, false) != nil {
+			h.writeError(w, 403, "invited role no longer authorized")
+			return
+		}
+	}
+	isAdmin := 0
+	if role == "admin" {
+		isAdmin = 1
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "claim invite: bcrypt", "error", err)
@@ -291,9 +349,9 @@ func (h *Handler) ClaimInvite(w http.ResponseWriter, r *http.Request) {
 
 	userID := uid.New()
 	if _, err := tx.ExecContext(r.Context(), `
-		INSERT INTO users (id, email, name, iana_timezone, is_admin, email_login, password_hash)
-		VALUES (?, ?, ?, ?, 0, 1, ?)`,
-		userID, email, req.Name, req.Timezone, string(hash)); err != nil {
+		INSERT INTO users (id, email, name, iana_timezone, is_admin, email_login, password_hash,custom_role_id)
+		VALUES (?, ?, ?, ?, ?, 1, ?,NULLIF(?,''))`,
+		userID, email, req.Name, req.Timezone, isAdmin, string(hash), customRoleID); err != nil {
 		h.logger.ErrorContext(r.Context(), "claim invite: insert user", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -318,9 +376,36 @@ func (h *Handler) ClaimInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.securityAudit(r.Context(), issuer, "invite.claim", userID, map[string]string{"role": role})
 	h.writeJSON(w, http.StatusCreated, map[string]any{
 		"user_id": userID,
 		"email":   email,
 		"name":    req.Name,
 	})
+}
+
+func (h *Handler) validateInviteGrant(w http.ResponseWriter, r *http.Request, actor AuthUser, role, customRoleID string) bool {
+	if role == "admin" && customRoleID != "" {
+		h.writeError(w, 400, "admin invitations cannot also assign a custom role")
+		return false
+	}
+	required := "members.invite_member"
+	if role == "admin" {
+		required = "members.invite_admin"
+	} else if role != "member" {
+		h.writeError(w, 400, "invalid invitation role")
+		return false
+	}
+	if actor.Permissions != nil && !actor.Permissions.Has(required) {
+		h.writeError(w, 403, "permission required: "+required)
+		return false
+	}
+	if customRoleID != "" {
+		roleGrants, roleErr := access.Role(r.Context(), h.db, customRoleID)
+		if roleErr != nil || access.Validate(roleGrants, actor.Permissions, false) != nil {
+			h.writeError(w, 403, "role is not assignable")
+			return false
+		}
+	}
+	return true
 }

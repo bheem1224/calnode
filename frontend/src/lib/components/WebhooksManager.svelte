@@ -1,5 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+ import CredentialOwnerPicker from '$lib/components/CredentialOwnerPicker.svelte';
+ let credentialOwner=$state('');
+ import { currentUser } from '$lib/stores';
+ const can=(p:string)=>!!$currentUser?.permissions?.[p] || (!$currentUser?.permissions && !!$currentUser?.is_admin);
 	import { api, type EventType, type Webhook, type WebhookDelivery } from '$lib/api';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { ConfirmDialog } from '$lib/components/ui/confirm-dialog';
@@ -130,11 +134,15 @@
 	let createError = $state('');
 	let deleteOpen = $state(false);
 	let deleteId = $state('');
+ let revealedSecret=$state('');
+ let rotateTarget=$state('');
+ let rotateOpen=$state(false);
+ async function rotateSecret(){try {revealedSecret=(await api.post<{secret:string}>(`/v1/webhooks/${rotateTarget}/rotate`,{})).secret;}catch(e:any){error=e.message;}}
 
 	async function load() {
 		try {
 			const [res, etRes] = await Promise.all([
-				api.get<{ items: Webhook[] }>('/v1/webhooks'),
+				api.get<{ items: Webhook[] }>(`/v1/webhooks${credentialOwner ? '?user_id='+encodeURIComponent(credentialOwner) : ''}`),
 				isScoped
 					? Promise.resolve({ items: [] as EventType[] })
 					: api.get<{ items: EventType[] }>('/v1/event-types').catch(() => ({ items: [] as EventType[] }))
@@ -166,7 +174,7 @@
 			await api.post('/v1/webhooks', {
 				url: form.url,
 				events: form.events,
-				fields: form.fields,
+				fields: form.fields.filter(f=>f!=='answers'||can('bookings.answers')),
 				event_type_id: (eventTypeId || form.event_type_id) || null
 			});
 			form = {
@@ -232,6 +240,10 @@
 	}
 </script>
 
+<ConfirmDialog bind:open={rotateOpen} title={$t('permissions.rotateTitle')} description={$t('permissions.rotateHint')} confirmText={$t('permissions.rotate')} onConfirm={rotateSecret} />
+
+{#if revealedSecret}<div role="status" class="mb-4 rounded-lg border bg-card p-4 space-y-2"><p class="text-sm">{$t('permissions.secretOnce')}</p><code class="block break-all rounded-md bg-muted p-3 text-xs">{revealedSecret}</code><Button type="button" variant="outline" size="sm" onclick={() => navigator.clipboard.writeText(revealedSecret)}>{$t('common.copy')}</Button></div>{/if}
+
 <ConfirmDialog
 	bind:open={deleteOpen}
 	title={$t('webhooks.confirm.delete.title')}
@@ -253,12 +265,12 @@
 			<p class="mt-1 text-sm text-muted-foreground">{$t('webhooks.subtitle')}</p>
 		{/if}
 	</div>
-	<Button onclick={() => { showCreate = !showCreate; createError = ''; }}>
+	<Button disabled={!!credentialOwner || !can('webhooks.create')} onclick={() => { showCreate = !showCreate; createError = ''; }}>
 		{showCreate ? $t('webhooks.new.toggleCancel') : $t('webhooks.new.toggleOpen')}
 	</Button>
 </div>
 
-{#if showCreate}
+{#if showCreate && !credentialOwner}
 	<div class="mb-6 rounded-lg border bg-card p-6">
 		<h2 class="mb-4 text-sm font-semibold">{$t('webhooks.new.title')}</h2>
 		{#if createError}<p class="mb-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{createError}</p>{/if}
@@ -324,6 +336,8 @@
 	</div>
 {/if}
 
+<CredentialOwnerPicker bind:value={credentialOwner} permission="webhooks.read" onChange={load} />
+
 {#if error}<p class="mb-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>{/if}
 
 {#if loading}
@@ -370,14 +384,15 @@
 							</td>
 							<td class="px-4 py-3 text-muted-foreground">{fmtDate(wh.created_at)}</td>
 							<td class="px-4 py-3 text-right whitespace-nowrap">
-								<Tooltip.Root>
-									<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} onclick={() => toggleDeliveries(wh.id)}>
+								{#if can('webhooks.rotate')}<Button type="button" size="sm" variant="ghost" onclick={() => {rotateTarget=wh.id;rotateOpen=true;}}>{$t('permissions.rotate')}</Button>{/if}
+<Tooltip.Root>
+									<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} disabled={!can('webhooks.deliveries')} onclick={() => toggleDeliveries(wh.id)}>
 										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
 									</Tooltip.Trigger>
 									<Tooltip.Content>{openDeliveries === wh.id ? $t('webhooks.tooltip.hideDeliveries') : $t('webhooks.tooltip.deliveries')}</Tooltip.Content>
 								</Tooltip.Root>
 								<Tooltip.Root>
-									<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} onclick={() => del(wh.id)}>
+									<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} disabled={!can('webhooks.delete')} onclick={() => del(wh.id)}>
 										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
 									</Tooltip.Trigger>
 									<Tooltip.Content>{$t('webhooks.tooltip.delete')}</Tooltip.Content>

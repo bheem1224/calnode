@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/calnode/calnode/internal/access"
 )
 
 type contextKey string
@@ -16,16 +18,21 @@ const ctxKeyUser contextKey = "user"
 
 // AuthUser is the authenticated caller stored in request context.
 type AuthUser struct {
-	ID         string
-	Email      string
-	Name       string
-	IANATZ     string
-	TimeFormat string // "12h" or "24h"
-	WeekStart  int    // 0=Sunday, 1=Monday
-	DateFormat string // "dmy", "mdy", or "ymd"
-	AvatarURL  string
-	IsAdmin    bool
-	IsOwner    bool
+	Permissions   access.Grants
+	CredentialID  string
+	InstanceAdmin bool
+	InstanceOwner bool
+	Operation     string
+	ID            string
+	Email         string
+	Name          string
+	IANATZ        string
+	TimeFormat    string // "12h" or "24h"
+	WeekStart     int    // 0=Sunday, 1=Monday
+	DateFormat    string // "dmy", "mdy", or "ymd"
+	AvatarURL     string
+	IsAdmin       bool
+	IsOwner       bool
 
 	// Granular RBAC & impersonation state
 	CustomRoleID      string
@@ -56,7 +63,7 @@ func userFromContext(ctx context.Context) (AuthUser, bool) {
 // derived from the is_owner / is_admin flags. Owner implies admin.
 func (u AuthUser) Role() string {
 	switch {
-	case u.IsOwner:
+	case u.IsOwner || u.InstanceOwner:
 		return "owner"
 	case u.IsAdmin:
 		return "admin"
@@ -106,7 +113,11 @@ func (h *Handler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 			now := time.Now().UTC().Format(time.RFC3339Nano)
 			_, _ = h.db.ExecContext(r.Context(),
 				`UPDATE api_keys SET last_used_at = ? WHERE id = ?`, now, keyID)
-			next(w, r.WithContext(context.WithValue(r.Context(), ctxKeyUser, user)))
+			if err := h.loadAuthorization(r.Context(), &user, keyID); err != nil {
+				h.writeError(w, 401, "invalid or expired API key")
+				return
+			}
+			h.authorizedCall(w, r, user, next)
 			return
 		}
 
@@ -138,7 +149,11 @@ func (h *Handler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 				user.CanManageUsers = user.IsOwner || user.IsAdmin || (canUsers.Valid && canUsers.Int64 != 0)
 				user.CanManageSettings = user.IsOwner || user.IsAdmin || (canSettings.Valid && canSettings.Int64 != 0)
 				user.CanManageTeams = user.IsOwner || user.IsAdmin || (canTeams.Valid && canTeams.Int64 != 0)
-				next(w, r.WithContext(context.WithValue(r.Context(), ctxKeyUser, user)))
+				if err := h.loadAuthorization(r.Context(), &user, ""); err != nil {
+					h.writeError(w, 401, "invalid session")
+					return
+				}
+				h.authorizedCall(w, r, user, next)
 				return
 			}
 		}

@@ -1858,6 +1858,15 @@ func (h *Handler) ListBookings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if user.Permissions != nil {
+		switch user.Permissions["bookings.read"] {
+		case "own":
+			f.ViewerID = user.ID
+		case "team":
+			f.ViewerID = user.ID
+			f.ViewerTeamID = user.ID
+		}
+	}
 	bookings, err := h.bookingSvc.List(r.Context(), f)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list bookings", "error", err)

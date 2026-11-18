@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"github.com/calnode/calnode/internal/access"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -72,7 +74,7 @@ var consentTmpl = template.Must(template.New("consent").Parse(`<!doctype html>
 <body><div class="card">
   <h1>Connect to {{.Business}}</h1>
   <p><span class="who">{{.ClientName}}</span> wants to access your scheduling workspace as <span class="who">{{.UserEmail}}</span>.</p>
-  <div class="scope">It will be able to read your event types and availability, and create, reschedule, and cancel bookings on your behalf.</div>
+  <p>Choose what this connection may do. Access stays limited to your current role and the resources shown below.</p>
   <form method="post" action="/oauth/authorize">
     <input type="hidden" name="response_type" value="{{.AR.ResponseType}}">
     <input type="hidden" name="client_id" value="{{.AR.ClientID}}">
@@ -83,6 +85,8 @@ var consentTmpl = template.Must(template.New("consent").Parse(`<!doctype html>
     <input type="hidden" name="scope" value="{{.AR.Scope}}">
     <input type="hidden" name="resource" value="{{.AR.Resource}}">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="hidden" name="permissions_present" value="1">
+    <fieldset class="scope"><legend>Connection permissions</legend>{{range .Permissions}}<label style="display:block;padding:.4rem 0"><input type="checkbox" name="permissions" value="{{.ID}}" {{if .Checked}}checked{{end}}> {{.Label}} · {{.Scope}}</label>{{end}}</fieldset>
     <div class="row">
       <button class="deny" name="decision" value="deny" type="submit">Deny</button>
       <button class="allow" name="decision" value="allow" type="submit">Allow</button>
@@ -104,7 +108,7 @@ func (h *Handler) AuthorizeMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, email, ok := h.sessionUser(r)
+	userID, email, ok := h.sessionUser(r)
 	if !ok {
 		// Not signed in — bounce through the existing SSO login and return here.
 		if h.getGoogleAuth() != nil || h.getMicrosoftAuth() != nil {
@@ -120,6 +124,11 @@ func (h *Handler) AuthorizeMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	grants, grantErr := access.Load(r.Context(), h.db, userID)
+	if grantErr != nil || !grants.Has("mcp.connect") {
+		http.Error(w, "your role does not allow MCP connections", 403)
+		return
+	}
 	h.renderConsent(w, r, ar, email)
 }
 
@@ -156,13 +165,23 @@ func (h *Handler) AuthorizeMCPDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	current, grantErr := access.Load(r.Context(), h.db, userID)
+	if grantErr != nil || !current.Has("mcp.connect") {
+		h.redirectAuthError(w, r, ar, "access_denied", "MCP connections are not allowed")
+		return
+	}
+	granted, grantErr := selectedMCPGrants(current, ar, r)
+	if grantErr != nil {
+		h.redirectAuthError(w, r, ar, "invalid_scope", grantErr.Error())
+		return
+	}
 	code := "mcac_" + randHex(32)
 	expires := time.Now().UTC().Add(mcpAuthCodeTTL).Format(time.RFC3339)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := h.db.ExecContext(r.Context(), `
-		INSERT INTO oauth_auth_codes (code_hash, client_id, user_id, redirect_uri, code_challenge, scope, resource, expires_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		hashAPIKey(code), ar.ClientID, userID, ar.RedirectURI, ar.CodeChallenge, ar.Scope, ar.Resource, expires, now); err != nil {
+		INSERT INTO oauth_auth_codes (code_hash, client_id, user_id, redirect_uri, code_challenge, scope, resource, expires_at, created_at,permissions_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,?)`,
+		hashAPIKey(code), ar.ClientID, userID, ar.RedirectURI, ar.CodeChallenge, ar.Scope, ar.Resource, expires, now, granted.JSON()); err != nil {
 		h.logger.ErrorContext(r.Context(), "oauth: store auth code", "error", err)
 		h.redirectAuthError(w, r, ar, "server_error", "could not issue code")
 		return
@@ -211,16 +230,26 @@ func (h *Handler) tokenAuthCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var userID, storedClient, storedRedirect, challenge, scope, resource, expiresAt string
+	var grantJSON sql.NullString
 	err := h.db.QueryRowContext(r.Context(), `
-		SELECT user_id, client_id, redirect_uri, code_challenge, scope, resource, expires_at
+		SELECT user_id, client_id, redirect_uri, code_challenge, scope, resource, expires_at,permissions_json
 		FROM oauth_auth_codes WHERE code_hash = ?`, hashAPIKey(code)).
-		Scan(&userID, &storedClient, &storedRedirect, &challenge, &scope, &resource, &expiresAt)
+		Scan(&userID, &storedClient, &storedRedirect, &challenge, &scope, &resource, &expiresAt, &grantJSON)
 	if err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "unknown or used authorization code")
 		return
 	}
 	// Single use: consume immediately, whatever happens next.
-	_, _ = h.db.ExecContext(r.Context(), `DELETE FROM oauth_auth_codes WHERE code_hash = ?`, hashAPIKey(code))
+	used, consumeErr := h.db.ExecContext(r.Context(), `DELETE FROM oauth_auth_codes WHERE code_hash = ?`, hashAPIKey(code))
+	if consumeErr != nil {
+		writeOAuthError(w, 400, "invalid_grant", "code unavailable")
+		return
+	}
+	n, _ := used.RowsAffected()
+	if n != 1 {
+		writeOAuthError(w, 400, "invalid_grant", "code already consumed")
+		return
+	}
 
 	if exp, _ := time.Parse(time.RFC3339, expiresAt); time.Now().UTC().After(exp) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "authorization code expired")
@@ -235,7 +264,7 @@ func (h *Handler) tokenAuthCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.issueAndWriteTokens(w, r, clientID, userID, scope, resource, "")
+	h.issueAndWriteTokens(w, r, clientID, userID, scope, resource, "", grantJSON)
 }
 
 func (h *Handler) tokenRefresh(w http.ResponseWriter, r *http.Request) {
@@ -246,14 +275,15 @@ func (h *Handler) tokenRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var id, userID, storedClient, scope, resource string
+	var grantJSON sql.NullString
 	// Archived users refresh nothing: their access tokens no longer validate
 	// (VerifyMCPBearer filters on archived_at), so minting fresh ones here
 	// would hand live credential material to a dead account.
 	err := h.db.QueryRowContext(r.Context(), `
-		SELECT t.id, t.user_id, t.client_id, t.scope, t.resource FROM oauth_access_tokens t
+		SELECT t.id, t.user_id, t.client_id, t.scope, t.resource,t.permissions_json FROM oauth_access_tokens t
 		JOIN users u ON u.id = t.user_id
 		WHERE t.refresh_hash = ? AND u.archived_at IS NULL`,
-		hashAPIKey(refresh)).Scan(&id, &userID, &storedClient, &scope, &resource)
+		hashAPIKey(refresh)).Scan(&id, &userID, &storedClient, &scope, &resource, &grantJSON)
 	if err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "unknown refresh token")
 		return
@@ -262,28 +292,52 @@ func (h *Handler) tokenRefresh(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "client_id mismatch")
 		return
 	}
-	h.issueAndWriteTokens(w, r, storedClient, userID, scope, resource, id)
+	h.issueAndWriteTokens(w, r, storedClient, userID, scope, resource, id, grantJSON)
 }
 
 // issueAndWriteTokens mints a fresh access+refresh token pair and writes the token
 // response. When replaceID is non-empty the existing row is rotated in place (refresh);
 // otherwise a new row is inserted (authorization_code).
-func (h *Handler) issueAndWriteTokens(w http.ResponseWriter, r *http.Request, clientID, userID, scope, resource, replaceID string) {
-	access := "mcat_" + randHex(32)
+func (h *Handler) issueAndWriteTokens(w http.ResponseWriter, r *http.Request, clientID, userID, scope, resource, replaceID string, grantJSON sql.NullString) {
+	accessToken := "mcat_" + randHex(32)
 	refresh := "mcrt_" + randHex(32)
 	now := time.Now().UTC()
 	exp := now.Add(mcpAccessTokenTTL)
 
+	current, grantErr := access.Load(r.Context(), h.db, userID)
+	if grantErr != nil || !current.Has("mcp.connect") {
+		writeOAuthError(w, 400, "invalid_grant", "MCP permission revoked")
+		return
+	}
+	if !grantJSON.Valid {
+		grantJSON.String = current.JSON()
+	}
+	effective := access.Intersect(current, access.Parse(grantJSON.String))
+	if !effective.Has("mcp.connect") {
+		writeOAuthError(w, 400, "invalid_grant", "MCP grant revoked")
+		return
+	}
+	if resource == "" {
+		resource = h.baseURL + "/mcp"
+	}
 	var err error
 	if replaceID != "" {
-		_, err = h.db.ExecContext(r.Context(), `
-			UPDATE oauth_access_tokens SET token_hash = ?, refresh_hash = ?, expires_at = ?, last_used_at = NULL
-			WHERE id = ?`, hashAPIKey(access), hashAPIKey(refresh), exp.Format(time.RFC3339), replaceID)
+		var result sql.Result
+		result, err = h.db.ExecContext(r.Context(), `
+			UPDATE oauth_access_tokens SET token_hash = ?, refresh_hash = ?, expires_at = ?, last_used_at = NULL,permissions_json=?,resource=?
+			WHERE id = ? AND refresh_hash=?`, hashAPIKey(accessToken), hashAPIKey(refresh), exp.Format(time.RFC3339), effective.JSON(), resource, replaceID, hashAPIKey(r.PostForm.Get("refresh_token")))
+		if err == nil {
+			n, _ := result.RowsAffected()
+			if n != 1 {
+				writeOAuthError(w, 400, "invalid_grant", "refresh token already used")
+				return
+			}
+		}
 	} else {
 		_, err = h.db.ExecContext(r.Context(), `
-			INSERT INTO oauth_access_tokens (id, token_hash, refresh_hash, client_id, user_id, scope, resource, expires_at, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			uid.New(), hashAPIKey(access), hashAPIKey(refresh), clientID, userID, scope, resource, exp.Format(time.RFC3339), now.Format(time.RFC3339Nano))
+			INSERT INTO oauth_access_tokens (id, token_hash, refresh_hash, client_id, user_id, scope, resource, expires_at, created_at,permissions_json)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,?)`,
+			uid.New(), hashAPIKey(accessToken), hashAPIKey(refresh), clientID, userID, scope, resource, exp.Format(time.RFC3339), now.Format(time.RFC3339Nano), effective.JSON())
 	}
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "oauth: issue token", "error", err)
@@ -295,7 +349,7 @@ func (h *Handler) issueAndWriteTokens(w http.ResponseWriter, r *http.Request, cl
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	// hand-rolled to keep field order conventional
-	resp := `{"access_token":"` + access + `","token_type":"Bearer","expires_in":` +
+	resp := `{"access_token":"` + accessToken + `","token_type":"Bearer","expires_in":` +
 		strconv.Itoa(int(mcpAccessTokenTTL.Seconds())) + `,"refresh_token":"` + refresh + `","scope":"` + scope + `"}`
 	_, _ = w.Write([]byte(resp))
 }
@@ -337,6 +391,29 @@ func (h *Handler) parseAuthRequest(ctx context.Context, get func(string) string)
 	if ar.Method != "S256" {
 		return ar, true, errStr("code_challenge_method must be S256")
 	}
+	if ar.Scope == "" {
+		ar.Scope = "mcp"
+	}
+	for _, scope := range strings.Fields(ar.Scope) {
+		if scope == "mcp" {
+			continue
+		}
+		found := false
+		for _, id := range mcpActions {
+			if id == scope {
+				found = true
+			}
+		}
+		if !found {
+			return ar, true, errStr("unsupported scope")
+		}
+	}
+	if ar.Resource == "" {
+		ar.Resource = h.baseURL + "/mcp"
+	}
+	if ar.Resource != h.baseURL+"/mcp" {
+		return ar, true, errStr("invalid resource")
+	}
 	return ar, true, nil
 }
 
@@ -365,12 +442,29 @@ func (h *Handler) renderConsent(w http.ResponseWriter, r *http.Request, ar authR
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action "+formAction+"; base-uri 'none'")
 	w.Header().Set("X-Frame-Options", "DENY")
+	userID, _, _ := h.sessionUser(r)
+	current, _ := access.Load(r.Context(), h.db, userID)
+	type choice struct {
+		ID, Label, Scope string
+		Checked          bool
+	}
+	choices := []choice{}
+	for _, id := range mcpActions {
+		if !current.Has(id) {
+			continue
+		}
+		if ar.Scope != "mcp" && !strings.Contains(" "+ar.Scope+" ", " "+id+" ") {
+			continue
+		}
+		choices = append(choices, choice{id, strings.ReplaceAll(strings.ReplaceAll(id, "_", " "), ".", "  -  "), current[id], id == "event_types.read" || id == "availability.read" || id == "bookings.read"})
+	}
 	_ = consentTmpl.Execute(w, map[string]any{
-		"Business":   business,
-		"ClientName": clientName,
-		"UserEmail":  email,
-		"AR":         ar,
-		"CSRF":       csrf,
+		"Permissions": choices,
+		"Business":    business,
+		"ClientName":  clientName,
+		"UserEmail":   email,
+		"AR":          ar,
+		"CSRF":        csrf,
 	})
 }
 

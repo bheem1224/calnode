@@ -202,10 +202,6 @@ func (h *Handler) AdminSetPassword(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusForbidden, "the owner's password can only be changed by the owner")
 		return
 	}
-	if targetIsAdmin != 0 && !admin.IsOwner {
-		h.writeError(w, http.StatusForbidden, "only the workspace owner can reset an admin's password")
-		return
-	}
 
 	newHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -213,18 +209,33 @@ func (h *Handler) AdminSetPassword(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if _, err := h.db.ExecContext(r.Context(),
-		`UPDATE users SET password_hash = ?, email_login = 1 WHERE id = ?`,
-		string(newHash), targetID); err != nil {
-		h.logger.ErrorContext(r.Context(), "admin set password: update", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		h.writeError(w, 500, "could not reset password")
 		return
 	}
-	// targetID is never the caller (checked above), so there's no "current session" to
-	// preserve — revoke every session the target holds, same reasoning as ChangePassword.
-	if _, err := h.db.ExecContext(r.Context(),
-		`DELETE FROM sessions WHERE user_id = ?`, targetID); err != nil {
-		h.logger.ErrorContext(r.Context(), "admin set password: revoke sessions", "error", err, "user_id", targetID)
+	defer tx.Rollback()
+	result, err := tx.ExecContext(r.Context(), `UPDATE users SET password_hash=?,email_login=1 WHERE id=? AND is_owner=0`, string(newHash), targetID)
+	if err != nil {
+		h.writeError(w, 500, "could not reset password")
+		return
 	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		h.writeError(w, 409, "target account changed; reload and try again")
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(), `DELETE FROM sessions WHERE user_id=?`, targetID); err != nil {
+		h.writeError(w, 500, "could not revoke sessions")
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(), `DELETE FROM oauth_access_tokens WHERE user_id=?`, targetID); err != nil {
+		h.writeError(w, 500, "could not revoke agent connections")
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		h.writeError(w, 500, "could not reset password")
+		return
+	}
+	h.securityAudit(r.Context(), admin.ID, "member.password_reset", targetID, nil)
 	h.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

@@ -96,7 +96,7 @@ func TestArchiveUser_cannotArchiveOwner(t *testing.T) {
 	}
 }
 
-func TestRestoreUser_adminOnlyRestoresOwnArchives(t *testing.T) {
+func TestRestoreUser_adminsCanRestorePeerArchives(t *testing.T) {
 	h, database, ownerKey, _ := setupWorkspaceWithDB(t)
 	adminAKey := "adminA-restore-key"
 	adminBKey := "adminB-restore-key"
@@ -107,16 +107,17 @@ func TestRestoreUser_adminOnlyRestoresOwnArchives(t *testing.T) {
 	// Member archived by AdminA.
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin,archived_at,archived_by) VALUES ('m','m@example.com','Member','UTC',0,'2026-01-01T00:00:00Z','a')`)
 
-	// AdminB cannot restore AdminA's archive.
+	// Administrators have equal restore authority.
 	req := authReq(http.MethodPost, "/v1/users/m/restore", "", adminBKey)
 	req.SetPathValue("id", "m")
 	rec := httptest.NewRecorder()
 	h.RequireAuth(h.RestoreUser)(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("adminB restoring adminA's archive: got %d; want 403 — %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("adminB restoring adminA's archive: got %d; want 200 — %s", rec.Code, rec.Body.String())
 	}
 
-	// AdminA (the archiver) can.
+	// Re-archive so the original administrator can also restore.
+	database.Exec(`UPDATE users SET archived_at='2026-01-01T00:00:00Z',archived_by='a' WHERE id='m'`)
 	req = authReq(http.MethodPost, "/v1/users/m/restore", "", adminAKey)
 	req.SetPathValue("id", "m")
 	rec = httptest.NewRecorder()

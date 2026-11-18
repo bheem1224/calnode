@@ -61,9 +61,11 @@
 		}
 	}
 
-	function canManage(team: Team): boolean {
-		return Boolean($currentUser?.is_admin || team.my_role === 'owner');
-	}
+	function canManage(team: Team, action = 'teams.update'): boolean {
+        const scope=$currentUser?.permissions?.[action];
+        if($currentUser?.permissions) return scope==='all' || (scope==='team' && !!team.my_role) || (scope==='own' && team.my_role==='owner');
+        return Boolean($currentUser?.is_admin || team.my_role==='owner');
+    }
 
 	function copyTeamUrl(slug: string) {
 		const url = `${window.location.origin}/team/${slug}`;
@@ -219,7 +221,7 @@
 		<h1 class="text-2xl font-semibold tracking-tight">{$t('teams.title')}</h1>
 		<p class="mt-1 text-sm text-muted-foreground">{$t('teams.subtitle')}</p>
 	</div>
-	{#if $currentUser?.is_admin}
+	{#if $currentUser?.permissions?.['teams.create'] || (!$currentUser?.permissions && $currentUser?.is_admin)}
 		<Button onclick={() => { showCreate = !showCreate; }}>{showCreate ? $t('common.cancel') : $t('teams.newTeam')}</Button>
 	{/if}
 </div>
@@ -283,7 +285,7 @@
 						{#if canManage(team)}
 							<Button size="sm" variant="ghost" class="h-8 text-xs" onclick={() => startRename(team)}>{$t('teams.rename')}</Button>
 						{/if}
-						{#if $currentUser?.is_admin}
+						{#if canManage(team,'teams.delete')}
 							<Button size="sm" variant="ghost" class="h-8 text-xs text-destructive hover:text-destructive" onclick={() => deleteTeam(team)}>{$t('common.delete')}</Button>
 						{/if}
 					</div>
@@ -316,7 +318,7 @@
 												</div>
 											</td>
 											<td class="py-2">
-												{#if canManage(team)}
+												{#if canManage(team,'teams.members')}
 													<Select.Root
 														type="single"
 														value={m.role ?? 'member'}
@@ -342,13 +344,13 @@
 												<Input
 													type="number"
 													value={m.routing_priority}
-													disabled={!canManage(team)}
+													disabled={!canManage(team,'teams.members')}
 													class="h-7 w-20 text-xs"
 													onchange={(e) => savePriority(team.id, m.id, +(e.currentTarget as HTMLInputElement).value)}
 												/>
 											</td>
 											<td class="py-2 text-right">
-												{#if canManage(team)}
+												{#if canManage(team,'teams.members')}
 													<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:text-destructive" onclick={() => removeMember(team.id, m.id)}>{$t('teams.members.remove')}</Button>
 												{/if}
 											</td>
@@ -359,7 +361,7 @@
 							</div>
 						{/if}
 
-						{#if canManage(team) && users.length > 0}
+						{#if canManage(team,'teams.members') && users.length > 0}
 							<!-- Add a member -->
 							<div class="flex items-center gap-2">
 								<Select.Root

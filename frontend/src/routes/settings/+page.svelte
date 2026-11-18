@@ -113,7 +113,7 @@
 	const visibleCards = $derived.by(() => {
 		const q = query.trim().toLowerCase();
 		return cards.filter((c) => {
-			if (c.adminOnly && !$currentUser?.is_admin) return false;
+			if (c.adminOnly && !$currentUser?.permissions?.[c.href.endsWith('/members')?'members.read':c.href.endsWith('/branding')?'branding.read':'settings.read']) return false;
 			if (!q) return true;
 			return (
 				c.title.toLowerCase().includes(q) ||

@@ -114,6 +114,7 @@ func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{
+		"permissions":           user.Permissions,
 		"booking_accent":        accent,
 		"handle":                handleOut.String,
 		"id":                    user.ID,
@@ -126,7 +127,7 @@ func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
 		"week_start":            user.WeekStart,
 		"date_format":           user.DateFormat,
 		"is_admin":              user.IsAdmin,
-		"is_owner":              user.IsOwner,
+		"is_owner":              user.IsOwner || user.InstanceOwner,
 		"role":                  user.Role(),
 		"custom_role_id":        user.CustomRoleID,
 		"custom_role_name":      user.CustomRoleName,
@@ -140,6 +141,11 @@ func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
 		"notify_host_booking":    user.NotifyHostBooking,
 		"notify_host_cancel":     user.NotifyHostCancel,
 		"notify_host_reschedule": user.NotifyHostReschedule,
+	}
+	if user.InstanceAdmin || user.IsAdmin {
+		var recover bool
+		_ = h.db.QueryRowContext(r.Context(), `SELECT ownership_recovery_enabled=1 AND NOT EXISTS(SELECT 1 FROM users WHERE is_owner=1) FROM server_settings WHERE id=1`).Scan(&recover)
+		out["can_claim_ownership"] = recover
 	}
 	if user.AvatarURL != "" {
 		out["avatar_url"] = user.AvatarURL
@@ -379,7 +385,7 @@ func (h *Handler) PatchMe(w http.ResponseWriter, r *http.Request) {
 		"week_start":            current.WeekStart,
 		"date_format":           current.DateFormat,
 		"is_admin":              user.IsAdmin,
-		"is_owner":              user.IsOwner,
+		"is_owner":              user.IsOwner || user.InstanceOwner,
 		"role":                  user.Role(),
 		"custom_role_id":        user.CustomRoleID,
 		"custom_role_name":      user.CustomRoleName,

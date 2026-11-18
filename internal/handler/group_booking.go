@@ -52,10 +52,13 @@ func (h *Handler) resolveGroupHosts(ctx context.Context, rawHandles string) ([]g
 	hosts := make([]groupHostInfo, 0, len(handles))
 	for _, handle := range handles {
 		var u groupHostInfo
+		// Reserved references remain valid if a public handle is added later.
+		byID := strings.HasPrefix(handle, "id:")
+		identifier := strings.TrimPrefix(handle, "id:")
 		err := h.db.QueryRowContext(ctx, `
 			SELECT id, name, COALESCE(handle, ''), iana_timezone
 			FROM users
-			WHERE LOWER(handle) = ? AND archived_at IS NULL`, handle).
+			WHERE archived_at IS NULL AND ((?=1 AND LOWER(id)=?) OR (?=0 AND LOWER(handle)=?))`, boolArg(byID), identifier, boolArg(byID), identifier).
 			Scan(&u.ID, &u.Name, &u.Handle, &u.TZ)
 		if err != nil {
 			return nil, err

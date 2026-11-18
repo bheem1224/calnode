@@ -1,4 +1,8 @@
+export type PermissionGrant = Record<string, 'own' | 'team' | 'all'>;
+export type PermissionDefinition = { id:string; group:string; scopes:string[]; delegable:boolean };
 export type User = {
+	permissions?: PermissionGrant;
+	can_claim_ownership?: boolean;
 	booking_accent: string;
 	handle?: string;
 	id: string;
@@ -219,6 +223,9 @@ export type Booking = {
 };
 
 export type APIKey = {
+	permissions: PermissionGrant;
+	expires_at?: string;
+	legacy: boolean;
 	id: string;
 	name: string;
 	created_at: string;
@@ -226,6 +233,8 @@ export type APIKey = {
 };
 
 export type OAuthConnection = {
+	permissions?: PermissionGrant;
+	legacy?: boolean;
 	id: string;
 	client_name: string;
 	created_at: string;
@@ -350,6 +359,7 @@ export type LLMSettings = {
 };
 
 export type TeamMember = {
+ legacy_access?: boolean;
 	id: string;
 	email: string;
 	name: string;
@@ -408,6 +418,8 @@ export type UpcomingBooking = {
 };
 
 export type Invite = {
+	role: 'member' | 'admin';
+	custom_role_id?: string;
 	id: string;
 	email: string;
 	expires_at: string;
@@ -445,6 +457,7 @@ export type OOOEntry = {
 };
 
 export type RBACRole = {
+	permissions: PermissionGrant;
 	id: string;
 	name: string;
 	description: string;

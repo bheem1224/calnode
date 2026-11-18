@@ -1,5 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+ import PermissionEditor from '$lib/components/PermissionEditor.svelte';
+ import OwnershipDialog from '$lib/components/OwnershipDialog.svelte';
+ import SecurityAudit from '$lib/components/SecurityAudit.svelte';
+ import type { PermissionGrant } from '$lib/api';
 	import { api, type TeamMember, type Invite, type UpcomingBooking, type RBACRole, type ImpersonationLogEntry } from '$lib/api';
 	import { currentUser } from '$lib/stores';
 	import { Button } from '$lib/components/ui/button';
@@ -19,6 +23,10 @@
 	let roles: RBACRole[] = $state([]);
 	let impLogs: ImpersonationLogEntry[] = $state([]);
 	let newRoleName = $state('');
+ let newPermissions = $state<PermissionGrant>({});
+ let ownershipOpen=$state(false),ownershipTarget=$state('');
+ let inviteRole=$state<'member'|'admin'>('member'),inviteCustomRole=$state('');
+ const can=(p:string)=>!!$currentUser?.permissions?.[p] || (!$currentUser?.permissions && !!$currentUser?.is_admin);
 	let newRoleDescription = $state('');
 	let roleSearch = $state('');
 	let roleDialogOpen = $state(false);
@@ -76,8 +84,8 @@
 	async function load() {
 		try {
 			const [membersRes, invitesRes, rolesRes, logsRes] = await Promise.all([
-				api.get<TeamMember[]>(showArchived ? '/v1/users?include_archived=true' : '/v1/users'),
-				api.get<Invite[]>('/v1/invites'),
+				can('members.read') ? api.get<TeamMember[]>(showArchived ? '/v1/users?include_archived=true' : '/v1/users') : Promise.resolve([]),
+				can('members.invite_member') ? api.get<Invite[]>('/v1/invites') : Promise.resolve([]),
 				api.get<{ items: RBACRole[] }>('/v1/roles').catch(() => ({ items: [] })),
 				api.get<{ items: ImpersonationLogEntry[] }>('/v1/admin/impersonate/logs').catch(() => ({ items: [] }))
 			]);
@@ -96,6 +104,7 @@
 
 	function startEditRole(r: RBACRole) {
 		editingRoleId = r.id;
+ newPermissions={...r.permissions};
 		newRoleName = r.name;
 		newRoleDescription = r.description ?? '';
 		roleDialogOpen = true;
@@ -109,6 +118,7 @@
 	function cancelEditRole() {
 		editingRoleId = '';
 		newRoleName = '';
+ newPermissions={};
 		newRoleDescription = '';
 		roleDialogOpen = false;
 		newRoleCanImp = false;
@@ -125,6 +135,7 @@
 		try {
 			const payload = {
 				name,
+ permissions:newPermissions,
 				description: newRoleDescription.trim(),
 				can_impersonate: newRoleCanImp,
 				is_impersonatable: newRoleIsImpersonatable,
@@ -193,7 +204,7 @@
 			const res = await api.post<{
 				id: string; email: string; invite_url: string;
 				expires_at: string; email_sent: boolean; note: string;
-			}>('/v1/invites', { email: inviteEmail.trim().toLowerCase() });
+			}>('/v1/invites', { email: inviteEmail.trim().toLowerCase(),role:inviteRole,custom_role_id:inviteRole==='member' ? inviteCustomRole : '' });
 			inviteResult = res;
 			inviteEmail = '';
 			await load();
@@ -240,7 +251,7 @@
 		}
 	}
 
-	// --- Role management (owner only) ---
+	// Role and ownership management.
 	async function setRole(m: TeamMember, role: 'admin' | 'member') {
 		try {
 			await api.patch(`/v1/users/${m.id}/role`, { role });
@@ -249,17 +260,7 @@
 		} catch (e: any) { toast.error(e.message || tr('members.toast.errors.role')); }
 	}
 
-	function confirmTransfer(m: TeamMember) {
-		openConfirm({
-			title: tr('members.confirm.transfer.title', { name: m.name }),
-			description: tr('members.confirm.transfer.description'),
-			confirmText: tr('members.confirm.transfer.confirm'),
-			action: async () => {
-				try { await api.post(`/v1/users/${m.id}/transfer-ownership`); toast.success(tr('members.toast.newOwner', { name: m.name })); await load(); }
-				catch (e: any) { toast.error(e.message || tr('members.toast.errors.transfer')); }
-			}
-		});
-	}
+ function confirmTransfer(m:TeamMember){ownershipTarget=m.id;ownershipOpen=true;}
 
 	// --- Archive / restore ---
 	async function startArchive(m: TeamMember) {
@@ -396,6 +397,8 @@
 	}
 </script>
 
+<OwnershipDialog bind:open={ownershipOpen} target={ownershipTarget} onDone={load} />
+
 <ConfirmDialog
 	bind:open={confirmOpen}
 	title={confirmTitle}
@@ -476,12 +479,14 @@
 		<h1 class="text-2xl font-semibold tracking-tight">{$t('members.title')}</h1>
 		<p class="mt-1 text-sm text-muted-foreground">{$t('members.subtitle')}</p>
 	</div>
-	{#if $currentUser?.is_admin}
+	{#if can('members.invite_member')}
 		<Button onclick={() => { showInvite = !showInvite; inviteError = ''; inviteResult = null; }}>
 			{showInvite ? $t('members.invite.toggleCancel') : $t('members.invite.toggleOpen')}
 		</Button>
 	{/if}
 </div>
+
+{#if $currentUser?.can_claim_ownership}<div class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 p-4"><p class="max-w-xl text-sm text-muted-foreground">{$t('permissions.ownership.recovery')}</p><Button type="button" variant="outline" onclick={()=>{ownershipTarget='';ownershipOpen=true;}}>{$t('permissions.ownership.claim')}</Button></div>{/if}
 
 {#if showInvite}
 	<div class="mb-6 rounded-lg border bg-card p-6">
@@ -513,6 +518,10 @@
 				onkeydown={(e) => e.key === 'Enter' && sendInvite()} />
 		</div>
 
+  <div class="mb-4 flex flex-wrap gap-4">
+   <div class="space-y-1.5"><Label id="invite-role-label">{$t('members.table.role')}</Label><Select.Root type="single" bind:value={inviteRole}><Select.Trigger aria-labelledby="invite-role-label" class="w-40 rounded-lg">{$t(`members.role.${inviteRole}`)}</Select.Trigger><Select.Content><Select.Item value="member">{$t('members.role.member')}</Select.Item>{#if can('members.invite_admin')}<Select.Item value="admin">{$t('members.role.admin')}</Select.Item>{/if}</Select.Content></Select.Root></div>
+   {#if inviteRole==='member' && roles.some(r=>!r.is_system)}<div class="space-y-1.5"><Label id="invite-custom-role-label">{$t('permissions.customRole')}</Label><Select.Root type="single" bind:value={inviteCustomRole}><Select.Trigger aria-labelledby="invite-custom-role-label" class="w-48 rounded-lg">{roles.find(r=>r.id===inviteCustomRole)?.name || $t('permissions.defaultRole')}</Select.Trigger><Select.Content><Select.Item value="">{$t('permissions.defaultRole')}</Select.Item>{#each roles.filter(r=>!r.is_system) as r}<Select.Item value={r.id}>{r.name}</Select.Item>{/each}</Select.Content></Select.Root></div>{/if}
+  </div>
 		<Button onclick={sendInvite} disabled={inviting}>
 			{inviting ? $t('members.invite.generating') : $t('members.invite.generate')}
 		</Button>
@@ -527,7 +536,7 @@
 	<div class="mb-8">
 		<div class="mb-3 flex items-center justify-between">
 			<h2 class="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{$t('members.section.members')}</h2>
-			{#if $currentUser?.is_admin}
+			{#if can('members.read')}
 				<button class="text-xs text-muted-foreground hover:text-foreground" onclick={toggleArchived}>
 					{showArchived ? $t('members.hideArchived') : $t('members.showArchived')}
 				</button>
@@ -548,7 +557,7 @@
 							<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('members.table.page')}</th>
 							<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('members.table.auth')}</th>
 							<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('members.table.joined')}</th>
-							{#if $currentUser?.is_admin}<th class="px-4 pb-3 pt-3"></th>{/if}
+							{#if can('members.read')}<th class="px-4 pb-3 pt-3"></th>{/if}
 						</tr>
 					</thead>
 					<tbody class="divide-y">
@@ -575,6 +584,7 @@
 								<td class="px-4 py-3">
 									<div class="flex items-center gap-1.5">
 										<Badge variant={roleVariant(m)}>{roleLabel(m)}</Badge>
+ {#if m.legacy_access && !m.is_admin && !m.custom_role_id}<Badge variant="outline">{$t('permissions.legacyMember')}</Badge>{/if}
 										{#if m.archived}<Badge variant="outline" class="text-xs text-muted-foreground">{$t('members.badge.archived')}</Badge>{/if}
 									</div>
 								</td>
@@ -602,18 +612,18 @@
 									</div>
 								</td>
 								<td class="px-4 py-3 text-sm text-muted-foreground">{fmtDate(m.created_at)}</td>
-								{#if $currentUser?.is_admin}
+								{#if can('members.read')}
 									<td class="px-4 py-3">
 										<div class="flex flex-wrap items-center justify-end gap-1">
 											{#if m.archived}
 												{#if m.archived_by_name}
 													<span class="text-xs text-muted-foreground">{$t('members.archivedBy', { name: m.archived_by_name })}</span>
 												{/if}
-												<!-- Owner can restore anyone; an admin only members they archived. -->
-												{#if $currentUser.is_owner || m.archived_by === $currentUser.id}
+												<!-- Administrators share member-management authority; ownership stays protected. -->
+												{#if can('members.archive')}
 													<Button size="sm" variant="outline" class="h-7 text-xs" onclick={() => restoreMember(m)}>{$t('members.restore')}</Button>
 												{/if}
-											{:else if m.id !== $currentUser.id}
+											{:else if m.id !== $currentUser?.id}
 												{#if resetTarget === m.id}
 													<div class="flex items-center gap-1.5">
 														{#if resetOk}
@@ -629,38 +639,38 @@
 														{/if}
 													</div>
 												{:else}
-													{#if $currentUser.is_owner && !m.is_owner}
+													{#if can('members.update_role') && !m.is_owner}
+ {#if m.legacy_access && !m.is_admin && !m.custom_role_id}<Button type="button" size="sm" variant="ghost" class="h-7 text-xs" onclick={()=>assignCustomRole(m,'')}>{$t('permissions.applyMember')}</Button>{/if}
 														{#if m.is_admin}
 															<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={() => setRole(m, 'member')}>{$t('members.makeMember')}</Button>
 														{:else}
 															<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={() => setRole(m, 'admin')}>{$t('members.makeAdmin')}</Button>
 														{/if}
-														<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={() => confirmTransfer(m)}>{$t('members.transferOwnership')}</Button>
+														{#if $currentUser?.is_owner && m.is_admin}<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={() => confirmTransfer(m)}>{$t('members.transferOwnership')}</Button>{/if}
 													{/if}
-													<!-- Reset password + Archive only on members this viewer may manage:
-													     never the owner; another admin only if the viewer is the owner. -->
-													{#if !m.is_owner && (!m.is_admin || $currentUser.is_owner)}
-														{#if roles.filter((r) => !r.is_system).length > 0}
+													<!-- Account controls never target the owner. -->
+													{#if !m.is_owner}
+														{#if can('members.update_role') && !m.is_admin && roles.filter((r) => !r.is_system).length > 0}
 															<Select.Root
 																type="single"
 																value={m.custom_role_id ?? ''}
 																onValueChange={(v) => assignCustomRole(m, v ?? '')}
 															>
 																<Select.Trigger class="h-7 w-36 text-xs">
-																	{m.custom_role_name || 'No custom role'}
+																	{m.custom_role_name || $t('permissions.defaultRole')}
 																</Select.Trigger>
 																<Select.Content>
-																	<Select.Item value="" label="No custom role">No custom role</Select.Item>
+																	<Select.Item value="" label={$t('permissions.defaultRole')}>{$t('permissions.defaultRole')}</Select.Item>
 																	{#each roles.filter((r) => !r.is_system) as r}
 																		<Select.Item value={r.id} label={r.name}>{r.name}</Select.Item>
 																	{/each}
 																</Select.Content>
 															</Select.Root>
 														{/if}
-														<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={() => startReset(m.id)}>{$t('members.resetPassword')}</Button>
-														<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:text-destructive" onclick={() => startArchive(m)}>{$t('members.archive')}</Button>
+														<Button size="sm" variant="ghost" class="h-7 text-xs" disabled={!can('members.password')} onclick={() => startReset(m.id)}>{$t('members.resetPassword')}</Button>
+														<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:text-destructive" disabled={!can('members.archive')} onclick={() => startArchive(m)}>{$t('members.archive')}</Button>
 													{/if}
-													{#if $currentUser.can_impersonate && m.id !== $currentUser.id && m.is_impersonatable !== false && (!m.is_owner || $currentUser.is_owner)}
+													{#if $currentUser?.can_impersonate && m.id !== $currentUser?.id && m.is_impersonatable !== false && (!m.is_owner || $currentUser?.is_owner)}
 														<Button size="sm" variant="outline" class="h-7 text-xs" onclick={() => impersonateUser(m)}>
 															Impersonate
 														</Button>
@@ -679,7 +689,7 @@
 	</div>
 
 	<!-- Pending invites -->
-	{#if $currentUser?.is_admin && invites.length > 0}
+	{#if can('members.invite_member') && invites.length > 0}
 		<div>
 			<h2 class="mb-3 text-sm font-semibold text-muted-foreground uppercase tracking-wide">{$t('members.section.pendingInvites')}</h2>
 			<div class="rounded-lg border bg-card overflow-hidden">
@@ -719,13 +729,13 @@
 	{/if}
 
 	<!-- Custom RBAC Roles -->
-	{#if $currentUser?.is_admin}
+	{#if can('roles.read') || can('roles.manage')}
 		<section class="mt-8 space-y-4">
 			<div class="flex flex-wrap items-center justify-between gap-3">
 				<h2 class="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{$t('roles.heading')}</h2>
 				<div class="flex flex-wrap gap-2">
 					<Input type="search" bind:value={roleSearch} placeholder={$t('roles.search')} aria-label={$t('roles.search')} class="w-full sm:w-56" />
-					<Button type="button" onclick={() => { cancelEditRole(); roleDialogOpen = true; }}>{$t('roles.create')}</Button>
+					{#if can('roles.manage')}<Button type="button" onclick={() => { cancelEditRole(); roleDialogOpen = true; }}>{$t('roles.create')}</Button>{/if}
 				</div>
 			</div>
 			<div class="rounded-lg border bg-card divide-y">
@@ -733,31 +743,24 @@
 					<div class="flex flex-wrap items-center justify-between gap-3 p-4">
 						<div class="min-w-0 space-y-1"><div class="flex flex-wrap items-center gap-2"><span class="font-medium text-sm">{r.name}</span>{#if r.is_system}<Badge variant="secondary">{$t('roles.builtIn')}</Badge>{/if}</div>
 							{#if r.description}<p class="text-sm text-muted-foreground">{r.description}</p>{/if}
-							<div class="flex flex-wrap gap-1">{#if r.can_impersonate}<Badge variant="outline">{$t('roles.impersonate')}</Badge>{/if}{#if !r.is_impersonatable}<Badge variant="outline">{$t('roles.protected')}</Badge>{/if}{#if r.can_manage_users}<Badge variant="outline">{$t('roles.users')}</Badge>{/if}{#if r.can_manage_settings}<Badge variant="outline">{$t('roles.settings')}</Badge>{/if}{#if r.can_manage_teams}<Badge variant="outline">{$t('roles.teams')}</Badge>{/if}</div>
+							<div class="flex flex-wrap gap-1">{#each Object.entries(r.permissions||{}).slice(0,5) as [id,scope]}<Badge variant="outline">{$t(`permissions.groups.${id.split('.')[0]}`)}: {$t(`permissions.labels.${id}`)} · {$t(`permissions.scope.${scope}`)}</Badge>{/each}{#if Object.keys(r.permissions||{}).length>5}<Badge variant="secondary">+{Object.keys(r.permissions).length-5}</Badge>{/if}{#if !r.is_impersonatable}<Badge variant="outline">{$t('roles.protected')}</Badge>{/if}</div>
 						</div>
-						{#if !r.is_system}<div class="flex items-center gap-1"><Button type="button" size="sm" variant="ghost" onclick={() => startEditRole(r)}>{$t('roles.edit')}</Button><Button type="button" size="sm" variant="ghost" class="text-destructive" onclick={() => openConfirm({ title: tr('roles.deleteTitle'), description: tr('roles.deleteDescription', { name: r.name }), confirmText: tr('roles.delete'), action: () => deleteCustomRole(r.id) })}>{$t('roles.delete')}</Button></div>{/if}
+						{#if !r.is_system && can('roles.manage')}<div class="flex items-center gap-1"><Button type="button" size="sm" variant="ghost" onclick={() => startEditRole(r)}>{$t('roles.edit')}</Button><Button type="button" size="sm" variant="ghost" class="text-destructive" onclick={() => openConfirm({ title: tr('roles.deleteTitle'), description: tr('roles.deleteDescription', { name: r.name }), confirmText: tr('roles.delete'), action: () => deleteCustomRole(r.id) })}>{$t('roles.delete')}</Button></div>{/if}
 					</div>
 				{:else}<p class="p-5 text-sm text-muted-foreground">{$t('roles.empty')}</p>{/each}
 			</div>
 		</section>
 
 		<Dialog.Root bind:open={roleDialogOpen}>
-			<Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+			<Dialog.Content class="flex max-h-[90dvh] flex-col overflow-hidden sm:max-w-2xl">
 				<Dialog.Header><Dialog.Title>{editingRoleId ? $t('roles.editTitle') : $t('roles.createTitle')}</Dialog.Title><Dialog.Description>{$t('roles.dialogDescription')}</Dialog.Description></Dialog.Header>
-				<div class="space-y-4">
+				<div class="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
 					<div class="space-y-1.5"><Label for="role-name">{$t('roles.name')}</Label><Input id="role-name" bind:value={newRoleName} /></div>
 					<div class="space-y-1.5"><Label for="role-description">{$t('roles.description')}</Label><Textarea id="role-description" bind:value={newRoleDescription} rows={2} /></div>
-					<fieldset class="space-y-3 rounded-lg border p-4"><legend class="px-1 text-sm font-medium">{$t('roles.management')}</legend>
-						<label class="flex items-center justify-between gap-3 text-sm"><span>{$t('roles.manageUsers')}</span><Switch bind:checked={newRoleManageUsers} /></label>
-						<label class="flex items-center justify-between gap-3 text-sm"><span>{$t('roles.manageSettings')}</span><Switch bind:checked={newRoleManageSettings} /></label>
-						<label class="flex items-center justify-between gap-3 text-sm"><span>{$t('roles.manageTeams')}</span><Switch bind:checked={newRoleManageTeams} /></label>
-					</fieldset>
-					<fieldset class="space-y-3 rounded-lg border p-4"><legend class="px-1 text-sm font-medium">{$t('roles.impersonation')}</legend>
-						<label class="flex items-center justify-between gap-3 text-sm"><span>{$t('roles.impersonate')}</span><Switch bind:checked={newRoleCanImp} /></label>
-						<label class="flex items-center justify-between gap-3 text-sm"><span>{$t('roles.allowImpersonation')}</span><Switch bind:checked={newRoleIsImpersonatable} /></label>
-					</fieldset>
+					<PermissionEditor bind:value={newPermissions} scrollable={false} />
+ <label class="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"><span>{$t('roles.allowImpersonation')}</span><Switch bind:checked={newRoleIsImpersonatable} /></label>
 				</div>
-				<Dialog.Footer><Button type="button" variant="ghost" onclick={cancelEditRole}>{$t('common.cancel')}</Button><Button type="button" disabled={creatingRole || !newRoleName.trim()} onclick={saveCustomRole}>{creatingRole ? $t('roles.saving') : $t('roles.save')}</Button></Dialog.Footer>
+				<Dialog.Footer class="shrink-0 border-t pt-4"><Button type="button" variant="ghost" onclick={cancelEditRole}>{$t('common.cancel')}</Button><Button type="button" disabled={creatingRole || !newRoleName.trim()} onclick={saveCustomRole}>{creatingRole ? $t('roles.saving') : $t('roles.save')}</Button></Dialog.Footer>
 			</Dialog.Content>
 		</Dialog.Root>
 
@@ -780,3 +783,5 @@
 		{/if}
 	{/if}
 {/if}
+
+{#if can('impersonation.audit')}<SecurityAudit />{/if}

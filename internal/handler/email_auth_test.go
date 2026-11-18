@@ -135,7 +135,7 @@ func TestChangePassword_success(t *testing.T) {
 	database.Exec(`INSERT INTO api_keys (id,user_id,name,key_hash,created_at) VALUES ('k1','u1','test',?,'2024-01-01')`, sha256HexForTest("testkey"))
 
 	body := `{"current_password":"oldpassword","new_password":"newpassword123"}`
-	req := authReq(http.MethodPost, "/v1/users/me/password", body, "testkey")
+	req := sessionRequest(t, database, "u1", http.MethodPost, "/v1/users/me/password", body)
 	rec := httptest.NewRecorder()
 	h.RequireAuth(h.ChangePassword)(rec, req)
 
@@ -193,7 +193,7 @@ func TestChangePassword_wrongCurrent(t *testing.T) {
 	database.Exec(`INSERT INTO api_keys (id,user_id,name,key_hash,created_at) VALUES ('k1','u1','test',?,'2024-01-01')`, sha256HexForTest("testkey"))
 
 	body := `{"current_password":"wrongcurrent","new_password":"newpassword123"}`
-	req := authReq(http.MethodPost, "/v1/users/me/password", body, "testkey")
+	req := sessionRequest(t, database, "u1", http.MethodPost, "/v1/users/me/password", body)
 	rec := httptest.NewRecorder()
 	h.RequireAuth(h.ChangePassword)(rec, req)
 

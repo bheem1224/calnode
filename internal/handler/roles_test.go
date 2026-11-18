@@ -42,7 +42,7 @@ func TestSetUserRole_ownerPromotesAndDemotes(t *testing.T) {
 	}
 }
 
-func TestSetUserRole_requiresOwnerNotAdmin(t *testing.T) {
+func TestSetUserRole_adminCanPromoteMembers(t *testing.T) {
 	h, database, _, _ := setupWorkspaceWithDB(t)
 	// An admin (not owner) tries to change a role → 403.
 	adminKey := "admin-not-owner-key"
@@ -54,8 +54,8 @@ func TestSetUserRole_requiresOwnerNotAdmin(t *testing.T) {
 	req.SetPathValue("id", "u3")
 	rec := httptest.NewRecorder()
 	h.RequireAuth(h.SetUserRole)(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("got %d; want 403 (admin cannot grant admin)", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("got %d; want 200 (admin cannot grant admin)", rec.Code)
 	}
 }
 
@@ -91,10 +91,10 @@ func TestSetUserRole_invalidRole(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTransferOwnership_swapsOwner(t *testing.T) {
-	h, database, ownerKey, ownerID := setupWorkspaceWithDB(t)
-	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('u2','next@example.com','Next','UTC',0)`)
+	h, database, _, ownerID := setupWorkspaceWithDB(t)
+	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('u2','next@example.com','Next','UTC',1)`)
 
-	req := authReq(http.MethodPost, "/v1/users/u2/transfer-ownership", "", ownerKey)
+	req := sessionRequest(t, database, ownerID, http.MethodPost, "/v1/users/u2/transfer-ownership", "{}")
 	req.SetPathValue("id", "u2")
 	rec := httptest.NewRecorder()
 	h.RequireAuth(h.TransferOwnership)(rec, req)
@@ -142,13 +142,15 @@ func TestTransferOwnership_requiresOwner(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDeleteUser_cannotRemoveOwner(t *testing.T) {
-	h, database, ownerKey, _ := setupWorkspaceWithDB(t)
+	h, database, _, ownerID := setupWorkspaceWithDB(t)
+	ownerKey := "admin-removing-owner"
+	mustExec(t, database, `INSERT INTO users(id,email,name,is_admin) VALUES('other-admin','oa@example.com','Admin',1)`)
+	mustExec(t, database, `INSERT INTO api_keys(id,user_id,name,key_hash,created_at) VALUES('oa-key','other-admin','test',?,'2024-01-01')`, sha256HexForTest(ownerKey))
 	// Make a second owner-less admin actor isn't needed; owner deletes... the owner.
 	// Insert another user flagged as owner to attempt deletion of an owner.
-	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin,is_owner) VALUES ('u2','o2@example.com','Owner2','UTC',1,1)`)
 
-	req := authReq(http.MethodDelete, "/v1/users/u2", "", ownerKey)
-	req.SetPathValue("id", "u2")
+	req := authReq(http.MethodDelete, "/v1/users/"+ownerID, "", ownerKey)
+	req.SetPathValue("id", ownerID)
 	rec := httptest.NewRecorder()
 	h.RequireAuth(h.DeleteUser)(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -156,7 +158,7 @@ func TestDeleteUser_cannotRemoveOwner(t *testing.T) {
 	}
 }
 
-func TestDeleteUser_adminCannotRemoveAdmin(t *testing.T) {
+func TestDeleteUser_adminCanRemoveAdmin(t *testing.T) {
 	h, database, _, _ := setupWorkspaceWithDB(t)
 	adminKey := "admin-del-admin-key"
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin,is_owner) VALUES ('u2','a@example.com','Admin','UTC',1,0)`)
@@ -167,8 +169,8 @@ func TestDeleteUser_adminCannotRemoveAdmin(t *testing.T) {
 	req.SetPathValue("id", "u3")
 	rec := httptest.NewRecorder()
 	h.RequireAuth(h.DeleteUser)(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("got %d; want 403 (admin cannot remove admin)", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("got %d; want 200 (admin cannot remove admin)", rec.Code)
 	}
 }
 
@@ -191,7 +193,7 @@ func TestAdminSetPassword_adminCannotResetOwner(t *testing.T) {
 	}
 }
 
-func TestAdminSetPassword_adminCannotResetAdmin(t *testing.T) {
+func TestAdminSetPassword_adminCanResetAdmin(t *testing.T) {
 	h, database, _, _ := setupWorkspaceWithDB(t)
 	adminKey := "admin-resets-admin-key"
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin,is_owner) VALUES ('u2','a@example.com','Admin','UTC',1,0)`)
@@ -202,8 +204,8 @@ func TestAdminSetPassword_adminCannotResetAdmin(t *testing.T) {
 	req.SetPathValue("id", "u3")
 	rec := httptest.NewRecorder()
 	h.RequireAuth(h.AdminSetPassword)(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("got %d; want 403 (admin cannot reset another admin) — %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Errorf("got %d; want 200 (admin cannot reset another admin) — %s", rec.Code, rec.Body.String())
 	}
 }
 

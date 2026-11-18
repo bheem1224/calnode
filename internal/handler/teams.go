@@ -495,6 +495,7 @@ func (h *Handler) UpdateTeamMember(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusNotFound, "team member not found")
 		return
 	}
+	h.securityAudit(r.Context(), user.ID, "team.member.update", teamID, map[string]any{"user_id": userID, "role": req.Role, "routing_priority": req.RoutingPriority})
 	h.GetTeam(w, r)
 }
 

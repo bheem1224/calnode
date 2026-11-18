@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/livekit"
 	"github.com/calnode/calnode/internal/uid"
 	"github.com/calnode/calnode/internal/webhook"
@@ -228,7 +229,7 @@ func (h *Handler) ListRecordings(w http.ResponseWriter, r *http.Request) {
 		SELECT r.id, COALESCE(r.booking_id,''), r.room, r.status, r.duration_s, COALESCE(r.object_key,''), r.created_at,
 		       COALESCE((SELECT name FROM booking_attendees
 		                 WHERE booking_id = r.booking_id AND is_organizer = 1 LIMIT 1), '')
-		FROM recordings r ORDER BY r.created_at DESC LIMIT 200`)
+		FROM recordings r WHERE (?='all' OR EXISTS(SELECT 1 FROM bookings b WHERE b.id=r.booking_id AND (b.host_id=? OR b.id IN(SELECT booking_id FROM booking_hosts WHERE user_id=?) OR (?='team' AND b.event_type_id IN(SELECT et.id FROM event_types et JOIN team_members tm ON tm.team_id=et.team_id WHERE tm.user_id=?))))) ORDER BY r.created_at DESC LIMIT 200`, recordingScope(user, "recordings.read"), user.ID, user.ID, recordingScope(user, "recordings.read"), user.ID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "recordings: list", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -517,6 +518,9 @@ func (h *Handler) DeleteAllRecordings(w http.ResponseWriter, r *http.Request) {
 
 	deleted, failed := 0, 0
 	for _, x := range list {
+		if recordingScope(user, "recordings.delete") != "all" && !access.BookingAllowed(r.Context(), h.db, user.ID, recordingScope(user, "recordings.delete"), x.booking.String) {
+			continue
+		}
 		if err := h.deleteRecordingArtifacts(r.Context(), x.id, x.key, x.booking); err != nil {
 			h.logger.ErrorContext(r.Context(), "recordings: delete all (one)", "error", err, "id", x.id)
 			failed++
@@ -622,4 +626,11 @@ func (h *Handler) LiveKitWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func recordingScope(u AuthUser, p string) string {
+	if u.Permissions == nil && u.IsAdmin {
+		return "all"
+	}
+	return u.Permissions[p]
 }

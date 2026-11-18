@@ -414,12 +414,12 @@
 						/>
 					</div>
 
-					<div class="inline-flex items-center rounded-md border bg-background">
+					<div class="inline-flex flex-wrap items-center gap-1.5">
 						<Button
 							type="button"
 							variant="ghost"
 							size="icon"
-							class="h-8 w-8 rounded-none rounded-l-md border-r"
+							class="h-8 w-8 rounded-lg border bg-background"
 							onclick={() => window.open(bookLink(et.slug), '_blank')}
 							title={bookLink(et.slug)}
 							aria-label="Open booking page"
@@ -430,7 +430,7 @@
 							type="button"
 							variant="ghost"
 							size="icon"
-							class="h-8 w-8 rounded-none border-r"
+							class="h-8 w-8 rounded-lg border bg-background"
 							onclick={() => copyText(bookLink(et.slug), 'Booking link copied to clipboard')}
 							title="Copy booking link"
 							aria-label="Copy booking link"
@@ -438,10 +438,10 @@
 							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
 						</Button>
 
-						<Button variant="ghost" size="sm" disabled={!et.is_active || !!et.archived} onclick={() => { customEvent = et; customOpen = true; }}>{$t('customTimes.title')}</Button>
+						<Button type="button" variant="outline" size="sm" class="h-8 rounded-lg px-3" disabled={!et.is_active || !!et.archived} onclick={() => { customEvent = et; customOpen = true; }}>{$t('customTimes.title')}</Button>
 						<Popover.Root open={openMenuSlug === et.slug} onOpenChange={(o) => (openMenuSlug = o ? et.slug : null)}>
 							<Popover.Trigger
-								class="inline-flex h-8 w-8 items-center justify-center rounded-r-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+								class="inline-flex h-8 w-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground"
 								aria-label="More actions"
 							>
 								<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>

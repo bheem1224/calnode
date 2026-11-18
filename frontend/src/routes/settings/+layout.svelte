@@ -25,7 +25,7 @@
 		{ section: 'Instance Settings', href: `${base}/settings/members`, label: 'Members & Roles', adminOnly: true },
 	]);
 
-	const visibleNavItems = $derived(navItems.filter((item) => !item.adminOnly || $currentUser?.is_admin));
+	const visibleNavItems = $derived(navItems.filter((item) => !item.adminOnly || !!$currentUser?.permissions?.[item.href.endsWith('/members')?'members.read':item.href.endsWith('/branding')?'branding.read':'settings.read']));
 
 	function isActive(href: string, exact?: boolean): boolean {
 		const path = $page.url.pathname.replace(/\/+$/, '');

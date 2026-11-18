@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/netutil"
 	"github.com/calnode/calnode/internal/webhook"
 )
@@ -24,6 +26,9 @@ func (h *Handler) validateWebhookEventType(ctx context.Context, userID string, i
 	if eventTypeID == nil || *eventTypeID == "" {
 		return true, nil
 	}
+	if u, ok := userFromContext(ctx); ok && u.Permissions != nil {
+		return access.EventAllowed(ctx, h.db, u.ID, u.Permissions[u.Operation], *eventTypeID), nil
+	}
 	adminInt := 0
 	if isAdmin {
 		adminInt = 1
@@ -37,6 +42,28 @@ func (h *Handler) validateWebhookEventType(ctx context.Context, userID string, i
 		return false, err
 	}
 	return true, nil
+}
+
+func (h *Handler) RotateWebhookSecret(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	id := r.PathValue("id")
+	var resourceOwner string
+	if h.db.QueryRowContext(r.Context(), `SELECT user_id FROM webhooks WHERE id=?`, id).Scan(&resourceOwner) != nil {
+		h.writeError(w, 404, "webhook not found")
+		return
+	}
+	if !h.canAccessUser(r.Context(), user, "webhooks.rotate", resourceOwner) {
+		h.writeError(w, 403, "webhook access denied")
+		return
+	}
+
+	secret, err := h.webhookSvc.RotateSecret(r.Context(), resourceOwner, id)
+	if err != nil {
+		h.writeError(w, 404, "webhook not found")
+		return
+	}
+	h.securityAudit(r.Context(), user.ID, "webhook.rotate", id, nil)
+	h.writeJSON(w, 200, map[string]string{"secret": secret})
 }
 
 func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +103,9 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !h.validateWebhookDataGrants(w, user, req.Events, req.Fields) {
+		return
+	}
 	if ok, err := h.validateWebhookEventType(r.Context(), user.ID, user.IsAdmin, req.EventTypeID); !ok {
 		if err != nil && err.Error() != "sql: no rows in result set" {
 			h.logger.ErrorContext(r.Context(), "create webhook: validate event_type_id", "error", err)
@@ -92,6 +122,12 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	if _, policyErr := h.db.ExecContext(r.Context(), `UPDATE webhooks SET permissions_json=? WHERE id=?`, user.Permissions.JSON(), wh.ID); policyErr != nil {
+		_ = h.webhookSvc.Delete(r.Context(), user.ID, wh.ID)
+		h.writeError(w, 500, "could not save webhook permissions")
+		return
+	}
+	h.securityAudit(r.Context(), user.ID, "webhook.create", wh.ID, map[string]any{"events": req.Events})
 	if req.EventTypeID != nil && *req.EventTypeID != "" {
 		if err := h.webhookSvc.SetEventTypeID(r.Context(), user.ID, wh.ID, req.EventTypeID); err != nil {
 			h.logger.ErrorContext(r.Context(), "create webhook: set event_type_id", "error", err)
@@ -126,6 +162,16 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) PatchWebhook(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 	id := r.PathValue("id")
+	var resourceOwner string
+	if h.db.QueryRowContext(r.Context(), `SELECT user_id FROM webhooks WHERE id=?`, id).Scan(&resourceOwner) != nil {
+		h.writeError(w, 404, "webhook not found")
+		return
+	}
+	if !h.canAccessUser(r.Context(), user, "webhooks.update", resourceOwner) {
+		h.writeError(w, 403, "webhook access denied")
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 
 	var req struct {
@@ -160,7 +206,18 @@ func (h *Handler) PatchWebhook(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err := h.webhookSvc.Update(r.Context(), user.ID, id, req.Events, req.Fields); err != nil {
+	var fields []string
+	var events []string
+	if req.Fields != nil {
+		fields = *req.Fields
+	}
+	if req.Events != nil {
+		events = *req.Events
+	}
+	if !h.validateWebhookDataGrants(w, user, events, fields) {
+		return
+	}
+	if err := h.webhookSvc.Update(r.Context(), resourceOwner, id, req.Events, req.Fields); err != nil {
 		if errors.Is(err, webhook.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, "webhook not found")
 			return
@@ -170,7 +227,7 @@ func (h *Handler) PatchWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.EventTypeID != nil {
-		if err := h.webhookSvc.SetEventTypeID(r.Context(), user.ID, id, req.EventTypeID); err != nil {
+		if err := h.webhookSvc.SetEventTypeID(r.Context(), resourceOwner, id, req.EventTypeID); err != nil {
 			if errors.Is(err, webhook.ErrNotFound) {
 				h.writeError(w, http.StatusNotFound, "webhook not found")
 				return
@@ -180,13 +237,22 @@ func (h *Handler) PatchWebhook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	h.securityAudit(r.Context(), user.ID, "webhook.update", id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) ListWebhooks(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 
-	webhooks, err := h.webhookSvc.List(r.Context(), user.ID)
+	target := r.URL.Query().Get("user_id")
+	if target == "" {
+		target = user.ID
+	}
+	if !h.canAccessUser(r.Context(), user, "webhooks.read", target) {
+		h.writeError(w, 403, "webhook access denied")
+		return
+	}
+	webhooks, err := h.webhookSvc.List(r.Context(), target)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list webhooks", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -211,8 +277,17 @@ func (h *Handler) ListWebhooks(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DeleteWebhook(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 	id := r.PathValue("id")
+	var resourceOwner string
+	if h.db.QueryRowContext(r.Context(), `SELECT user_id FROM webhooks WHERE id=?`, id).Scan(&resourceOwner) != nil {
+		h.writeError(w, 404, "webhook not found")
+		return
+	}
+	if !h.canAccessUser(r.Context(), user, "webhooks.delete", resourceOwner) {
+		h.writeError(w, 403, "webhook access denied")
+		return
+	}
 
-	if err := h.webhookSvc.Delete(r.Context(), user.ID, id); err != nil {
+	if err := h.webhookSvc.Delete(r.Context(), resourceOwner, id); err != nil {
 		if errors.Is(err, webhook.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, "webhook not found")
 			return
@@ -221,14 +296,24 @@ func (h *Handler) DeleteWebhook(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	h.securityAudit(r.Context(), user.ID, "webhook.delete", id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) ListWebhookDeliveries(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 	webhookID := r.PathValue("id")
+	var resourceOwner string
+	if h.db.QueryRowContext(r.Context(), `SELECT user_id FROM webhooks WHERE id=?`, webhookID).Scan(&resourceOwner) != nil {
+		h.writeError(w, 404, "webhook not found")
+		return
+	}
+	if !h.canAccessUser(r.Context(), user, "webhooks.deliveries", resourceOwner) {
+		h.writeError(w, 403, "webhook access denied")
+		return
+	}
 
-	deliveries, err := h.webhookSvc.ListDeliveries(r.Context(), user.ID, webhookID)
+	deliveries, err := h.webhookSvc.ListDeliveries(r.Context(), resourceOwner, webhookID)
 	if err != nil {
 		if errors.Is(err, webhook.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, "webhook not found")
@@ -273,4 +358,32 @@ func validateWebhookURL(ctx context.Context, u *url.URL) error {
 		return fmt.Errorf("webhook URL must not resolve to a private or loopback address: %w", err)
 	}
 	return nil
+}
+
+func (h *Handler) validateWebhookDataGrants(w http.ResponseWriter, u AuthUser, events, fields []string) bool {
+	if u.Permissions == nil {
+		return true
+	} // direct legacy internal callers
+	for _, event := range events {
+		permission := "bookings.read"
+		switch {
+		case strings.HasPrefix(event, "recording."):
+			permission = "recordings.read"
+		case strings.HasPrefix(event, "transcript."):
+			permission = "transcripts.read"
+		case strings.HasPrefix(event, "notes."):
+			permission = "notes.read"
+		case strings.HasPrefix(event, "single_use_link."):
+			permission = "event_types.links"
+		}
+		if !u.Permissions.Has(permission) {
+			h.writeError(w, 403, "permission required for webhook data: "+permission)
+			return false
+		}
+	}
+	if slices.Contains(fields, "answers") && !u.Permissions.Has("bookings.answers") {
+		h.writeError(w, 403, "permission required for webhook answers: bookings.answers")
+		return false
+	}
+	return true
 }

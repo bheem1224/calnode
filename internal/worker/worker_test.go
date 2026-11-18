@@ -39,7 +39,7 @@ func setup(t *testing.T) (*sql.DB, *webhook.Service) {
 		{"host-04", "host04@example.com", "Host Four"},
 	} {
 		database.ExecContext(ctx,
-			`INSERT INTO users (id, email, name) VALUES (?, ?, ?)`, u.id, u.email, u.name)
+			`INSERT INTO users (id, email, name, legacy_permissions) VALUES (?, ?, ?,1)`, u.id, u.email, u.name)
 	}
 
 	svc, err := webhook.New(database, "")

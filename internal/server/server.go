@@ -455,6 +455,10 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("POST /v1/admin/impersonate/stop", h.RequireAuth(h.StopImpersonation))
 	mux.HandleFunc("GET /v1/admin/impersonate/logs", h.RequireAuth(h.ListImpersonationLogs))
 	mux.HandleFunc("POST /v1/users/{id}/transfer-ownership", h.RequireAuth(h.TransferOwnership))
+	mux.HandleFunc("POST /v1/users/me/claim-ownership", h.RequireAuth(h.ClaimOwnership))
+	mux.HandleFunc("POST /v1/auth/reauthenticate", h.RequireAuth(h.Reauthenticate))
+	mux.HandleFunc("GET /v1/permissions", h.RequireAuth(h.GetPermissionCatalog))
+	mux.HandleFunc("GET /v1/security/audit", h.RequireAuth(h.ListSecurityAudit))
 	mux.HandleFunc("POST /v1/users/{id}/archive", h.RequireAuth(h.ArchiveUser))
 	mux.HandleFunc("POST /v1/users/{id}/restore", h.RequireAuth(h.RestoreUser))
 	mux.HandleFunc("GET /v1/users/{id}/upcoming-bookings", h.RequireAuth(h.ListUserUpcomingBookings))
@@ -646,6 +650,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 
 	// Webhooks
 	mux.HandleFunc("POST /v1/webhooks", h.RequireAuth(h.CreateWebhook))
+	mux.HandleFunc("POST /v1/webhooks/{id}/rotate", h.RequireAuth(h.RotateWebhookSecret))
 	mux.HandleFunc("GET /v1/webhooks", h.RequireAuth(h.ListWebhooks))
 	mux.HandleFunc("PATCH /v1/webhooks/{id}", h.RequireAuth(h.PatchWebhook))
 	mux.HandleFunc("DELETE /v1/webhooks/{id}", h.RequireAuth(h.DeleteWebhook))
@@ -679,6 +684,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	// API keys
 	mux.HandleFunc("GET /v1/api-keys", h.RequireAuth(h.ListAPIKeys))
 	mux.HandleFunc("POST /v1/api-keys", h.RequireAuth(h.CreateAPIKey))
+	mux.HandleFunc("PATCH /v1/api-keys/{id}", h.RequireAuth(h.UpdateAPIKey))
 	mux.HandleFunc("DELETE /v1/api-keys/{id}", h.RequireAuth(h.DeleteAPIKey))
 
 	// Connected apps — MCP OAuth grants the user can review and revoke.

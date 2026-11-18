@@ -2058,7 +2058,10 @@
 		"remove": "Remove time",
 		"create": "Create & Copy 1-Time Link",
 		"copied": "Custom link copied",
-		"failed": "Could not create or copy the link"
+		"failed": "Could not create or copy the link",
+		"hour": "Hour",
+		"minute": "Minute",
+		"clockHint": "24-hour time · select any minute"
 	},
 	"roles": {
 		"heading": "Roles & permissions",
@@ -2105,6 +2108,163 @@
 		"empty": "No matching people",
 		"minimum": "Select at least two people.",
 		"copy": "Copy link",
-		"open": "Continue"
+		"open": "Continue",
+		"noHandle": "Available for a dynamic link"
+	},
+	"permissions": {
+		"groups": {
+			"profile": "Profile",
+			"event_types": "Event types",
+			"bookings": "Bookings",
+			"availability": "Availability",
+			"members": "Members",
+			"roles": "Roles",
+			"teams": "Teams",
+			"api_keys": "API keys",
+			"mcp": "MCP connections",
+			"webhooks": "Webhooks",
+			"integrations": "Calendar and video connections",
+			"settings": "Instance settings",
+			"branding": "Branding",
+			"recordings": "Recordings",
+			"transcripts": "Transcripts",
+			"notes": "Meeting notes",
+			"impersonation": "Impersonation"
+		},
+		"labels": {
+			"profile": {
+				"read": "View",
+				"update": "Edit"
+			},
+			"event_types": {
+				"read": "View",
+				"create": "Create",
+				"update": "Edit",
+				"delete": "Delete",
+				"links": "Generate booking links"
+			},
+			"bookings": {
+				"read": "View",
+				"create": "Create",
+				"reschedule": "Reschedule",
+				"cancel": "Cancel",
+				"approve": "Approve requests",
+				"reassign": "Reassign hosts",
+				"export": "Export",
+				"answers": "View attendee answers"
+			},
+			"availability": {
+				"read": "View",
+				"update": "Edit"
+			},
+			"members": {
+				"read": "View",
+				"invite_member": "Invite Members",
+				"invite_admin": "Invite Admins",
+				"update_role": "Assign roles",
+				"archive": "Archive and restore",
+				"password": "Reset passwords"
+			},
+			"roles": {
+				"manage": "Manage",
+				"read": "View"
+			},
+			"teams": {
+				"read": "View",
+				"create": "Create",
+				"update": "Edit",
+				"delete": "Delete",
+				"members": "Manage team members"
+			},
+			"api_keys": {
+				"read": "View",
+				"create": "Create",
+				"revoke": "Revoke",
+				"manage": "Manage"
+			},
+			"mcp": {
+				"connect": "Connect an agent",
+				"manage": "Manage"
+			},
+			"webhooks": {
+				"read": "View",
+				"create": "Create",
+				"update": "Edit",
+				"delete": "Delete",
+				"deliveries": "Inspect deliveries",
+				"rotate": "Rotate signing secrets"
+			},
+			"integrations": {
+				"read": "View",
+				"update": "Edit"
+			},
+			"settings": {
+				"read": "View",
+				"update": "Edit",
+				"security": "Manage security"
+			},
+			"branding": {
+				"read": "View",
+				"update": "Edit"
+			},
+			"recordings": {
+				"read": "View",
+				"delete": "Delete"
+			},
+			"transcripts": {
+				"read": "View"
+			},
+			"notes": {
+				"read": "View",
+				"update": "Edit"
+			},
+			"impersonation": {
+				"use": "Impersonate users",
+				"audit": "View security audit"
+			}
+		},
+		"scope": {
+			"none": "No access",
+			"own": "Own resources",
+			"team": "Assigned teams",
+			"all": "Entire instance"
+		},
+		"presets": {
+			"assistant": "Scheduling assistant",
+			"reporting": "Read-only reporting",
+			"invitations": "Invitation automation"
+		},
+		"clear": "Clear selection",
+		"search": "Search permissions",
+		"loadError": "Could not load permissions.",
+		"roleHint": "Choose each action and its resource boundary. Unselected actions are denied. Every user keeps access to their own profile.",
+		"credentialHint": "This credential is limited to the selected permissions and your current role. Sensitive account operations cannot be delegated.",
+		"customRole": "Custom role",
+		"defaultRole": "Default Member permissions",
+		"expiry": "Expires after",
+		"days": "days",
+		"legacy": "Legacy grant · review recommended",
+		"selected": "permissions selected",
+		"expires": "Expires",
+		"ownership": {
+			"transfer": "Transfer ownership",
+			"claim": "Claim instance ownership",
+			"verify": "Verify your password to continue. For SSO-only accounts, sign in again with your identity provider first, then continue without a password.",
+			"password": "Current password",
+			"confirm": "Verify & continue",
+			"recovery": "This upgraded instance has no Owner. An existing Admin may claim ownership once. Other Admins retain their administration permissions."
+		},
+		"review": "Review permissions",
+		"save": "Save permissions",
+		"audit": "Security audit",
+		"auditEmpty": "No security changes recorded yet.",
+		"rotate": "Rotate secret",
+		"rotateTitle": "Rotate signing secret?",
+		"rotateHint": "Update your webhook receiver with the new secret immediately. The previous secret will stop working.",
+		"secretOnce": "Copy this signing secret now. It will only be shown once.",
+		"account": "Account",
+		"myAccount": "My account",
+		"legacyMember": "Legacy access",
+		"applyMember": "Apply Member permissions"
 	}
 }

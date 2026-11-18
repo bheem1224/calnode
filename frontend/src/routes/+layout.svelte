@@ -162,10 +162,12 @@
 		}
 	]);
 
-	const visibleNavItems = $derived(
+	const navPermissions:Record<string,string>={'event-types':'event_types.read',availability:'availability.read',bookings:'bookings.read',members:'members.read',teams:'teams.read','api-keys':'api_keys.read',connections:'mcp.manage',webhooks:'webhooks.read',recordings:'recordings.read'};
+ const navAllowed=(id:string,adminOnly?:boolean)=>{const permissions=$currentUser?.permissions;const permission=navPermissions[id];if(permissions&&permission)return !!permissions[permission];return !adminOnly||!!$currentUser?.is_admin;};
+ const visibleNavItems = $derived(
 		navItems.filter(
 			(item) =>
-				(!item.adminOnly || $currentUser?.is_admin) &&
+				navAllowed(item.id,item.adminOnly) &&
 				!($authStatus.demo_mode && item.id === 'calendar') &&
 				(item.requiresFeature !== 'recordings' || recordingsConfigured)
 		)

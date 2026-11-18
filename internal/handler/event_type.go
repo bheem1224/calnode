@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/booking"
 	"github.com/calnode/calnode/internal/db"
 	"github.com/calnode/calnode/internal/mailer"
@@ -715,6 +716,17 @@ func (h *Handler) ListEventTypes(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	rows.Close() // permission lookups need the pool's single connection
+	if user.Permissions != nil {
+		visible := items[:0]
+		for _, et := range items {
+			if access.EventAllowed(r.Context(), h.db, user.ID, user.Permissions["event_types.read"], et.ID) {
+				et.CanEdit = user.Permissions.Has("event_types.update") && access.EventManageAllowed(r.Context(), h.db, user.ID, user.Permissions["event_types.update"], et.ID)
+				visible = append(visible, et)
+			}
+		}
+		items = visible
+	}
 	h.writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
@@ -733,6 +745,9 @@ func (h *Handler) GetEventType(w http.ResponseWriter, r *http.Request) {
 	if et == nil {
 		h.writeError(w, http.StatusNotFound, "event type not found")
 		return
+	}
+	if user.Permissions != nil {
+		et.CanEdit = access.EventManageAllowed(r.Context(), h.db, user.ID, user.Permissions["event_types.update"], et.ID)
 	}
 	et.InviteSenderReady = h.inviteSenderReady(r.Context())
 	if err := h.loadReminders(r.Context(), et.ID, et); err != nil {

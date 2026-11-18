@@ -19,7 +19,8 @@ type ListFilter struct {
 	// primary host or as an assigned host in booking_hosts - so Group attendees see
 	// meetings they are on, not only the ones they lead. Empty lists the whole
 	// workspace; callers MUST gate that on the admin role.
-	ViewerID string
+	ViewerID     string
+	ViewerTeamID string
 
 	EventTypeID string // event_types.id, not the slug
 	HostID      string // a specific host, resolved the same way ViewerID is
@@ -104,7 +105,10 @@ func (f ListFilter) where(includeWhen bool) (string, []any) {
 	} else {
 		conds = append(conds, "bookings.status != 'cancelled'")
 	}
-	if f.ViewerID != "" {
+	if f.ViewerTeamID != "" {
+		conds = append(conds, "("+hostsBooking+` OR EXISTS(SELECT 1 FROM event_types et JOIN team_members tm ON tm.team_id=et.team_id WHERE et.id=bookings.event_type_id AND tm.user_id=?))`)
+		args = append(args, f.ViewerTeamID, f.ViewerTeamID, f.ViewerTeamID)
+	} else if f.ViewerID != "" {
 		conds = append(conds, hostsBooking)
 		args = append(args, f.ViewerID, f.ViewerID)
 	}

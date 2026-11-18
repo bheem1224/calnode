@@ -10,6 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
+	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/uid"
 )
 
@@ -27,16 +28,18 @@ import (
 // accepts cno_ API keys so scripted/programmatic callers keep working.
 
 const (
-	mcpAccessTokenTTL = 30 * 24 * time.Hour // access-token lifetime
-	mcpAuthCodeTTL    = 2 * time.Minute     // authorization-code lifetime (single use)
+	mcpAccessTokenTTL = time.Hour       // access-token lifetime
+	mcpAuthCodeTTL    = 2 * time.Minute // authorization-code lifetime (single use)
 )
 
 // mcpCaller is the workspace user a /mcp request is authenticated as, with whether they
 // have full-workspace (admin/owner) access. Bound to the request context by
 // MCPCallerMiddleware so the tools can scope by role.
 type mcpCaller struct {
-	UserID  string
-	IsAdmin bool // owner or admin → full workspace access
+	Permissions access.Grants
+	Operation   string
+	UserID      string
+	IsAdmin     bool // owner or admin → full workspace access
 }
 
 type mcpCallerKey struct{}
@@ -78,59 +81,33 @@ func (h *Handler) userHostsBooking(ctx context.Context, userID, bookingID string
 // into an mcpCaller with their role and binds it to the request context, so the MCP
 // tools can scope by role. Must run after RequireBearerToken. Exported for the server
 // package to wire. No token (shouldn't happen behind RequireBearerToken) → no caller
-// bound, which the tools treat as full access — so this MUST stay behind the bearer guard.
+// bound is rejected. The local stdio transport is the separate operator trust boundary.
 func (h *Handler) MCPCallerMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if ti := auth.TokenInfoFromContext(r.Context()); ti != nil && ti.UserID != "" {
-			var owner, admin bool
-			_ = h.db.QueryRowContext(r.Context(),
-				`SELECT is_owner, is_admin FROM users WHERE id = ?`, ti.UserID).Scan(&owner, &admin)
-			r = r.WithContext(withMCPCaller(r.Context(), mcpCaller{UserID: ti.UserID, IsAdmin: owner || admin}))
+		ti := auth.TokenInfoFromContext(r.Context())
+		if ti == nil || ti.UserID == "" {
+			h.writeError(w, 401, "MCP authentication required")
+			return
 		}
-		next.ServeHTTP(w, r)
+		u, _, err := h.mcpPrincipal(r.Context(), extractAPIKey(r))
+		if err != nil || u.ID != ti.UserID {
+			h.writeError(w, 401, "MCP credential rejected")
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(withMCPCaller(r.Context(), mcpCaller{UserID: u.ID, Permissions: u.Permissions, IsAdmin: u.Permissions["bookings.read"] == "all"})))
 	})
 }
 
 // VerifyMCPBearer authenticates a /mcp request. It accepts either an OAuth access token
 // issued by this server or a cno_ API key, returning the resolved workspace user. The
-// MCP tools are workspace-scoped, so the identity is used only for audit (last_used_at),
-// not to narrow what the tools can do. Exported for the server package to wire as the
+// effective permissions are checked for each tool and resource. Exported for the server package to wire as the
 // auth.RequireBearerToken verifier.
 func (h *Handler) VerifyMCPBearer(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
-	hash := hashAPIKey(token)
-
-	// OAuth access token? Archived users authenticate with nothing: the session
-	// path (auth.go) and both API-key paths (below, and auth.go) already filter
-	// on users.archived_at, and without the same check here an archived member's
-	// connected agent bearer would keep validating after offboarding.
-	var userID, expiresAt string
-	err := h.db.QueryRowContext(ctx, `
-		SELECT t.user_id, t.expires_at FROM oauth_access_tokens t
-		JOIN users u ON u.id = t.user_id
-		WHERE t.token_hash = ? AND u.archived_at IS NULL`, hash).
-		Scan(&userID, &expiresAt)
-	if err == nil {
-		exp, _ := time.Parse(time.RFC3339, expiresAt)
-		if time.Now().UTC().After(exp) {
-			return nil, auth.ErrInvalidToken // expired — client should refresh
-		}
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-		_, _ = h.db.ExecContext(ctx, `UPDATE oauth_access_tokens SET last_used_at = ? WHERE token_hash = ?`, now, hash)
-		return &auth.TokenInfo{UserID: userID, Expiration: exp}, nil
+	u, exp, err := h.mcpPrincipal(ctx, token)
+	if err != nil {
+		return nil, auth.ErrInvalidToken
 	}
-
-	// API key fallback (programmatic callers).
-	var keyUser string
-	if err := h.db.QueryRowContext(ctx, `
-		SELECT u.id FROM api_keys ak JOIN users u ON u.id = ak.user_id
-		WHERE ak.key_hash = ? AND u.archived_at IS NULL`, hash).Scan(&keyUser); err == nil {
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-		_, _ = h.db.ExecContext(ctx, `UPDATE api_keys SET last_used_at = ? WHERE key_hash = ?`, now, hash)
-		// API keys don't expire; report a far-future expiry so the SDK doesn't reject it.
-		return &auth.TokenInfo{UserID: keyUser, Expiration: time.Now().Add(mcpAccessTokenTTL)}, nil
-	}
-
-	return nil, auth.ErrInvalidToken
+	return &auth.TokenInfo{UserID: u.ID, Expiration: exp}, nil
 }
 
 // OAuthProtectedResourceMetadata serves RFC 9728 protected-resource metadata: it tells
@@ -140,7 +117,7 @@ func (h *Handler) OAuthProtectedResourceMetadata(w http.ResponseWriter, r *http.
 		"resource":                 h.baseURL + "/mcp",
 		"authorization_servers":    []string{h.baseURL},
 		"bearer_methods_supported": []string{"header"},
-		"scopes_supported":         []string{"mcp"},
+		"scopes_supported":         append([]string{"mcp"}, mcpActions...),
 	})
 }
 
@@ -155,7 +132,7 @@ func (h *Handler) OAuthAuthServerMetadata(w http.ResponseWriter, r *http.Request
 		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
 		"code_challenge_methods_supported":      []string{"S256"},
 		"token_endpoint_auth_methods_supported": []string{"none"},
-		"scopes_supported":                      []string{"mcp"},
+		"scopes_supported":                      append([]string{"mcp"}, mcpActions...),
 		// RFC 9207: we return `iss` in authorization responses; advertise it so strict
 		// clients (e.g. Claude) accept the redirect and proceed to the token exchange.
 		"authorization_response_iss_parameter_supported": true,

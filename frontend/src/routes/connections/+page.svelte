@@ -1,5 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+ import CredentialOwnerPicker from '$lib/components/CredentialOwnerPicker.svelte';
+ let credentialOwner=$state('');
+ import { Badge } from '$lib/components/ui/badge';
 	import { api, type OAuthConnection } from '$lib/api';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -40,7 +43,7 @@
 
 	async function load() {
 		try {
-			const res = await api.get<{ items: OAuthConnection[] }>('/v1/oauth/connections');
+			const res = await api.get<{ items: OAuthConnection[] }>(`/v1/oauth/connections${credentialOwner ? '?user_id='+encodeURIComponent(credentialOwner) : ''}`);
 			items = res.items;
 		} catch (e: any) {
 			error = e.message;
@@ -94,6 +97,8 @@
 	</p>
 </div>
 
+<CredentialOwnerPicker bind:value={credentialOwner} permission="mcp.manage" onChange={load} />
+
 {#if error}<p class="mb-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>{/if}
 
 <!-- Shown whether or not anything is connected: the URL is what you need to add the SECOND
@@ -146,7 +151,7 @@
 				<Tooltip.Provider>
 					{#each items as c}
 						<tr class="transition-colors hover:bg-muted/30">
-							<td class="px-4 py-3 font-medium">{c.client_name}</td>
+							<td class="px-4 py-3 font-medium">{c.client_name} {#if c.legacy}<Badge variant="outline">{$t('permissions.legacy')}</Badge>{/if}<p class="mt-1 text-xs font-normal text-muted-foreground">{Object.keys(c.permissions||{}).length} {$t('permissions.selected')}</p></td>
 							<td class="px-4 py-3 text-muted-foreground">{fmtDate(c.created_at)}</td>
 							<td class="px-4 py-3 text-muted-foreground">
 								{#if c.last_used_at}{fmtDate(c.last_used_at)}{:else}{$t('common.never')}{/if}

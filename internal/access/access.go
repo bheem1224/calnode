@@ -1,0 +1,285 @@
+// Package access defines the permission vocabulary shared by interactive users,
+// delegated credentials, MCP tools, and background webhook delivery.
+package access
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"strings"
+)
+
+type Grants map[string]string
+type Permission struct {
+	ID        string   `json:"id"`
+	Group     string   `json:"group"`
+	Scopes    []string `json:"scopes"`
+	Delegable bool     `json:"delegable"`
+}
+
+var Catalog = func() []Permission {
+	groups := []struct {
+		name, actions string
+		global        bool
+	}{
+		{"profile", "read update", false},
+		{"event_types", "read create update delete links", false},
+		{"bookings", "read create reschedule cancel approve reassign answers", false},
+		{"availability", "read update", false},
+		{"members", "read invite_member invite_admin update_role archive password", true},
+		{"roles", "read manage", true},
+		{"teams", "read create update delete members", false},
+		{"api_keys", "read create revoke manage", false},
+		{"mcp", "connect manage", false},
+		{"webhooks", "read create update delete deliveries rotate", false},
+		{"integrations", "read update", false},
+		{"settings", "read update security", true},
+		{"branding", "read update", true},
+		{"recordings", "read delete", false},
+		{"transcripts", "read", false},
+		{"notes", "read update", false},
+		{"impersonation", "use audit", true},
+	}
+	out := []Permission{}
+	for _, g := range groups {
+		for _, a := range strings.Fields(g.actions) {
+			scopes := []string{"own", "team", "all"}
+			if g.global || (g.name == "teams" && (a == "create" || a == "delete")) {
+				scopes = []string{"all"}
+			}
+			if g.name == "profile" || (g.name == "availability" && a == "update") || g.name == "integrations" || (g.name == "api_keys" && a == "create") || (g.name == "mcp" && a == "connect") {
+				scopes = []string{"own"}
+			}
+			id := g.name + "." + a
+			delegable := id != "api_keys.create" && id != "api_keys.manage" && id != "roles.manage" && id != "settings.security" && id != "impersonation.use"
+			out = append(out, Permission{id, g.name, scopes, delegable})
+		}
+	}
+	return out
+}()
+
+func Rank(s string) int {
+	switch s {
+	case "own":
+		return 1
+	case "team":
+		return 2
+	case "all":
+		return 3
+	}
+	return 0
+}
+func (g Grants) Has(p string) bool { return Rank(g[p]) > 0 }
+func (g Grants) JSON() string      { b, _ := json.Marshal(g); return string(b) }
+func Parse(raw string) Grants {
+	g := Grants{}
+	if json.Unmarshal([]byte(raw), &g) != nil {
+		return Grants{}
+	}
+	return g
+}
+func Full() Grants {
+	g := Grants{}
+	for _, p := range Catalog {
+		g[p.ID] = p.Scopes[len(p.Scopes)-1]
+	}
+	return g
+}
+func Member(legacy bool) Grants {
+	g := Grants{}
+	for _, p := range Catalog {
+		switch p.Group {
+		case "profile", "event_types", "bookings", "availability", "teams", "integrations", "recordings", "transcripts", "notes":
+			g[p.ID] = "own"
+		}
+	}
+	delete(g, "teams.create")
+	delete(g, "teams.delete")
+	g["event_types.read"] = "team"
+	g["mcp.connect"] = "own"
+	g["mcp.manage"] = "own"
+	g["api_keys.read"] = "own"
+	g["api_keys.revoke"] = "own"
+	if legacy {
+		for _, p := range Catalog {
+			if p.Group == "api_keys" || p.Group == "webhooks" {
+				g[p.ID] = "own"
+			}
+		}
+	}
+	return g
+}
+func Intersect(a, b Grants) Grants {
+	g := Grants{}
+	for p, s := range a {
+		if Rank(b[p]) > 0 {
+			if Rank(b[p]) < Rank(s) {
+				s = b[p]
+			}
+			g[p] = s
+		}
+	}
+	return g
+}
+func Delegable(g Grants) Grants {
+	out := Grants{}
+	for _, p := range Catalog {
+		if p.Delegable && g.Has(p.ID) {
+			out[p.ID] = g[p.ID]
+		}
+	}
+	return out
+}
+func Validate(g, ceiling Grants, delegated bool) error {
+	for id, s := range g {
+		found := false
+		for _, p := range Catalog {
+			if p.ID != id {
+				continue
+			}
+			found = true
+			valid := false
+			for _, v := range p.Scopes {
+				if v == s {
+					valid = true
+				}
+			}
+			if !valid || Rank(s) > Rank(ceiling[id]) || (delegated && !p.Delegable) {
+				return errors.New("permission is not grantable: " + id)
+			}
+		}
+		if !found {
+			return errors.New("unknown permission: " + id)
+		}
+	}
+	return nil
+}
+
+// Load always reads current membership; a credential never caches its owner's role.
+type Querier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func Load(ctx context.Context, db Querier, userID string) (Grants, error) {
+	var admin, owner, legacy bool
+	var roleID string
+	var raw sql.NullString
+	var users, settings, teams, imp sql.NullBool
+	err := db.QueryRowContext(ctx, `SELECT u.is_admin,u.is_owner,u.legacy_permissions,COALESCE(u.custom_role_id,''),r.permissions_json,r.can_manage_users,r.can_manage_settings,r.can_manage_teams,r.allow_impersonation FROM users u LEFT JOIN roles r ON r.id=u.custom_role_id WHERE u.id=? AND u.archived_at IS NULL`, userID).Scan(&admin, &owner, &legacy, &roleID, &raw, &users, &settings, &teams, &imp)
+	if err != nil {
+		return nil, err
+	}
+	if admin || owner {
+		return Full(), nil
+	}
+	if raw.Valid {
+		g := Parse(raw.String)
+		g["profile.read"] = "own"
+		g["profile.update"] = "own"
+		return g, nil
+	}
+	if roleID != "" {
+		return LegacyRole(users.Bool, settings.Bool, teams.Bool, imp.Bool), nil
+	}
+	return Member(legacy), nil
+}
+
+func Related(ctx context.Context, db *sql.DB, userID, otherID string) bool {
+	if userID == otherID {
+		return true
+	}
+	var n int
+	err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM team_members a JOIN team_members b ON a.team_id=b.team_id WHERE a.user_id=? AND b.user_id=?`, userID, otherID).Scan(&n)
+	return err == nil && n > 0
+}
+func EventAllowed(ctx context.Context, db *sql.DB, userID, scope, id string) bool {
+	if Rank(scope) == 0 {
+		return false
+	}
+	if scope == "all" {
+		return true
+	}
+	var owner string
+	var team sql.NullString
+	if db.QueryRowContext(ctx, `SELECT user_id,team_id FROM event_types WHERE id=? OR slug=?`, id, id).Scan(&owner, &team) != nil {
+		return false
+	}
+	if owner == userID {
+		return true
+	}
+	var n int
+	if db.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_type_hosts WHERE event_type_id=(SELECT id FROM event_types WHERE id=? OR slug=?) AND user_id=?`, id, id, userID).Scan(&n) == nil && n > 0 {
+		return true
+	}
+	if scope == "team" && team.Valid {
+		_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM team_members WHERE team_id=? AND user_id=?`, team.String, userID).Scan(&n)
+		return n > 0
+	}
+	return false
+}
+func BookingAllowed(ctx context.Context, db *sql.DB, userID, scope, id string) bool {
+	if Rank(scope) == 0 {
+		return false
+	}
+	if scope == "all" {
+		return true
+	}
+	var host, eventID string
+	if db.QueryRowContext(ctx, `SELECT host_id,event_type_id FROM bookings WHERE id=?`, id).Scan(&host, &eventID) != nil {
+		return false
+	}
+	if host == userID {
+		return true
+	}
+	var n int
+	_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM booking_hosts WHERE booking_id=? AND user_id=?`, id, userID).Scan(&n)
+	if n > 0 {
+		return true
+	}
+	return scope == "team" && EventAllowed(ctx, db, userID, scope, eventID)
+}
+
+// Role loads an assignable custom role, including the permissions of pre-migration roles.
+func Role(ctx context.Context, db Querier, id string) (Grants, error) {
+	var raw sql.NullString
+	var users, settings, teams, imp bool
+	err := db.QueryRowContext(ctx, `SELECT permissions_json,can_manage_users,can_manage_settings,can_manage_teams,allow_impersonation FROM roles WHERE id=? AND is_system=0`, id).Scan(&raw, &users, &settings, &teams, &imp)
+	if err != nil {
+		return nil, err
+	}
+	if raw.Valid {
+		return Parse(raw.String), nil
+	}
+	return LegacyRole(users, settings, teams, imp), nil
+}
+
+// EventManageAllowed keeps assigned hosts read-only unless their role explicitly grants team-wide editing.
+func EventManageAllowed(ctx context.Context, db *sql.DB, userID, scope, id string) bool {
+	if scope == "all" {
+		return true
+	}
+	if scope == "team" {
+		return EventAllowed(ctx, db, userID, scope, id)
+	}
+	if scope != "own" {
+		return false
+	}
+	var n int
+	err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_types e WHERE (e.id=? OR e.slug=?) AND (e.user_id=? OR EXISTS(SELECT 1 FROM team_members tm WHERE tm.team_id=e.team_id AND tm.user_id=? AND tm.role='owner'))`, id, id, userID, userID).Scan(&n)
+	return err == nil && n > 0
+}
+
+// LegacyRole preserves old management capabilities without silently granting new delegation powers.
+func LegacyRole(users, settings, teams, imp bool) Grants {
+	g := Member(true)
+	for _, p := range Catalog {
+		if p.ID == "members.invite_admin" || p.ID == "members.update_role" {
+			continue
+		}
+		if (users && (p.Group == "members" || p.Group == "roles")) || (settings && (p.Group == "settings" || p.Group == "branding")) || (teams && p.Group == "teams") || (imp && p.ID == "impersonation.use") {
+			g[p.ID] = "all"
+		}
+	}
+	return g
+}

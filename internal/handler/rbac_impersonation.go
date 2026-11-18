@@ -6,21 +6,23 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/db"
 	"github.com/calnode/calnode/internal/uid"
 )
 
 type roleJSON struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	Description       string `json:"description"`
-	IsSystem          bool   `json:"is_system"`
-	CanImpersonate    bool   `json:"can_impersonate"`
-	IsImpersonatable  bool   `json:"is_impersonatable"`
-	CanManageUsers    bool   `json:"can_manage_users"`
-	CanManageSettings bool   `json:"can_manage_settings"`
-	CanManageTeams    bool   `json:"can_manage_teams"`
-	CreatedAt         string `json:"created_at"`
+	Permissions       access.Grants `json:"permissions"`
+	ID                string        `json:"id"`
+	Name              string        `json:"name"`
+	Description       string        `json:"description"`
+	IsSystem          bool          `json:"is_system"`
+	CanImpersonate    bool          `json:"can_impersonate"`
+	IsImpersonatable  bool          `json:"is_impersonatable"`
+	CanManageUsers    bool          `json:"can_manage_users"`
+	CanManageSettings bool          `json:"can_manage_settings"`
+	CanManageTeams    bool          `json:"can_manage_teams"`
+	CreatedAt         string        `json:"created_at"`
 }
 
 func boolInt(b bool) int {
@@ -36,7 +38,7 @@ func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := h.db.QueryContext(r.Context(), `
-		SELECT id, name, description, is_system, allow_impersonation, is_impersonatable, can_manage_users, can_manage_settings, can_manage_teams, created_at
+		SELECT id, name, description, is_system, allow_impersonation, is_impersonatable, can_manage_users, can_manage_settings, can_manage_teams, created_at, permissions_json
 		FROM roles
 		ORDER BY is_system DESC, name ASC`)
 	if err != nil {
@@ -49,8 +51,9 @@ func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
 	items := []roleJSON{}
 	for rows.Next() {
 		var item roleJSON
+		var grants sql.NullString
 		var isSys, allowImp, isImpTarget, canUsers, canSettings, canTeams int
-		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &isSys, &allowImp, &isImpTarget, &canUsers, &canSettings, &canTeams, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &isSys, &allowImp, &isImpTarget, &canUsers, &canSettings, &canTeams, &item.CreatedAt, &grants); err != nil {
 			h.writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
@@ -60,6 +63,18 @@ func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
 		item.CanManageUsers = canUsers != 0
 		item.CanManageSettings = canSettings != 0
 		item.CanManageTeams = canTeams != 0
+		if grants.Valid {
+			item.Permissions = access.Parse(grants.String)
+		} else {
+			item.Permissions = legacyRoleGrants(item)
+		}
+		if item.IsSystem {
+			if item.ID == "role_admin" {
+				item.Permissions = access.Full()
+			} else {
+				item.Permissions = access.Member(false)
+			}
+		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -71,19 +86,21 @@ func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
 
 // CreateRole handles POST /v1/roles (admin/owner only).
 func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.requireAdmin(w, r); !ok {
+	actor, ok := h.requireAdmin(w, r)
+	if !ok {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 	var req struct {
-		Name               string `json:"name"`
-		Description        string `json:"description"`
-		CanImpersonate     bool   `json:"can_impersonate"`
-		AllowImpersonation bool   `json:"allow_impersonation"` // legacy alias
-		IsImpersonatable   *bool  `json:"is_impersonatable"`
-		CanManageUsers     bool   `json:"can_manage_users"`
-		CanManageSettings  bool   `json:"can_manage_settings"`
-		CanManageTeams     bool   `json:"can_manage_teams"`
+		Permissions        *access.Grants `json:"permissions"`
+		Name               string         `json:"name"`
+		Description        string         `json:"description"`
+		CanImpersonate     bool           `json:"can_impersonate"`
+		AllowImpersonation bool           `json:"allow_impersonation"` // legacy alias
+		IsImpersonatable   *bool          `json:"is_impersonatable"`
+		CanManageUsers     bool           `json:"can_manage_users"`
+		CanManageSettings  bool           `json:"can_manage_settings"`
+		CanManageTeams     bool           `json:"can_manage_teams"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -101,10 +118,22 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := uid.New()
+	var effective access.Grants
+	if req.Permissions != nil {
+		effective = *req.Permissions
+	} else {
+		effective = legacyRoleGrants(roleJSON{CanManageUsers: req.CanManageUsers, CanManageSettings: req.CanManageSettings, CanManageTeams: req.CanManageTeams, CanImpersonate: req.CanImpersonate})
+	}
+	if actor.Permissions != nil {
+		if err := access.Validate(effective, actor.Permissions, false); err != nil {
+			h.writeError(w, 403, err.Error())
+			return
+		}
+	}
 	if _, err := h.db.ExecContext(r.Context(), `
-		INSERT INTO roles (id, name, description, is_system, allow_impersonation, is_impersonatable, can_manage_users, can_manage_settings, can_manage_teams)
-		VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)`,
-		id, req.Name, strings.TrimSpace(req.Description), boolInt(canImp), boolInt(isImpTarget), boolInt(req.CanManageUsers), boolInt(req.CanManageSettings), boolInt(req.CanManageTeams)); err != nil {
+		INSERT INTO roles (id, name, description, is_system, allow_impersonation, is_impersonatable, can_manage_users, can_manage_settings, can_manage_teams,permissions_json)
+		VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?,?)`,
+		id, req.Name, strings.TrimSpace(req.Description), boolInt(canImp), boolInt(isImpTarget), boolInt(req.CanManageUsers), boolInt(req.CanManageSettings), boolInt(req.CanManageTeams), effective.JSON()); err != nil {
 		if db.IsUniqueViolation(err) {
 			h.writeError(w, http.StatusConflict, "role name already exists")
 			return
@@ -113,8 +142,9 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	h.securityAudit(r.Context(), actor.ID, "role.save", id, effective)
 	h.writeJSON(w, http.StatusCreated, roleJSON{
-		ID:                id,
+		Permissions: effective, ID: id,
 		Name:              req.Name,
 		Description:       strings.TrimSpace(req.Description),
 		IsSystem:          false,
@@ -128,7 +158,8 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 
 // UpdateRole handles PATCH /v1/roles/{id} (admin/owner only; system roles protected).
 func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.requireAdmin(w, r); !ok {
+	actor, ok := h.requireAdmin(w, r)
+	if !ok {
 		return
 	}
 	id := r.PathValue("id")
@@ -149,13 +180,14 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 	var req struct {
-		Name              string  `json:"name"`
-		Description       *string `json:"description"`
-		CanImpersonate    bool    `json:"can_impersonate"`
-		IsImpersonatable  bool    `json:"is_impersonatable"`
-		CanManageUsers    bool    `json:"can_manage_users"`
-		CanManageSettings bool    `json:"can_manage_settings"`
-		CanManageTeams    bool    `json:"can_manage_teams"`
+		Permissions       *access.Grants `json:"permissions"`
+		Name              string         `json:"name"`
+		Description       *string        `json:"description"`
+		CanImpersonate    bool           `json:"can_impersonate"`
+		IsImpersonatable  bool           `json:"is_impersonatable"`
+		CanManageUsers    bool           `json:"can_manage_users"`
+		CanManageSettings bool           `json:"can_manage_settings"`
+		CanManageTeams    bool           `json:"can_manage_teams"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -167,13 +199,25 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var effective access.Grants
+	if req.Permissions != nil {
+		effective = *req.Permissions
+	} else {
+		effective = legacyRoleGrants(roleJSON{CanManageUsers: req.CanManageUsers, CanManageSettings: req.CanManageSettings, CanManageTeams: req.CanManageTeams, CanImpersonate: req.CanImpersonate})
+	}
+	if actor.Permissions != nil {
+		if err := access.Validate(effective, actor.Permissions, false); err != nil {
+			h.writeError(w, 403, err.Error())
+			return
+		}
+	}
 	if _, err := h.db.ExecContext(r.Context(), `
 		UPDATE roles
 		SET name = ?, description = COALESCE(?, description), allow_impersonation = ?, is_impersonatable = ?,
-		    can_manage_users = ?, can_manage_settings = ?, can_manage_teams = ?
+		    can_manage_users = ?, can_manage_settings = ?, can_manage_teams = ?,permissions_json=?
 		WHERE id = ?`,
 		req.Name, req.Description, boolInt(req.CanImpersonate), boolInt(req.IsImpersonatable),
-		boolInt(req.CanManageUsers), boolInt(req.CanManageSettings), boolInt(req.CanManageTeams), id); err != nil {
+		boolInt(req.CanManageUsers), boolInt(req.CanManageSettings), boolInt(req.CanManageTeams), effective.JSON(), id); err != nil {
 		if db.IsUniqueViolation(err) {
 			h.writeError(w, http.StatusConflict, "role name already exists")
 			return
@@ -188,8 +232,9 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	h.securityAudit(r.Context(), actor.ID, "role.save", id, effective)
 	h.writeJSON(w, http.StatusOK, roleJSON{
-		Description:       description,
+		Permissions: effective, Description: description,
 		ID:                id,
 		Name:              req.Name,
 		IsSystem:          false,
@@ -203,7 +248,8 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 
 // DeleteRole handles DELETE /v1/roles/{id} (admin/owner only; system roles protected).
 func (h *Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.requireAdmin(w, r); !ok {
+	actor, ok := h.requireAdmin(w, r)
+	if !ok {
 		return
 	}
 	id := r.PathValue("id")
@@ -221,10 +267,34 @@ func (h *Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusForbidden, "cannot delete built-in system role")
 		return
 	}
-	if _, err := h.db.ExecContext(r.Context(), `DELETE FROM roles WHERE id = ?`, id); err != nil {
-		h.writeError(w, http.StatusInternalServerError, "internal error")
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		h.writeError(w, 500, "could not delete role")
 		return
 	}
+	defer tx.Rollback()
+	var assigned int
+	if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM users WHERE custom_role_id=?`, id).Scan(&assigned); err != nil {
+		h.writeError(w, 500, "could not check role")
+		return
+	}
+	if assigned > 0 {
+		h.writeError(w, 409, "reassign members before deleting this role")
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(), `DELETE FROM invite_tokens WHERE custom_role_id=? AND used_at IS NULL`, id); err != nil {
+		h.writeError(w, 500, "could not revoke role invitations")
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(), `DELETE FROM roles WHERE id=? AND is_system=0`, id); err != nil {
+		h.writeError(w, 500, "could not delete role")
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		h.writeError(w, 500, "could not delete role")
+		return
+	}
+	h.securityAudit(r.Context(), actor.ID, "role.delete", id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -255,24 +325,36 @@ func (h *Handler) SetUserCustomRole(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if targetIsOwner != 0 && !actor.IsOwner {
-		h.writeError(w, http.StatusForbidden, "only the workspace owner can change the owner's custom role")
+	if targetIsOwner != 0 || targetID == actor.ID {
+		h.writeError(w, http.StatusForbidden, "cannot change your own role or the owner's role")
 		return
 	}
 
 	var val any = nil
 	if roleID != "" {
 		var exists int
-		if err := h.db.QueryRowContext(r.Context(), `SELECT 1 FROM roles WHERE id = ?`, roleID).Scan(&exists); err != nil {
+		if err := h.db.QueryRowContext(r.Context(), `SELECT 1 FROM roles WHERE id = ? AND is_system=0`, roleID).Scan(&exists); err != nil {
 			h.writeError(w, http.StatusBadRequest, "invalid custom_role_id")
 			return
 		}
+		grants, err := access.Role(r.Context(), h.db, roleID)
+		if err != nil {
+			h.writeError(w, 400, "invalid role")
+			return
+		}
+		if actor.Permissions != nil {
+			if err := access.Validate(grants, actor.Permissions, false); err != nil {
+				h.writeError(w, 403, err.Error())
+				return
+			}
+		}
 		val = roleID
 	}
-	if _, err := h.db.ExecContext(r.Context(), `UPDATE users SET custom_role_id = ? WHERE id = ?`, val, targetID); err != nil {
+	if _, err := h.db.ExecContext(r.Context(), `UPDATE users SET custom_role_id = ?, legacy_permissions=0 WHERE id = ? AND is_owner=0`, val, targetID); err != nil {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	h.securityAudit(r.Context(), actor.ID, "member.custom_role", targetID, map[string]string{"role_id": roleID})
 	h.writeJSON(w, http.StatusOK, map[string]any{"id": targetID, "custom_role_id": roleID})
 }
 
@@ -333,10 +415,6 @@ func (h *Handler) StartImpersonation(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusForbidden, "cannot impersonate the workspace owner")
 		return
 	}
-	if targetIsAdmin != 0 && !actor.IsOwner {
-		h.writeError(w, http.StatusForbidden, "only the workspace owner can impersonate an admin")
-		return
-	}
 	if targetRoleImpersonatable == 0 {
 		h.writeError(w, http.StatusForbidden, "this user's role does not allow impersonation")
 		return
@@ -349,6 +427,12 @@ func (h *Handler) StartImpersonation(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback() // #nosec G104
 
+	// Recheck after acquiring the transaction, so a concurrent transfer cannot turn the target into an owner between the guard and session mutation.
+	var eligible int
+	if err := tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM users u LEFT JOIN roles r ON r.id=u.custom_role_id WHERE u.id=? AND u.is_owner=0 AND u.archived_at IS NULL AND COALESCE(r.is_impersonatable,1)=1`, targetID).Scan(&eligible); err != nil || eligible != 1 {
+		h.writeError(w, 409, "target account changed; reload and try again")
+		return
+	}
 	if _, err := tx.ExecContext(r.Context(), `
 		UPDATE sessions SET user_id = ?, impersonator_user_id = ? WHERE id = ?`,
 		targetID, actor.ID, actor.SessionID); err != nil {
@@ -453,4 +537,8 @@ func (h *Handler) ListImpersonationLogs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func legacyRoleGrants(r roleJSON) access.Grants {
+	return access.LegacyRole(r.CanManageUsers, r.CanManageSettings, r.CanManageTeams, r.CanImpersonate)
 }

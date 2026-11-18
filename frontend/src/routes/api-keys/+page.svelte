@@ -1,5 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+ import CredentialOwnerPicker from '$lib/components/CredentialOwnerPicker.svelte';
+ let credentialOwner=$state('');
+ import PermissionEditor from '$lib/components/PermissionEditor.svelte';
+ import type { PermissionGrant } from '$lib/api';
+ import { currentUser } from '$lib/stores';
+ import { Badge } from '$lib/components/ui/badge';
+ import * as Select from '$lib/components/ui/select';
 	import { api, type APIKey } from '$lib/api';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { ConfirmDialog } from '$lib/components/ui/confirm-dialog';
@@ -13,6 +20,9 @@
 	let error = $state('');
 	let showCreate = $state(false);
 	let newName = $state('');
+ let grants=$state<PermissionGrant>({}),expiry=$state('90'),editing=$state('');
+ let grantable=$state<PermissionGrant>({});
+ const canCreate=$derived(!credentialOwner && !!$currentUser?.permissions?.['api_keys.create']);
 	let creating = $state(false);
 	let createError = $state('');
 	let newKey = $state('');
@@ -21,8 +31,9 @@
 
 	async function load() {
 		try {
-			const res = await api.get<{ items: APIKey[] }>('/v1/api-keys');
+			const res = await api.get<{ items: APIKey[] }>(`/v1/api-keys${credentialOwner ? '?user_id='+encodeURIComponent(credentialOwner) : ''}`);
 			items = res.items;
+ grantable=(await api.get<{delegable:PermissionGrant}>('/v1/permissions')).delegable;
 		} catch (e: any) {
 			error = e.message;
 		} finally {
@@ -37,8 +48,9 @@
 		if (!newName.trim()) { createError = tr('apiKeys.validation.name'); return; }
 		creating = true;
 		try {
-			const res = await api.post<{ key: string }>('/v1/api-keys', { name: newName.trim() });
-			newKey = res.key;
+			const payload={name:newName.trim(),permissions:grants,expires_at:new Date(Date.now()+Number(expiry)*86400000).toISOString()};
+ if(editing)await api.patch(`/v1/api-keys/${editing}`,payload);else{const res=await api.post<{key:string}>('/v1/api-keys',payload);newKey=res.key;}
+ editing='';
 			newName = '';
 			showCreate = false;
 			await load();
@@ -89,35 +101,40 @@
 		<h1 class="text-2xl font-semibold tracking-tight">{$t('apiKeys.title')}</h1>
 		<p class="mt-1 text-sm text-muted-foreground">{$t('apiKeys.subtitle')}</p>
 	</div>
-	<Button onclick={() => { showCreate = !showCreate; createError = ''; newKey = ''; }}>
+	{#if canCreate}<Button onclick={() => { showCreate = !showCreate; editing='';grants={};createError = ''; newKey = ''; }}>
 		{showCreate ? $t('apiKeys.new.toggleCancel') : $t('apiKeys.new.toggleOpen')}
-	</Button>
+	</Button>{/if}
 </div>
 
+<CredentialOwnerPicker bind:value={credentialOwner} permission="api_keys.manage" onChange={load} />
+
 {#if newKey}
-	<div class="mb-6 rounded-lg border border-green-200 bg-green-50 p-4">
-		<p class="mb-2 text-sm font-medium text-green-800">{$t('apiKeys.created.banner')}</p>
-		<div class="mb-3 rounded-md border bg-white px-3 py-2 font-mono text-xs text-foreground break-all">{newKey}</div>
+	<div class="mb-6 rounded-lg border border-emerald-500/25 bg-emerald-500/10 p-4">
+		<p class="mb-2 text-sm font-medium text-emerald-800 dark:text-emerald-300">{$t('apiKeys.created.banner')}</p>
+		<div class="mb-3 rounded-md border bg-card px-3 py-2 font-mono text-xs text-foreground break-all">{newKey}</div>
 		<Button variant="outline" size="sm" onclick={copyKey}>
 			{$t('apiKeys.copyToClipboard')}
 		</Button>
 	</div>
 {/if}
 
-{#if showCreate}
-	<div class="mb-6 rounded-lg border bg-card p-6">
-		<h2 class="mb-4 text-sm font-semibold">{$t('apiKeys.new.title')}</h2>
+{#if showCreate && !credentialOwner}
+	<div class="mb-6 w-full max-w-3xl rounded-lg border bg-card p-6">
+		<h2 class="mb-4 text-sm font-semibold">{editing ? $t('permissions.review') : $t('apiKeys.new.title')}</h2>
 		{#if createError}<p class="mb-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{createError}</p>{/if}
 		<div class="mb-4 max-w-sm space-y-1.5">
 			<Label for="key-name">{$t('apiKeys.new.nameLabel')}</Label>
 			<Input
 				id="key-name"
+ disabled={!!editing}
 				bind:value={newName}
 				placeholder={$t('apiKeys.new.namePlaceholder')}
 			/>
 		</div>
-		<Button onclick={create} disabled={creating}>
-			{creating ? $t('apiKeys.new.creating') : $t('apiKeys.new.create')}
+  <div class="mb-4 space-y-1.5"><Label id="key-expiry-label">{$t('permissions.expiry')}</Label><Select.Root type="single" bind:value={expiry}><Select.Trigger aria-labelledby="key-expiry-label" class="w-40 rounded-lg">{expiry} {$t('permissions.days')}</Select.Trigger><Select.Content>{#each ['7','30','90','365'] as days}<Select.Item value={days}>{days} {$t('permissions.days')}</Select.Item>{/each}</Select.Content></Select.Root></div>
+  <div class="mb-5"><PermissionEditor bind:value={grants} delegated /></div>
+		<Button onclick={create} disabled={creating || !Object.keys(grants).length}>
+			{creating ? $t('apiKeys.new.creating') : editing ? $t('permissions.save') : $t('apiKeys.new.create')}
 		</Button>
 	</div>
 {/if}
@@ -132,7 +149,7 @@
 		<p class="mt-1 text-sm text-muted-foreground">{$t('apiKeys.empty.description')}</p>
 	</div>
 {:else}
-	<div class="rounded-lg border bg-card overflow-hidden">
+	<div class="overflow-x-auto rounded-lg border bg-card">
 		<table class="w-full text-sm">
 			<thead>
 				<tr class="border-b">
@@ -146,12 +163,13 @@
 				<Tooltip.Provider>
 					{#each items as k}
 						<tr class="transition-colors hover:bg-muted/30">
-							<td class="px-4 py-3 font-medium">{k.name}</td>
+							<td class="px-4 py-3 font-medium"><div class="flex flex-wrap items-center gap-2">{k.name}{#if k.legacy}<Badge variant="outline">{$t('permissions.legacy')}</Badge>{/if}</div><p class="mt-1 text-xs font-normal text-muted-foreground">{Object.keys(k.permissions||{}).length} {$t('permissions.selected')}{#if k.expires_at} · {$t('permissions.expires')} {fmtDate(k.expires_at)}{/if}</p></td>
 							<td class="px-4 py-3 text-muted-foreground">{fmtDate(k.created_at)}</td>
 							<td class="px-4 py-3 text-muted-foreground">
 								{#if k.last_used_at}{fmtDate(k.last_used_at)}{:else}{$t('common.never')}{/if}
 							</td>
 							<td class="px-4 py-3 text-right">
+ {#if canCreate}<Button type="button" variant="outline" size="sm" onclick={()=>{editing=k.id;newName=k.name;expiry='90';grants=Object.fromEntries(Object.entries(k.permissions||{}).filter(([id])=>grantable[id]).map(([id,scope])=>[id,({own:1,team:2,all:3}[scope] > {own:1,team:2,all:3}[grantable[id]]) ? grantable[id] : scope]));showCreate=true;}}>{$t('permissions.review')}</Button>{/if}
 								<Tooltip.Root>
 									<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} onclick={() => revoke(k.id, k.name)}>
 										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>

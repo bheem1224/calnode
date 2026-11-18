@@ -108,51 +108,37 @@ func TestRevokeAllSessions_selfKeepsTheCallingSession(t *testing.T) {
 	}
 }
 
-// An API-key caller has no current session, so there is none to spare.
-func TestRevokeAllSessions_apiKeyCallerRevokesEveryone(t *testing.T) {
-	h, database, ownerKey, ownerID := setupWorkspaceWithDB(t)
-	seedSessionID(t, database, "sess-a", ownerID)
-	seedSessionID(t, database, "sess-b", ownerID)
-
-	rec := revokeAll(h, "", ownerKey, "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d; want 200 — %s", rec.Code, rec.Body.String())
+// A key cannot exercise account-security controls, even if it also carries a stale cookie.
+func TestRevokeAllSessions_apiKeysCannotRevokeSessions(t *testing.T) {
+	h, database, key, owner := setupWorkspaceWithDB(t)
+	cookie := seedSessionID(t, database, "current", owner)
+	for _, present := range []string{"", cookie} {
+		rec := revokeAll(h, "", key, present)
+		if rec.Code != 403 {
+			t.Fatalf("key accepted: %d", rec.Code)
+		}
 	}
-	if n := countSessions(t, database, ownerID); n != 0 {
-		t.Errorf("sessions left = %d; want 0", n)
+	if countSessions(t, database, owner) != 1 {
+		t.Fatal("sessions changed after denied key request")
 	}
 }
 
-// ⛔ An API-key request that ALSO carries a cookie is still an API-key request —
-// RequireAuth tries the key first, so the cookie played no part in authenticating it and
-// there is no current session to spare. The test above sends a key and no cookie, so it
-// passes whether the handler reads the cookie or not; this is the case that separates
-// them. Sparing a session on the strength of a header the caller was not authenticated by
-// would leave a script that asked to end all its sessions with one alive, and the response
-// counts what was deleted, not what was kept, so nothing would say so.
-func TestRevokeAllSessions_apiKeyCallerWithAStaleCookieStillRevokesEveryone(t *testing.T) {
-	h, database, ownerKey, ownerID := setupWorkspaceWithDB(t)
-	seedSessionID(t, database, "sess-stale", ownerID)
-	seedSessionID(t, database, "sess-other", ownerID)
-
-	rec := revokeAll(h, "", ownerKey, "sess-stale")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d; want 200 — %s", rec.Code, rec.Body.String())
-	}
-	if n := countSessions(t, database, ownerID); n != 0 {
-		t.Errorf("sessions left = %d; want 0 — the cookie is not what authenticated this "+
-			"caller, so no session is the \"current\" one", n)
-	}
+func revokeInSession(t *testing.T, h *handler.Handler, db *sql.DB, actor, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := sessionRequest(t, db, actor, "POST", "/v1/auth/sessions/revoke-all", body)
+	rec := httptest.NewRecorder()
+	h.RequireAuth(h.RevokeAllSessions)(rec, r)
+	return rec
 }
 
 // An MCP connector holds a bearer token, not a cookie. Revoking sessions and leaving it
 // would hand back exactly the access that was just withdrawn.
 func TestRevokeAllSessions_cutsMCPTokensToo(t *testing.T) {
-	h, database, ownerKey, ownerID := setupWorkspaceWithDB(t)
+	h, database, _, ownerID := setupWorkspaceWithDB(t)
 	seedMCPToken(t, database, "tok-1", ownerID)
 	seedMCPToken(t, database, "tok-2", ownerID)
 
-	rec := revokeAll(h, "", ownerKey, "")
+	rec := revokeInSession(t, h, database, ownerID, "{}")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; want 200 — %s", rec.Code, rec.Body.String())
 	}
@@ -233,7 +219,7 @@ func TestRevokeAllSessions_adminRevokesAMember(t *testing.T) {
 	seedSessionID(t, database, "sess-m1b", "member-1")
 	seedMCPToken(t, database, "tok-m1", "member-1")
 
-	rec := revokeAll(h, `{"user_id":"member-1"}`, "admin-1-key", "")
+	rec := revokeInSession(t, h, database, "admin-1", `{"user_id":"member-1"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; want 200 — %s", rec.Code, rec.Body.String())
 	}
@@ -245,28 +231,19 @@ func TestRevokeAllSessions_adminRevokesAMember(t *testing.T) {
 	}
 }
 
-func TestRevokeAllSessions_onlyTheOwnerRevokesAnAdmin(t *testing.T) {
-	h, database, ownerKey, _ := setupWorkspaceWithDB(t)
-	seedRoleUser(t, database, "admin-1", "a1@example.com", 1, 0, "admin-1-key")
+func TestRevokeAllSessions_adminsCanRevokePeerSessions(t *testing.T) {
+	h, database, _, ownerID := setupWorkspaceWithDB(t)
+	seedRoleUser(t, database, "admin-1", "a1@example.com", 1, 0, "")
 	seedRoleUser(t, database, "admin-2", "a2@example.com", 1, 0, "")
-	seedSessionID(t, database, "sess-a2", "admin-2")
-
-	// Admin → admin is refused.
-	rec := revokeAll(h, `{"user_id":"admin-2"}`, "admin-1-key", "")
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("admin targeting admin: status = %d; want 403 — %s", rec.Code, rec.Body.String())
-	}
-	if n := countSessions(t, database, "admin-2"); n != 1 {
-		t.Fatalf("admin-2 sessions = %d; want 1 (untouched)", n)
-	}
-
-	// Owner → admin is allowed.
-	rec = revokeAll(h, `{"user_id":"admin-2"}`, ownerKey, "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("owner targeting admin: status = %d; want 200 — %s", rec.Code, rec.Body.String())
-	}
-	if n := countSessions(t, database, "admin-2"); n != 0 {
-		t.Errorf("admin-2 sessions = %d; want 0", n)
+	for _, actor := range []string{"admin-1", ownerID} {
+		seedSessionID(t, database, "target-"+actor, "admin-2")
+		rec := revokeInSession(t, h, database, actor, `{"user_id":"admin-2"}`)
+		if rec.Code != 200 {
+			t.Fatalf("peer revoke: %d %s", rec.Code, rec.Body.String())
+		}
+		if countSessions(t, database, "admin-2") != 0 {
+			t.Fatal("target session survived")
+		}
 	}
 }
 
@@ -277,7 +254,7 @@ func TestRevokeAllSessions_ownerIsOffLimitsToAdmins(t *testing.T) {
 	seedRoleUser(t, database, "admin-1", "a1@example.com", 1, 0, "admin-1-key")
 	seedSessionID(t, database, "sess-owner", ownerID)
 
-	rec := revokeAll(h, `{"user_id":"`+ownerID+`"}`, "admin-1-key", "")
+	rec := revokeInSession(t, h, database, "admin-1", `{"user_id":"`+ownerID+`"}`)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d; want 403 — %s", rec.Code, rec.Body.String())
 	}
@@ -287,9 +264,9 @@ func TestRevokeAllSessions_ownerIsOffLimitsToAdmins(t *testing.T) {
 }
 
 func TestRevokeAllSessions_unknownUserIs404(t *testing.T) {
-	h, _, ownerKey, _ := setupWorkspaceWithDB(t)
+	h, database, _, ownerID := setupWorkspaceWithDB(t)
 
-	rec := revokeAll(h, `{"user_id":"nobody"}`, ownerKey, "")
+	rec := revokeInSession(t, h, database, ownerID, `{"user_id":"nobody"}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d; want 404 — %s", rec.Code, rec.Body.String())
 	}
@@ -301,11 +278,11 @@ func TestRevokeAllSessions_namingYourselfIsSelf(t *testing.T) {
 	seedRoleUser(t, database, "member-1", "m1@example.com", 0, 0, "member-1-key")
 	seedSessionID(t, database, "sess-m1", "member-1")
 
-	rec := revokeAll(h, `{"user_id":"member-1"}`, "member-1-key", "")
+	rec := revokeInSession(t, h, database, "member-1", `{"user_id":"member-1"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; want 200 — %s", rec.Code, rec.Body.String())
 	}
-	if n := countSessions(t, database, "member-1"); n != 0 {
-		t.Errorf("sessions left = %d; want 0 (api-key caller has no current session)", n)
+	if n := countSessions(t, database, "member-1"); n != 1 {
+		t.Errorf("sessions left = %d; want 1 (the authenticated session)", n)
 	}
 }

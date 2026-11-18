@@ -2058,7 +2058,10 @@
 		"remove": "Supprimer",
 		"create": "Créer et copier le lien à usage unique",
 		"copied": "Lien personnalisé copié",
-		"failed": "Impossible de créer ou copier le lien"
+		"failed": "Impossible de créer ou copier le lien",
+		"hour": "Heure",
+		"minute": "Minute",
+		"clockHint": "Format 24 heures · choisissez la minute"
 	},
 	"roles": {
 		"heading": "Rôles et autorisations",
@@ -2105,6 +2108,163 @@
 		"empty": "Aucune personne correspondante",
 		"minimum": "Sélectionnez au moins deux personnes.",
 		"copy": "Copier le lien",
-		"open": "Continuer"
+		"open": "Continuer",
+		"noHandle": "Disponible pour un lien dynamique"
+	},
+	"permissions": {
+		"groups": {
+			"profile": "Profil",
+			"event_types": "Types d’événement",
+			"bookings": "Réservations",
+			"availability": "Disponibilités",
+			"members": "Membres",
+			"roles": "Rôles",
+			"teams": "Équipes",
+			"api_keys": "Clés API",
+			"mcp": "Connexions MCP",
+			"webhooks": "Webhooks",
+			"integrations": "Connexions calendrier et vidéo",
+			"settings": "Paramètres de l’instance",
+			"branding": "Identité visuelle",
+			"recordings": "Enregistrements",
+			"transcripts": "Transcriptions",
+			"notes": "Notes de réunion",
+			"impersonation": "Accès en tant qu’utilisateur"
+		},
+		"labels": {
+			"profile": {
+				"read": "Consulter",
+				"update": "Modifier"
+			},
+			"event_types": {
+				"read": "Consulter",
+				"create": "Créer",
+				"update": "Modifier",
+				"delete": "Supprimer",
+				"links": "Générer des liens de réservation"
+			},
+			"bookings": {
+				"read": "Consulter",
+				"create": "Créer",
+				"reschedule": "Replanifier",
+				"cancel": "Annuler",
+				"approve": "Approuver les demandes",
+				"reassign": "Réattribuer les hôtes",
+				"export": "Exporter",
+				"answers": "Consulter les réponses"
+			},
+			"availability": {
+				"read": "Consulter",
+				"update": "Modifier"
+			},
+			"members": {
+				"read": "Consulter",
+				"invite_member": "Inviter des membres",
+				"invite_admin": "Inviter des administrateurs",
+				"update_role": "Attribuer des rôles",
+				"archive": "Archiver et restaurer",
+				"password": "Réinitialiser les mots de passe"
+			},
+			"roles": {
+				"manage": "Gérer",
+				"read": "Consulter"
+			},
+			"teams": {
+				"read": "Consulter",
+				"create": "Créer",
+				"update": "Modifier",
+				"delete": "Supprimer",
+				"members": "Gérer les membres des équipes"
+			},
+			"api_keys": {
+				"read": "Consulter",
+				"create": "Créer",
+				"revoke": "Révoquer",
+				"manage": "Gérer"
+			},
+			"mcp": {
+				"connect": "Connecter un agent",
+				"manage": "Gérer"
+			},
+			"webhooks": {
+				"read": "Consulter",
+				"create": "Créer",
+				"update": "Modifier",
+				"delete": "Supprimer",
+				"deliveries": "Consulter les livraisons",
+				"rotate": "Renouveler les secrets de signature"
+			},
+			"integrations": {
+				"read": "Consulter",
+				"update": "Modifier"
+			},
+			"settings": {
+				"read": "Consulter",
+				"update": "Modifier",
+				"security": "Gérer la sécurité"
+			},
+			"branding": {
+				"read": "Consulter",
+				"update": "Modifier"
+			},
+			"recordings": {
+				"read": "Consulter",
+				"delete": "Supprimer"
+			},
+			"transcripts": {
+				"read": "Consulter"
+			},
+			"notes": {
+				"read": "Consulter",
+				"update": "Modifier"
+			},
+			"impersonation": {
+				"use": "Accéder en tant qu’utilisateur",
+				"audit": "Consulter le journal de sécurité"
+			}
+		},
+		"scope": {
+			"none": "Aucun accès",
+			"own": "Vos ressources",
+			"team": "Équipes attribuées",
+			"all": "Toute l’instance"
+		},
+		"presets": {
+			"assistant": "Assistant de planification",
+			"reporting": "Rapports en lecture seule",
+			"invitations": "Automatisation des invitations"
+		},
+		"clear": "Effacer la sélection",
+		"search": "Rechercher des permissions",
+		"loadError": "Impossible de charger les permissions.",
+		"roleHint": "Choisissez chaque action et son périmètre. Les actions non sélectionnées sont refusées. Chaque utilisateur conserve l’accès à son propre profil.",
+		"credentialHint": "Cet accès est limité aux permissions sélectionnées et à votre rôle actuel. Les opérations sensibles du compte ne peuvent pas être déléguées.",
+		"customRole": "Rôle personnalisé",
+		"defaultRole": "Permissions de membre par défaut",
+		"expiry": "Expiration après",
+		"days": "jours",
+		"legacy": "Ancien accès · révision recommandée",
+		"selected": "permissions sélectionnées",
+		"expires": "Expire le",
+		"ownership": {
+			"transfer": "Transférer la propriété",
+			"claim": "Devenir propriétaire de l’instance",
+			"verify": "Vérifiez votre mot de passe pour continuer. Pour un compte SSO, reconnectez-vous d’abord auprès de votre fournisseur d’identité, puis continuez sans mot de passe.",
+			"password": "Mot de passe actuel",
+			"confirm": "Vérifier et continuer",
+			"recovery": "Cette instance mise à niveau n’a aucun propriétaire. Un administrateur existant peut devenir propriétaire une seule fois. Les autres administrateurs conservent leurs permissions."
+		},
+		"review": "Réviser les permissions",
+		"save": "Enregistrer les permissions",
+		"audit": "Journal de sécurité",
+		"auditEmpty": "Aucun changement de sécurité enregistré.",
+		"rotate": "Renouveler le secret",
+		"rotateTitle": "Renouveler le secret de signature ?",
+		"rotateHint": "Mettez immédiatement à jour votre récepteur avec le nouveau secret. Le précédent ne fonctionnera plus.",
+		"secretOnce": "Copiez ce secret de signature maintenant. Il ne sera affiché qu’une fois.",
+		"account": "Compte",
+		"myAccount": "Mon compte",
+		"legacyMember": "Accès hérité",
+		"applyMember": "Appliquer les droits Membre"
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/uid"
 )
 
@@ -180,11 +181,15 @@ func (s *Service) Create(ctx context.Context, userID, url string, events []strin
 		return nil, "", fmt.Errorf("webhook: marshal events: %w", err)
 	}
 
+	grants, grantErr := access.Load(ctx, s.db, userID)
+	if grantErr != nil {
+		return nil, "", grantErr
+	}
 	id := uid.New()
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO webhooks (id, user_id, url, events, secret_enc)
-		VALUES (?, ?, ?, ?, ?)`,
-		id, userID, url, string(eventsJSON), encSecret)
+		INSERT INTO webhooks (id, user_id, url, events, secret_enc,permissions_json)
+		VALUES (?, ?, ?, ?, ?,?)`,
+		id, userID, url, string(eventsJSON), encSecret, grants.JSON())
 	if err != nil {
 		return nil, "", fmt.Errorf("webhook: insert: %w", err)
 	}
@@ -409,7 +414,7 @@ func (s *Service) Enqueue(ctx context.Context, event string, p BookingPayload) e
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, events, fields FROM webhooks
-		WHERE user_id = ? AND is_active = 1
+		WHERE is_active = 1 AND (user_id = ? OR event_type_id IS NOT NULL)
 		  AND (event_type_id IS NULL OR (? != '' AND event_type_id = ?))`,
 		p.HostID, eventTypeID, eventTypeID)
 	if err != nil {
@@ -450,6 +455,19 @@ func (s *Service) Enqueue(ctx context.Context, event string, p BookingPayload) e
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	allowed := matching[:0]
+	for _, wh := range matching {
+		hasAnswers := false
+		for _, field := range wh.fields {
+			if field == FieldAnswers {
+				hasAnswers = true
+			}
+		}
+		if s.DeliveryAuthorized(ctx, wh.id, p.ID, eventTypeID, event) && (!hasAnswers || s.DeliveryAuthorized(ctx, wh.id, p.ID, eventTypeID, "booking.answers")) {
+			allowed = append(allowed, wh)
+		}
+	}
+	matching = allowed
 	if len(matching) == 0 {
 		return nil
 	}
@@ -525,7 +543,7 @@ type SingleUsePayload struct {
 func (s *Service) EnqueueSingleUse(ctx context.Context, event string, p SingleUsePayload) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, events FROM webhooks
-		WHERE user_id = ? AND is_active = 1
+		WHERE is_active = 1 AND (user_id = ? OR event_type_id IS NOT NULL)
 		  AND (event_type_id IS NULL OR (? != '' AND event_type_id = ?))`,
 		p.HostID, p.EventTypeID, p.EventTypeID)
 	if err != nil {
@@ -552,6 +570,13 @@ func (s *Service) EnqueueSingleUse(ctx context.Context, event string, p SingleUs
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	allowed := matching[:0]
+	for _, id := range matching {
+		if s.DeliveryAuthorized(ctx, id, p.BookingID, p.EventTypeID, event) {
+			allowed = append(allowed, id)
+		}
+	}
+	matching = allowed
 	if len(matching) == 0 {
 		return nil
 	}
