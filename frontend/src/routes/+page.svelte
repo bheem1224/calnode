@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { base } from '$app/paths';
+	import { base } from '$lib/paths';
 	import { api, type CalendarStatus, type AvailabilityRule, type EventType, type User } from '$lib/api';
 	import { authStatus } from '$lib/stores';
 	import { t } from '$lib/i18n';

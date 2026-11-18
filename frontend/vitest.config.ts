@@ -1,5 +1,5 @@
 import { defineConfig } from 'vitest/config';
-import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { svelte, vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 import { playwright } from '@vitest/browser-playwright';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 // page. This is what lets us assert *computed styles* in a real browser, which
 // is the only thing that catches a missing/wrong @custom-variant.
 export default defineConfig({
-	plugins: [tailwindcss(), svelte()],
+	plugins: [tailwindcss(), svelte({configFile:false,preprocess:vitePreprocess()})],
 	optimizeDeps: {
 		include: ['@lucide/svelte/icons/chevron-down', '@lucide/svelte/icons/chevron-up', 'svelte-sonner', 'tailwind-variants']
 	},

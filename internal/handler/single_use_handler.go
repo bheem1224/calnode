@@ -301,7 +301,7 @@ func (h *Handler) RevokeSingleUseLink(w http.ResponseWriter, r *http.Request) {
 // rendering the event type booking page prefilled for that token.
 func (h *Handler) SingleUseBookPage(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(r.PathValue("token"))
-	if token == "" {
+	if token == "" || !h.dynamicLinkAllowed(r.Context(), token) {
 		writeSingleUseGonePage(w)
 		return
 	}

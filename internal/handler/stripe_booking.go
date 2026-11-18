@@ -71,7 +71,10 @@ func (h *Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 		if sess.PaymentStatus == "paid" {
 			if id := sess.Metadata["booking_id"]; id != "" {
-				h.confirmPaidBooking(context.Background(), id, sess.PaymentIntent, int(sess.AmountTotal), sess.Currency)
+				if err := h.confirmPaidBooking(context.Background(), id, sess.PaymentIntent, int(sess.AmountTotal), sess.Currency); err != nil {
+					h.writeError(w, 500, "payment confirmation could not be persisted; retry delivery")
+					return
+				}
 			}
 		}
 	case "checkout.session.expired":
@@ -88,44 +91,36 @@ func (h *Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 // confirmPaidBooking flips a held booking to paid, records the charged amount, and fires the
 // deferred confirmation side-effects. Idempotent: the conditional UPDATE (payment_status=
 // 'pending') ensures only the first delivery of a (possibly retried) webhook dispatches.
-func (h *Handler) confirmPaidBooking(ctx context.Context, bookingID, paymentIntentID string, amountCents int, currency string) {
+func (h *Handler) confirmPaidBooking(ctx context.Context, bookingID, paymentIntentID string, amountCents int, currency string) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-
-	res, err := h.db.ExecContext(ctx,
-		`UPDATE bookings SET payment_status = 'paid', stripe_payment_intent_id = ?,
-		     amount_paid_cents = ?, amount_paid_currency = ?
-		 WHERE id = ? AND payment_status = 'pending'`,
-		paymentIntentID, amountCents, currency, bookingID)
+	tx, err := h.db.BeginTx(ctx, nil)
 	if err != nil {
-		h.logger.ErrorContext(ctx, "stripe: mark booking paid", "error", err, "booking_id", bookingID)
-		return
+		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return // already processed (or not a pending paid booking) — don't double-dispatch
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE bookings SET payment_status='paid',stripe_payment_intent_id=?,amount_paid_cents=?,amount_paid_currency=? WHERE id=? AND payment_status='pending'`, paymentIntentID, amountCents, currency, bookingID)
+	if err != nil {
+		return err
 	}
-
-	b, err := h.bookingSvc.Get(ctx, bookingID)
-	if err != nil || b == nil {
-		h.logger.ErrorContext(ctx, "stripe: load paid booking", "error", err, "booking_id", bookingID)
-		return
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
 	}
-	// Reconstruct the confirmation context from the booking's event type + organizer.
-	var in bookingConfirmationInput
-	if err := h.db.QueryRowContext(ctx, `
-		SELECT et.name, et.slug, COALESCE(NULLIF(b.location_type, ''), et.location_type), a.name, a.email, a.iana_timezone, a.locale
-		FROM bookings b
-		JOIN event_types et ON et.id = b.event_type_id
-		JOIN booking_attendees a ON a.booking_id = b.id AND a.is_organizer = 1
-		WHERE b.id = ?`, bookingID).
-		Scan(&in.EventTypeName, &in.EventTypeSlug, &in.LocationType, &in.OrganizerName, &in.OrganizerEmail, &in.OrganizerTimezone, &in.OrganizerLocale); err != nil {
-		h.logger.ErrorContext(ctx, "stripe: load confirmation input", "error", err, "booking_id", bookingID)
-		return
+	if n == 0 {
+		return nil
 	}
-	// Run the same side-effects a free booking gets (calendar, emails, Zoom/Meet, webhooks) in
-	// the background, so the webhook is acknowledged immediately (well under Stripe's timeout).
-	// dispatchBookingConfirmation manages its own context, so fire-and-forget is safe.
-	go h.dispatchBookingConfirmation(b, in) // #nosec G118 -- deliberately its own context.Background(); see dispatchBookingConfirmation's doc comment
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(id,type,payload,run_at,max_attempts)SELECT ?,'booking.confirm',json_object('booking_id',id),?,8 FROM bookings WHERE id=? AND pending_approval=0 AND status='confirmed'`, "booking.confirm:"+bookingID, time.Now().UTC().Format(time.RFC3339Nano), bookingID); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	// The job now survives a crash even if this optional immediate nudge never runs.
+	if b, err := h.bookingSvc.Get(ctx, bookingID); err == nil {
+		h.queueBookingConfirmation(b, bookingConfirmationInput{})
+	}
+	return nil
 }
 
 // releaseUnpaidHold cancels a still-pending booking whose Checkout session expired, freeing

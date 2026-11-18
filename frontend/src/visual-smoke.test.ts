@@ -181,10 +181,10 @@ describe('security settings', () => {
  test.each(['light', 'dark'])('keeps %s policy controls compact and labelled', async (mode) => {
   const wasDark=document.documentElement.classList.contains('dark');
   document.documentElement.classList.toggle('dark',mode==='dark');
-  vi.spyOn(api,'get').mockResolvedValue({policy:{google_enabled:false,microsoft_enabled:true,members_sso_only:true,admin_password_enabled:true,auto_provision:true,approved_domains:'company.com',required_group_id:'11111111-1111-4111-8111-111111111111'},google_configured:true,microsoft_configured:true});
+  vi.spyOn(api,'get').mockImplementation(async(path)=>path.endsWith('/operations')?{failed_jobs:[],calendar_errors:[],failed_confirmations:0,pending_jobs:0}:({policy:{google_enabled:false,microsoft_enabled:true,members_sso_only:true,admin_password_enabled:true,auto_provision:true,approved_domains:'company.com',required_group_id:'11111111-1111-4111-8111-111111111111',require_admin_mfa:false,require_member_mfa:false,session_hours:12,dynamic_link_days:7},google_configured:true,microsoft_configured:true}));
   try {
    const {container}=await render(SecuritySettings);
-   await expect.poll(()=>container.querySelectorAll('[role="switch"]').length).toBe(5);
+   await expect.poll(()=>container.querySelectorAll('[role="switch"]').length).toBe(7);
    const content=container.firstElementChild as HTMLElement;
    expect(content.getBoundingClientRect().width).toBeLessThanOrEqual(672);
    expect(content.scrollWidth).toBeLessThanOrEqual(content.clientWidth);

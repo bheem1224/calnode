@@ -83,6 +83,10 @@ func (h *Handler) GetSlots(w http.ResponseWriter, r *http.Request) {
 	if token == "" {
 		token = r.URL.Query().Get("token")
 	}
+	if token != "" && !h.dynamicLinkAllowed(r.Context(), token) {
+		h.writeError(w, 410, "dynamic link is no longer authorized")
+		return
+	}
 	res, err := h.computeSlots(r.Context(), slug, tzName,
 		r.URL.Query().Get("from"), r.URL.Query().Get("to"),
 		slotsWanted{Taken: true, NoticeGap: true, SingleUseToken: token, DurationMinutes: reqDuration})
@@ -775,9 +779,11 @@ func (h *Handler) hostAvailabilityWithSchedule(ctx context.Context, userID, even
 	degraded := false
 	if gc := h.getCal(); gc != nil {
 		if gcalBusy, err := gc.FreeBusy(ctx, userID, dateFrom, dateTo.Add(24*time.Hour)); err != nil {
+			h.recordCalendarHealth(ctx, userID, err)
 			h.logger.ErrorContext(ctx, "slots: gcal freebusy", "error", err, "host", userID)
 			degraded = true
 		} else {
+			h.recordCalendarHealth(ctx, userID, nil)
 			busy = append(busy, slots.SubtractIntervals(gcalBusy, ownEvents)...)
 		}
 	}

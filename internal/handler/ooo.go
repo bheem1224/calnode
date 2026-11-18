@@ -138,14 +138,12 @@ func (h *Handler) CreateOOOEntry(w http.ResponseWriter, r *http.Request) {
 	var teamID *string
 	if req.TeamID != nil && strings.TrimSpace(*req.TeamID) != "" {
 		tid := strings.TrimSpace(*req.TeamID)
-		if !user.IsAdmin && !user.IsOwner {
-			var member int
-			if err := h.db.QueryRowContext(r.Context(),
-				`SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ?`, tid, user.ID).Scan(&member); err != nil {
-				h.writeError(w, http.StatusForbidden, "not a member of this team")
-				return
-			}
+		allowed, err := h.canManageTeam(r.Context(), AuthUser{ID: user.ID, IsAdmin: user.InstanceAdmin || user.InstanceOwner}, tid)
+		if err != nil || !allowed {
+			h.writeError(w, 403, "team-wide out of office requires a team head or instance administrator")
+			return
 		}
+
 		teamID = &tid
 	}
 
@@ -192,6 +190,16 @@ func (h *Handler) CreateOOOEntry(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateOOOEntry(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 	id := r.PathValue("id")
+	var scopedTeam sql.NullString
+	if h.db.QueryRowContext(r.Context(), `SELECT team_id FROM ooo_entries WHERE id=?`, id).Scan(&scopedTeam) == nil && scopedTeam.Valid {
+		allowed, err := h.canManageTeam(r.Context(), AuthUser{ID: user.ID, IsAdmin: user.InstanceAdmin || user.InstanceOwner}, scopedTeam.String)
+		if err != nil || !allowed {
+			h.writeError(w, 403, "team-wide out of office requires a team head or instance administrator")
+			return
+		}
+		user.IsAdmin = true // All Heads of this team may maintain its team-wide OOO.
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 
 	var ownerID string
@@ -268,6 +276,15 @@ func (h *Handler) UpdateOOOEntry(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DeleteOOOEntry(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 	id := r.PathValue("id")
+	var scopedTeam sql.NullString
+	if h.db.QueryRowContext(r.Context(), `SELECT team_id FROM ooo_entries WHERE id=?`, id).Scan(&scopedTeam) == nil && scopedTeam.Valid {
+		allowed, err := h.canManageTeam(r.Context(), AuthUser{ID: user.ID, IsAdmin: user.InstanceAdmin || user.InstanceOwner}, scopedTeam.String)
+		if err != nil || !allowed {
+			h.writeError(w, 403, "team-wide out of office requires a team head or instance administrator")
+			return
+		}
+		user.IsAdmin = true // All Heads of this team may maintain its team-wide OOO.
+	}
 
 	var res sql.Result
 	var err error
@@ -291,7 +308,7 @@ func (h *Handler) loadUserOOODates(ctx context.Context, userID string) ([]time.T
 	rows, err := h.db.QueryContext(ctx, `
 		SELECT dates_json
 		FROM ooo_entries
-		WHERE user_id = ?
+		WHERE (team_id IS NULL AND user_id = ?)
 		   OR (team_id IS NOT NULL AND team_id IN (SELECT team_id FROM team_members WHERE user_id = ?))`, userID, userID)
 	if err != nil {
 		return nil, err
@@ -325,7 +342,7 @@ func (h *Handler) ActiveOOONoticeForUser(ctx context.Context, userID string) (no
 		SELECT o.dates_json, o.public_note, COALESCE(ru.name, ''), COALESCE(ru.handle, '')
 		FROM ooo_entries o
 		LEFT JOIN users ru ON ru.id = o.redirect_user_id
-		WHERE o.user_id = ?
+		WHERE (o.team_id IS NULL AND o.user_id = ?)
 		   OR (o.team_id IS NOT NULL AND o.team_id IN (SELECT team_id FROM team_members WHERE user_id = ?))
 		ORDER BY o.created_at DESC`, userID, userID)
 	if err != nil {

@@ -191,6 +191,8 @@ func BuildHandler(ctx context.Context, cfg *config.Config, db *sql.DB, logger *s
 		}
 		wrk := worker.New(db, whs, logger, worker.WithMailer(live), worker.WithPublicURL(publicURL))
 		// Notetaker jobs live in the handler package (they need LLM/S3/encKey).
+		wrk.RegisterHandler("booking.confirm", h.JobBookingConfirm)
+		wrk.RegisterHandler("security.notify", h.JobSecurityNotify)
 		wrk.RegisterHandler("notetaker.transcribe", h.JobNotetakerTranscribe)
 		wrk.RegisterHandler("notetaker.summarize", h.JobNotetakerSummarize)
 		go wrk.Run(ctx)
@@ -386,6 +388,18 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 
 	// Email + password login.
 	loginRL := RateLimit(10, time.Minute)
+	mux.HandleFunc("POST /v1/auth/mfa/verify", loginRL(h.VerifyNativeMFA))
+	mux.HandleFunc("POST /v1/auth/passkeys/begin", loginRL(h.BeginPasskeyLogin))
+	mux.HandleFunc("POST /v1/auth/passkeys/finish", loginRL(h.FinishPasskeyLogin))
+	mux.HandleFunc("POST /v1/auth/recovery/claim", loginRL(h.ClaimAuthRecovery))
+	mux.HandleFunc("GET /v1/users/me/security", h.RequireAuth(h.GetAuthSecurity))
+	mux.HandleFunc("POST /v1/users/me/security/totp/begin", loginRL(h.RequireAuth(h.BeginTOTP)))
+	mux.HandleFunc("POST /v1/users/me/security/totp/confirm", loginRL(h.RequireAuth(h.ConfirmTOTP)))
+	mux.HandleFunc("POST /v1/users/me/security/passkeys/begin", loginRL(h.RequireAuth(h.BeginPasskeyRegistration)))
+	mux.HandleFunc("POST /v1/users/me/security/passkeys/finish", loginRL(h.RequireAuth(h.FinishPasskeyRegistration)))
+	mux.HandleFunc("POST /v1/users/me/security/recovery-codes", loginRL(h.RequireAuth(h.GenerateRecoveryCodes)))
+	mux.HandleFunc("DELETE /v1/users/me/security/factors/{id}", loginRL(h.RequireAuth(h.DeleteAuthFactor)))
+	mux.HandleFunc("POST /v1/users/{id}/mfa/reset", loginRL(h.RequireAuth(h.ResetUserMFA)))
 	mux.HandleFunc("POST /v1/auth/login/email", loginRL(h.LoginEmail))
 	mux.HandleFunc("POST /v1/auth/magic-link/request", loginRL(h.RequestMagicLink))
 	mux.HandleFunc("GET /v1/auth/magic-link/verify", loginRL(h.VerifyMagicLink))
@@ -456,7 +470,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("GET /v1/admin/impersonate/logs", h.RequireAuth(h.ListImpersonationLogs))
 	mux.HandleFunc("POST /v1/users/{id}/transfer-ownership", h.RequireAuth(h.TransferOwnership))
 	mux.HandleFunc("POST /v1/users/me/claim-ownership", h.RequireAuth(h.ClaimOwnership))
-	mux.HandleFunc("POST /v1/auth/reauthenticate", h.RequireAuth(h.Reauthenticate))
+	mux.HandleFunc("POST /v1/auth/reauthenticate", loginRL(h.RequireAuth(h.Reauthenticate)))
 	mux.HandleFunc("GET /v1/permissions", h.RequireAuth(h.GetPermissionCatalog))
 	mux.HandleFunc("GET /v1/security/audit", h.RequireAuth(h.ListSecurityAudit))
 	mux.HandleFunc("POST /v1/users/{id}/archive", h.RequireAuth(h.ArchiveUser))
@@ -487,6 +501,9 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("PATCH /v1/settings/email", settingsRL(h.RequireAuth(h.PatchEmailSettings)))
 	mux.HandleFunc("POST /v1/settings/email/test", settingsRL(h.RequireAuth(h.TestEmailConnection)))
 	mux.HandleFunc("POST /v1/settings/email/rsvp-webhook", settingsRL(h.RequireAuth(h.SetupRSVPWebhook)))
+	mux.HandleFunc("POST /v1/dynamic-links", h.RequireAuth(h.CreateDynamicLink))
+	mux.HandleFunc("GET /v1/settings/security/operations", h.RequireAuth(h.GetSecurityOperations))
+	mux.HandleFunc("POST /v1/settings/security/jobs/{id}/retry", settingsRL(h.RequireAuth(h.RetrySecurityJob)))
 	mux.HandleFunc("GET /v1/settings/security", h.RequireAuth(h.GetSigninPolicy))
 	mux.HandleFunc("PUT /v1/settings/security", settingsRL(h.RequireAuth(h.PutSigninPolicy)))
 	mux.HandleFunc("GET /v1/settings/google", h.RequireAuth(h.GetGoogleSettings))
@@ -743,7 +760,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 		}
 	}
 
-	return TrustClientIP(trustedProxies)(RequestID(Logging(logger, Recover(logger, SameOriginCheckWithHosts(allowedHosts, mux))))), drain
+	return SecurityHeaders(strings.HasPrefix(cfg.BaseURL, "https://"), TrustClientIP(trustedProxies)(RequestID(Logging(logger, Recover(logger, SameOriginCheckWithHosts(allowedHosts, mux)))))), drain
 }
 
 // seedSMTPToDB writes env-var SMTP settings into the DB on first boot so they

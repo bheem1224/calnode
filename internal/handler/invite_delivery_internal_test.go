@@ -575,6 +575,7 @@ func TestInviteDelivery_bookingJSONReportsMode(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/bookings/"+b.ID, nil)
 	req.SetPathValue("id", b.ID)
+	req.Header.Set("X-API-Key", f.apiKey)
 	rec := httptest.NewRecorder()
 	f.h.GetBooking(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {

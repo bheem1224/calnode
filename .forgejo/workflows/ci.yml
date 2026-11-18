@@ -70,5 +70,28 @@ jobs:
       - name: go test
         run: go test ./...
 
+      - name: Native authentication browser verification
+        run: |
+          go build -o "$RUNNER_TEMP/calnode-auth-test" ./cmd/calnode
+          PORT=39137 BASE_URL=http://127.0.0.1:39137 DATABASE_URL=sqlite://:memory: \
+            CALNODE_ENCRYPTION_KEY="$(openssl rand -hex 32)" \
+            "$RUNNER_TEMP/calnode-auth-test" > "$RUNNER_TEMP/native-auth-server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          ready=false
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:39137/v1/auth/status >/dev/null; then ready=true; break; fi
+            sleep 1
+          done
+          test "$ready" = true
+          CALNODE_AUTH_TEST_URL=http://127.0.0.1:39137 node frontend/scripts/verify-native-auth.mjs
+
+      - name: Go vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+
+      - name: Frontend vulnerability scan
+        working-directory: frontend
+        run: pnpm audit --audit-level=moderate
+
       - name: Translation coverage
         run: go run ./cmd/i18n-coverage

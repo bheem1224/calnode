@@ -2134,7 +2134,8 @@
 			"recordings": "Recordings",
 			"transcripts": "Transcripts",
 			"notes": "Meeting notes",
-			"impersonation": "Impersonation"
+			"impersonation": "Impersonation",
+			"dynamic_links": "Dynamic links"
 		},
 		"labels": {
 			"profile": {
@@ -2226,7 +2227,9 @@
 			"impersonation": {
 				"use": "Impersonate users",
 				"audit": "View security audit"
-			}
+			},
+			"dynamic_links.create": "Create one-time group scheduling links",
+			"members.reset_mfa": "Recover native MFA"
 		},
 		"scope": {
 			"none": "No access",
@@ -2306,7 +2309,7 @@
 		"legacy": "Existing users keep their current sign-in access until you change this policy. Existing accounts are explicitly admitted; the enrollment group applies to new automatic enrollments.",
 		"save": "Review & save",
 		"verify": "Verify this security change",
-		"verifyHint": "Enter your current password. If you signed in with Microsoft or Google, sign in again first and save within five minutes.",
+		"verifyHint": "Verify your authenticator code or passkey. If you have not enrolled MFA, verify your password or sign in again with your identity provider. Verification lasts five minutes.",
 		"currentPassword": "Current password",
 		"cancel": "Cancel",
 		"confirm": "Save security settings",
@@ -2318,5 +2321,71 @@
 		"inviteSSOHint": "Sign in with the Microsoft account matching this invitation. The automatic enrollment group is not required.",
 		"inviteUnavailable": "Your administrator needs to enable a sign-in method before you can accept this invitation.",
 		"enrollmentLocation": "Manage approved domains, security groups, and account sign-in in"
+	},
+	"nativeAuth": {
+		"title": "Account security",
+		"description": "Protect local sign-in with a passkey or authenticator app, and keep recovery codes somewhere safe.",
+		"failed": "Authentication could not be completed. Please try again.",
+		"verified": "Identity verified for five minutes",
+		"enrolled": "Authentication method added",
+		"setupRequired": "Complete authentication setup to access your account. This session can only enroll replacement authentication.",
+		"ssoManaged": "Your sign-in is managed by your organization. Contact IT for authentication recovery.",
+		"verifyTitle": "Verify your identity",
+		"verifyHint": "Use your current authenticator/recovery code or passkey. If you have not enrolled MFA yet, use your password.",
+		"code": "Authenticator or recovery code",
+		"verify": "Verify",
+		"usePasskey": "Use a passkey",
+		"passkeys": "Passkeys · recommended",
+		"passkeyHint": "Use your device PIN, fingerprint, face recognition, or a security key. Register a backup device too.",
+		"keyName": "Device name",
+		"addPasskey": "Add passkey",
+		"authenticator": "Authenticator app",
+		"totpHint": "Use time-based codes from an authenticator app as an alternative to passkeys.",
+		"enabled": "Enabled",
+		"qrAlt": "Scan this QR code with your authenticator app",
+		"confirmAuthenticator": "Confirm authenticator",
+		"addAuthenticator": "Set up authenticator",
+		"recoveryCodes": "Recovery codes",
+		"recoveryHint": "{count} codes remaining. Each code works once. Generating new codes invalidates the previous set.",
+		"generateCodes": "Generate recovery codes",
+		"saveCodes": "Save these codes now. They will not be shown again.",
+		"copied": "Recovery codes copied",
+		"continue": "Continue to app",
+		"removeTitle": "Remove authentication method?",
+		"removeHint": "Add a backup method first. Other browser sessions will be signed out.",
+		"challengeHint": "Enter a code from your authenticator app or use an unused recovery code.",
+		"recoverTitle": "Recover account access",
+		"recoverHint": "Your IT administrator authorized a one-time setup session. You must enroll replacement authentication before accessing the app.",
+		"recoverStart": "Begin secure recovery",
+		"adminMFA": "Require MFA for local Owner and Admin sign-in",
+		"memberMFA": "Require MFA for native Member sign-in",
+		"policyHint": "Enroll your own authentication method before enforcement. SSO-only accounts continue using their identity provider.",
+		"sessionHours": "Maximum session lifetime (hours)",
+		"linkDays": "Dynamic link expiry (days)",
+		"recoverMember": "Recover MFA",
+		"recoverMemberHint": "Verify the person through a known company channel before proceeding. Record the support ticket reference. This revokes sessions and requires replacement authentication. Administrator recovery also revokes API keys.",
+		"ticket": "Identity verification / ticket reference",
+		"authorizeRecovery": "Authorize recovery",
+		"deliverLink": "Give this one-time link to the verified person through an approved channel. It expires in 15 minutes.",
+		"passwordRecovery": "Reset native password",
+		"newPassword": "New password",
+		"passwordHint": "Resetting a password does not remove MFA. Verify your identity before applying this change.",
+		"operations": "Security & delivery health",
+		"operationsHint": "Review calendar connection problems and failed background work. Retrying delivery may send a notification again.",
+		"retry": "Retry",
+		"healthy": "No outstanding failures",
+		"disableOptional": "Disable optional MFA instead of requiring re-enrollment"
+	},
+	"securityOperations": {
+		"title": "Delivery & calendar health",
+		"description": "Recent calendar checks and background delivery failures.",
+		"refresh": "Refresh",
+		"counts": "{pending} queued jobs · {failed} bookings need confirmation delivery",
+		"healthy": "No recorded calendar errors or failed deliveries.",
+		"calendarError": "Availability could not be checked. Ask this member to reconnect the affected calendar if the issue continues.",
+		"retry": "Retry delivery",
+		"retryHint": "Verify your identity before retrying this background job. A retry can send a notification again.",
+		"loadError": "Could not load delivery health.",
+		"retryError": "Could not retry this delivery."
 	}
 }

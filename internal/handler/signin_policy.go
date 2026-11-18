@@ -14,6 +14,10 @@ import (
 // A missing policy preserves existing installations until an administrator opts in.
 // Provider credentials configure calendar integrations independently of this policy.
 type SigninPolicy struct {
+	RequireAdminMFA      bool   `json:"require_admin_mfa"`
+	RequireMemberMFA     bool   `json:"require_member_mfa"`
+	SessionHours         int    `json:"session_hours"`
+	DynamicLinkDays      int    `json:"dynamic_link_days"`
 	revision             string // Original database value, used to reject login/policy-update races.
 	GoogleEnabled        bool   `json:"google_enabled"`
 	MicrosoftEnabled     bool   `json:"microsoft_enabled"`
@@ -25,7 +29,7 @@ type SigninPolicy struct {
 }
 
 func (h *Handler) signinPolicy(ctx context.Context) (SigninPolicy, error) {
-	p := SigninPolicy{GoogleEnabled: true, MicrosoftEnabled: true, AdminPasswordEnabled: true}
+	p := SigninPolicy{SessionHours: 12, DynamicLinkDays: 7, GoogleEnabled: true, MicrosoftEnabled: true, AdminPasswordEnabled: true}
 	var raw string
 	err := h.db.QueryRowContext(ctx, `SELECT signin_policy_json FROM server_settings WHERE id=1`).Scan(&raw)
 	if err != nil {
@@ -37,6 +41,12 @@ func (h *Handler) signinPolicy(ctx context.Context) (SigninPolicy, error) {
 		return p, nil
 	}
 	err = json.Unmarshal([]byte(raw), &p)
+	if p.SessionHours <= 0 {
+		p.SessionHours = 12
+	}
+	if p.DynamicLinkDays <= 0 {
+		p.DynamicLinkDays = 7
+	}
 	p.revision = raw
 	return p, err
 }
@@ -69,11 +79,13 @@ func (h *Handler) passwordAllowed(ctx context.Context, id string) bool {
 
 func policyAllowsSession(p SigninPolicy, method string, admin bool) bool {
 	switch method {
+	case "server_recovery":
+		return admin
 	case "microsoft":
 		return p.MicrosoftEnabled
 	case "google":
 		return p.GoogleEnabled && (!p.MembersSSOOnly || admin)
-	case "password", "legacy", "magic_link":
+	case "password", "legacy", "magic_link", "passkey":
 		if admin {
 			return p.AdminPasswordEnabled
 		}
@@ -105,6 +117,20 @@ func (h *Handler) PutSigninPolicy(w http.ResponseWriter, r *http.Request) {
 	var p SigninPolicy
 	if json.NewDecoder(r.Body).Decode(&p) != nil {
 		h.writeError(w, 400, "invalid JSON")
+		return
+	}
+	if p.SessionHours == 0 {
+		p.SessionHours = 12
+	}
+	if p.DynamicLinkDays == 0 {
+		p.DynamicLinkDays = 7
+	}
+	if p.SessionHours < 1 || p.SessionHours > 720 || p.DynamicLinkDays < 1 || p.DynamicLinkDays > 30 {
+		h.writeError(w, 400, "session hours must be 1–720 and link expiry days 1–30")
+		return
+	}
+	if p.RequireAdminMFA && !h.hasMFA(r.Context(), u.ID) {
+		h.writeError(w, 400, "enroll a passkey or authenticator before requiring administrator MFA")
 		return
 	}
 	p.RequiredGroupID = strings.ToLower(strings.TrimSpace(p.RequiredGroupID))

@@ -1,12 +1,13 @@
 <script lang="ts">
+ import { redirectAuthStep,signInWithPasskey } from '$lib/native-auth';
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { t, tr } from '$lib/i18n';
 
-	let token = $derived($page.params.token);
+	let token = $derived(page.params.token);
 	let inviteEmail = $state('');
  let passwordAllowed=$state(true),microsoftAvailable=$state(false);
 	let valid = $state<boolean | null>(null);
@@ -41,7 +42,7 @@
 			});
 			const data = await res.json().catch(() => ({}));
 			if (res.ok) {
-				window.location.href = '/admin';
+				if(!redirectAuthStep(res))window.location.href = '/admin';
 			} else {
 				error = data.error || tr('auth.invite.error');
 			}

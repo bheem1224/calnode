@@ -77,6 +77,10 @@ func (h *Handler) LoginEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.createSession(r.Context(), w, userID); err != nil {
+		if errors.Is(err, errNativeRecoveryRequired) {
+			h.writeError(w, 403, err.Error())
+			return
+		}
 		h.logger.ErrorContext(r.Context(), "email login: create session", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -131,13 +135,37 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if _, err := h.db.ExecContext(r.Context(),
-		`UPDATE users SET password_hash = ? WHERE id = ?`, string(newHash), user.ID); err != nil {
-		h.logger.ErrorContext(r.Context(), "change password: update", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		h.writeError(w, 500, "could not change password")
 		return
 	}
-	h.revokeOtherSessions(r, user.ID)
+	defer tx.Rollback()
+	result, err := tx.ExecContext(r.Context(), `UPDATE users SET password_hash=? WHERE id=? AND password_hash=?`, string(newHash), user.ID, storedHash)
+	if err != nil {
+		h.writeError(w, 500, "could not change password")
+		return
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		h.writeError(w, 409, "password changed; sign in again")
+		return
+	}
+	for _, table := range []string{"auth_challenges", "oauth_access_tokens", "oauth_auth_codes", "magic_link_tokens", "password_reset_tokens"} {
+		if _, err = tx.ExecContext(r.Context(), `DELETE FROM `+table+` WHERE user_id=?`, user.ID); err != nil {
+			h.writeError(w, 500, "could not revoke old authentication")
+			return
+		}
+	}
+	if _, err = tx.ExecContext(r.Context(), `DELETE FROM sessions WHERE (user_id=? OR impersonator_user_id=?) AND id<>?`, user.ID, user.ID, user.SessionID); err != nil {
+		h.writeError(w, 500, "could not revoke sessions")
+		return
+	}
+	if tx.Commit() != nil {
+		h.writeError(w, 500, "could not change password")
+		return
+	}
+	h.securityNotice(r.Context(), user.ID, "Your password was changed", "")
+
 	h.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -152,7 +180,7 @@ func (h *Handler) revokeOtherSessions(r *http.Request, userID string) {
 		currentSessionID = c.Value
 	}
 	if _, err := h.db.ExecContext(r.Context(),
-		`DELETE FROM sessions WHERE user_id = ? AND id != ?`, userID, currentSessionID); err != nil {
+		`DELETE FROM sessions WHERE (user_id = ? OR impersonator_user_id=?) AND id != ?`, userID, userID, currentSessionID); err != nil {
 		h.logger.ErrorContext(r.Context(), "revoke other sessions", "error", err, "user_id", userID)
 	}
 }
@@ -189,10 +217,8 @@ func (h *Handler) AdminSetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load the target's role so we don't allow a privilege-escalation path: an
-	// admin must not be able to reset the owner's (or another admin's) password
-	// and then log in as them. Only the owner can reset an admin's password, and
-	// the owner's own password is changed only via /v1/users/me/password.
+	// Delegated helpdesk roles recover Members only. Actual instance administrators
+	// may recover peer administrators after fresh verification; the Owner is protected.
 	var targetIsAdmin, targetIsOwner int
 	err := h.db.QueryRowContext(r.Context(),
 		`SELECT is_admin, is_owner FROM users WHERE id = ?`, targetID).
@@ -210,11 +236,18 @@ func (h *Handler) AdminSetPassword(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, 403, "password sign-in is disabled for this account")
 		return
 	}
+	if targetIsAdmin != 0 && !admin.InstanceAdmin && !admin.InstanceOwner {
+		h.writeError(w, 403, "only an instance administrator can recover another administrator")
+		return
+	}
 	if targetIsOwner != 0 {
 		h.writeError(w, http.StatusForbidden, "the owner's password can only be changed by the owner")
 		return
 	}
 
+	if (targetIsAdmin != 0 || h.hasMFA(r.Context(), admin.ID) || h.mfaRequired(r.Context(), admin.ID)) && !h.freshAuthFactor(w, r, admin) {
+		return
+	}
 	newHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "admin set password: bcrypt", "error", err)
@@ -227,7 +260,7 @@ func (h *Handler) AdminSetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(r.Context(), `UPDATE users SET password_hash=?,email_login=1 WHERE id=? AND is_owner=0`, string(newHash), targetID)
+	result, err := tx.ExecContext(r.Context(), `UPDATE users SET password_hash=?,email_login=1 WHERE id=? AND is_owner=0 AND (?=1 OR is_admin=0)`, string(newHash), targetID, admin.InstanceAdmin || admin.InstanceOwner)
 	if err != nil {
 		h.writeError(w, 500, "could not reset password")
 		return
@@ -236,7 +269,11 @@ func (h *Handler) AdminSetPassword(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, 409, "target account changed; reload and try again")
 		return
 	}
-	if _, err = tx.ExecContext(r.Context(), `DELETE FROM sessions WHERE user_id=?`, targetID); err != nil {
+	if _, err = tx.ExecContext(r.Context(), `DELETE FROM auth_challenges WHERE user_id=?`, targetID); err != nil {
+		h.writeError(w, 500, "could not revoke pending authentication")
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(), `DELETE FROM sessions WHERE user_id=? OR impersonator_user_id=?`, targetID, targetID); err != nil {
 		h.writeError(w, 500, "could not revoke sessions")
 		return
 	}
@@ -244,10 +281,23 @@ func (h *Handler) AdminSetPassword(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, 500, "could not revoke agent connections")
 		return
 	}
+	for _, table := range []string{"oauth_auth_codes", "magic_link_tokens", "password_reset_tokens"} {
+		if _, err = tx.ExecContext(r.Context(), `DELETE FROM `+table+` WHERE user_id=?`, targetID); err != nil {
+			h.writeError(w, 500, "could not revoke pending credentials")
+			return
+		}
+	}
+	if targetIsAdmin != 0 {
+		if _, err = tx.ExecContext(r.Context(), `DELETE FROM api_keys WHERE user_id=?`, targetID); err != nil {
+			h.writeError(w, 500, "could not revoke administrator keys")
+			return
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		h.writeError(w, 500, "could not reset password")
 		return
 	}
 	h.securityAudit(r.Context(), admin.ID, "member.password_reset", targetID, nil)
+	h.securityNotice(r.Context(), targetID, "An administrator reset your password", "")
 	h.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

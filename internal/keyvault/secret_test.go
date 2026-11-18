@@ -3,6 +3,7 @@ package keyvault
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -51,7 +52,9 @@ func TestResolveGeneratesAndPersistsBesideDatabase(t *testing.T) {
 	if statErr != nil {
 		t.Fatalf("key file missing: %v", statErr)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
+	// Windows reports synthetic POSIX bits; NTFS access is controlled by ACLs.
+	// Keep the actual 0600 check on platforms that implement these permissions.
+	if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 		t.Fatalf("key file mode = %o, want 600: the platform secret must not be group/world readable", perm)
 	}
 }

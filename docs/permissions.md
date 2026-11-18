@@ -9,6 +9,7 @@ The server owns the permission catalog in `internal/access/access.go`. Every aut
 - Migration 93 enables a one-time ownership claim only when an older database has active Admins and no Owner. A recent interactive password verification or recent identity-provider sign-in is required. Claims and transfers are audited and notify active administrators when email is configured. Recent SSO sign-in is not an MFA or identity-provider step-up guarantee.
 - Custom roles select actions and resource boundaries. Unselected actions are denied; users retain their own profile access. Own event types can be managed by their owner or team head; an assigned host alone remains read-only. Explicit team grants cover the caller's teams. Global administrative actions and personal account settings expose only supported boundaries.
 - Role assignment cannot target yourself or the Owner. Granting Admin additionally requires the explicit Invite Admins permission. Role deletion is refused while members are assigned, and unused invitations tied to a deleted role are revoked.
+- Support impersonation rechecks the operator's active account, current permission, session lifetime/MFA policy and target protection on every request. Delegated support roles cannot impersonate Admins. Effective actions are bounded by both accounts' grants; support sessions cannot authorize MCP or change credentials, calendar connections, webhooks, or security settings.
 
 ## Invitations
 
@@ -30,4 +31,14 @@ Migration freezes existing key, OAuth, and webhook grants. Older keys and connec
 
 Review existing keys to set narrower grants and expiration. Reconnect legacy MCP apps to obtain explicit OAuth consent grants. Audit records are available in Settings → Members & Roles to roles with View security audit permission. Ownership recovery does not reopen automatically after it has been used.
 
-These controls support least privilege and request-time authorization. They do not constitute an independent security audit, MFA deployment, or OWASP certification.
+## Teams and one-time scheduling
+
+Only actual instance Admins/Owner can add/remove team members or appoint Heads. A team may have multiple Heads. Heads manage their team's profile, reusable team event types, and team-wide out-of-office entries; they do not gain authority over other teams or personal schedules. A team-wide block applies to the team's members, not to an outside administrator who created it. Members cannot publish reusable event types using unrelated people's calendars.
+
+**Dynamic links → Create** is an independent action with own/team/instance boundaries. The built-in Member default is instance-wide so an associate or secretary can coordinate other people's availability. A group requires at least two distinct active people; an own-only grant cannot authorize another person's participation. Team scope requires each selected person to share a team with the creator.
+
+Creating a dynamic link now mints a server-side, expiring single-use `/t/{token}` link, audited with its creator and host set. It uses the normal collective booking pipeline: availability, live calendar conflicts, transaction-time booking conflicts, confirmation delivery and atomic token consumption. Creator permissions and active hosts are rechecked on use. Expiry defaults to seven days and is configurable. Old unsigned `/u/alice+bob` and public group booking endpoints return 410; recreate those links from the builder.
+
+For MFA enrollment, delegated Member recovery, protected Admin/Owner recovery and the emergency server command, see [security and sign-in](security-signin.md).
+
+These controls support least privilege and request-time authorization. They do not constitute an independent security audit or OWASP certification.

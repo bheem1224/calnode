@@ -24,10 +24,11 @@ var Catalog = func() []Permission {
 		global        bool
 	}{
 		{"profile", "read update", false},
+		{"dynamic_links", "create", false},
 		{"event_types", "read create update delete links", false},
 		{"bookings", "read create reschedule cancel approve reassign answers", false},
 		{"availability", "read update", false},
-		{"members", "read invite_member invite_admin update_role archive password", true},
+		{"members", "read invite_member invite_admin update_role archive password reset_mfa", true},
 		{"roles", "read manage", true},
 		{"teams", "read create update delete members", false},
 		{"api_keys", "read create revoke manage", false},
@@ -52,7 +53,7 @@ var Catalog = func() []Permission {
 				scopes = []string{"own"}
 			}
 			id := g.name + "." + a
-			delegable := id != "api_keys.create" && id != "api_keys.manage" && id != "roles.manage" && id != "settings.security" && id != "impersonation.use"
+			delegable := id != "api_keys.create" && id != "api_keys.manage" && id != "roles.manage" && id != "settings.security" && id != "impersonation.use" && id != "members.reset_mfa"
 			out = append(out, Permission{id, g.name, scopes, delegable})
 		}
 	}
@@ -97,6 +98,7 @@ func Member(legacy bool) Grants {
 	delete(g, "teams.create")
 	delete(g, "teams.delete")
 	g["event_types.read"] = "team"
+	g["dynamic_links.create"] = "all"
 	g["mcp.connect"] = "own"
 	g["mcp.manage"] = "own"
 	g["api_keys.read"] = "own"
@@ -282,4 +284,33 @@ func LegacyRole(users, settings, teams, imp bool) Grants {
 		}
 	}
 	return g
+}
+
+// DynamicHostsAllowed authorizes one-time delegation independently from publishing
+// reusable event types. It works against either a DB or a booking transaction.
+func DynamicHostsAllowed(ctx context.Context, q Querier, actor, scope string, hosts []string) bool {
+	if Rank(scope) == 0 || len(hosts) < 2 || len(hosts) > 10 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, id := range hosts {
+		if seen[id] {
+			return false
+		}
+		seen[id] = true
+		var n int
+		if q.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE id=? AND archived_at IS NULL`, id).Scan(&n) != nil || n != 1 {
+			return false
+		}
+		if scope == "all" || id == actor {
+			continue
+		}
+		if scope != "team" {
+			return false
+		}
+		if q.QueryRowContext(ctx, `SELECT COUNT(*) FROM team_members a JOIN team_members b ON a.team_id=b.team_id WHERE a.user_id=? AND b.user_id=?`, actor, id).Scan(&n) != nil || n == 0 {
+			return false
+		}
+	}
+	return true
 }

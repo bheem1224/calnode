@@ -18,19 +18,42 @@ func (h *Handler) createSession(ctx context.Context, w http.ResponseWriter, user
 }
 
 func (h *Handler) createSessionMethod(ctx context.Context, w http.ResponseWriter, userID, method string) error {
+	if handled, err := h.nativeSessionGate(ctx, w, userID, method); handled || err != nil {
+		return err
+	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return err
 	}
 	sessID := hex.EncodeToString(raw)
-	expiresAt := time.Now().UTC().Add(sessionDuration).Format(time.RFC3339)
+	p, err := h.signinPolicy(ctx)
+	if err != nil {
+		return err
+	}
+	ttl := time.Duration(p.SessionHours) * time.Hour
+	if ttl <= 0 {
+		ttl = 12 * time.Hour
+	}
+	setup, _ := ctx.Value(ctxAuthSetup).(bool)
+	verified, _ := ctx.Value(ctxMFAVerified).(bool)
+	if method == "server_recovery" && ttl > time.Hour {
+		ttl = time.Hour
+	}
+	if setup {
+		ttl = 10 * time.Minute
+	}
+	mfa := ""
+	if verified {
+		mfa = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	expiresAt := time.Now().UTC().Add(ttl).Format(time.RFC3339)
 	var revision any
 	if identity, ok := ctx.Value(ctxKeySigninIdentity).(signinIdentity); ok && identity.PolicyRevision != nil {
 		revision = *identity.PolicyRevision
 	}
 	result, err := h.db.ExecContext(ctx,
-		`INSERT INTO sessions (id,user_id,expires_at,auth_method) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM users WHERE id=? AND archived_at IS NULL) AND (? IS NULL OR (SELECT signin_policy_json FROM server_settings WHERE id=1)=?)`,
-		sessID, userID, expiresAt, method, userID, revision, revision)
+		`INSERT INTO sessions (id,user_id,expires_at,auth_method,mfa_verified_at,recovery_only) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM users WHERE id=? AND archived_at IS NULL) AND (? IS NULL OR (SELECT signin_policy_json FROM server_settings WHERE id=1)=?)`,
+		sessID, userID, expiresAt, method, mfa, setup, userID, revision, revision)
 	if err != nil {
 		return err
 	}
@@ -42,7 +65,7 @@ func (h *Handler) createSessionMethod(ctx context.Context, w http.ResponseWriter
 		Name:     sessionCookieName,
 		Value:    sessID,
 		Path:     "/",
-		MaxAge:   int(sessionDuration.Seconds()),
+		MaxAge:   int(ttl.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   h.secureCookie,
@@ -144,10 +167,10 @@ func (h *Handler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		sessionRes, err = tx.ExecContext(r.Context(),
-			`DELETE FROM sessions WHERE user_id = ? AND id <> ?`, targetID, current)
+			`DELETE FROM sessions WHERE (user_id = ? OR impersonator_user_id=?) AND id <> ?`, targetID, targetID, current)
 	} else {
 		sessionRes, err = tx.ExecContext(r.Context(),
-			`DELETE FROM sessions WHERE user_id = ? AND EXISTS(SELECT 1 FROM users WHERE id=? AND is_owner=0)`, targetID, targetID)
+			`DELETE FROM sessions WHERE (user_id = ? OR impersonator_user_id=?) AND EXISTS(SELECT 1 FROM users WHERE id=? AND is_owner=0)`, targetID, targetID, targetID)
 	}
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "revoke sessions: delete sessions", "error", err)

@@ -305,14 +305,14 @@
 						<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
 					</Popover.Trigger>
 					<Popover.Content align="end" class="w-56 p-1">
-						<button
+{#if $currentUser?.permissions?.['dynamic_links.create']}						<button
 							type="button"
 							class="flex w-full flex-col items-start rounded-sm px-2.5 py-2 text-left hover:bg-accent"
 							onclick={() => { newMenuOpen = false; dynamicModalOpen = true; }}
 						>
 							<span class="text-sm font-medium">{$t('dynamicLink.title')}</span>
 							<span class="text-xs text-muted-foreground">{$t('dynamicLink.shortDescription')}</span>
-						</button>
+						</button>{/if}
 						<button
 							type="button"
 							class="flex w-full flex-col items-start rounded-sm px-2.5 py-2 text-left hover:bg-accent"

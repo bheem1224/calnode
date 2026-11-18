@@ -44,7 +44,7 @@
     <Dialog.Header><Dialog.Title>{$t('quickLink.title')}</Dialog.Title><Dialog.Description>{$t('quickLink.description')}</Dialog.Description></Dialog.Header>
     <Input aria-label={$t('quickLink.search')} placeholder={$t('quickLink.search')} bind:value={query} oninput={() => selected = 0} onkeydown={keys} />
     {#if quickActions.length}<div class="flex flex-wrap gap-2">{#each quickActions as action}<Button type="button" variant="outline" size="sm" onclick={()=>{open=false;window.location.assign(action.url);}}>{$t(`quickLink.actions.${action.id}`)}</Button>{/each}</div>{/if}
-    <Button type="button" variant="outline" class="justify-start" onclick={() => { open = false; dynamicOpen = true; }}>{$t('dynamicLink.title')}</Button>
+    {#if $currentUser?.permissions?.['dynamic_links.create']}    <Button type="button" variant="outline" class="justify-start" onclick={() => { open = false; dynamicOpen = true; }}>{$t('dynamicLink.title')}</Button>{/if}
     <div class="max-h-80 space-y-1 overflow-y-auto">
       {#if error}<p class="text-sm text-destructive">{error}</p>{:else if visible.length === 0 && !quickActions.length}<p class="p-3 text-sm text-muted-foreground">{$t('quickLink.empty')}</p>{/if}
       {#each visible as item, i (item.id)}

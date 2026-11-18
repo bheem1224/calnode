@@ -124,7 +124,7 @@ func TestMultipleAvailabilitySchedules_And_OOO(t *testing.T) {
 }
 
 func TestDynamicGroupLinks_IntersectionAndBooking(t *testing.T) {
-	h, database, _, aliceID := setupWorkspaceWithDB(t)
+	h, database, apiKey, aliceID := setupWorkspaceWithDB(t)
 
 	bobID := uid.New()
 	mustExec(t, database, `UPDATE users SET handle = 'alice' WHERE id = ?`, aliceID)
@@ -141,12 +141,29 @@ func TestDynamicGroupLinks_IntersectionAndBooking(t *testing.T) {
 	}
 	nextMon := now.AddDate(0, 0, daysUntilMon).Format("2006-01-02")
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/public/group/alice+bob/slots?from="+nextMon+"&to="+nextMon+"&duration=30&tz=UTC", nil)
-	req.SetPathValue("handles", "alice+bob")
+	mint := httptest.NewRecorder()
+	h.RequireAuth(h.CreateDynamicLink)(mint, authReq(http.MethodPost, "/v1/dynamic-links", `{"host_ids":["`+aliceID+`","`+bobID+`"],"duration_minutes":30}`, apiKey))
+	if mint.Code != http.StatusCreated {
+		t.Fatalf("mint: %d %s", mint.Code, mint.Body.String())
+	}
+	var link struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(mint.Body.Bytes(), &link); err != nil {
+		t.Fatal(err)
+	}
+	token := link.URL[strings.LastIndex(link.URL, "/")+1:]
+	var slug string
+	if err := database.QueryRow(`SELECT et.slug FROM single_use_tokens st JOIN event_types et ON et.id=st.event_type_id WHERE st.token=?`, token).Scan(&slug); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, database, `UPDATE event_types SET max_future_days=365 WHERE slug=?`, slug)
+	req := httptest.NewRequest(http.MethodGet, "/v1/event-types/"+slug+"/slots?from="+nextMon+"&to="+nextMon+"&tz=UTC&token="+token, nil)
+	req.SetPathValue("slug", slug)
 	rec := httptest.NewRecorder()
-	h.GetDynamicGroupSlots(rec, req)
+	h.GetSlots(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GetDynamicGroupSlots: got %d — %s", rec.Code, rec.Body.String())
+		t.Fatalf("slots: %d %s", rec.Code, rec.Body.String())
 	}
 	var resp struct {
 		Slots []struct {
@@ -163,11 +180,10 @@ func TestDynamicGroupLinks_IntersectionAndBooking(t *testing.T) {
 
 	// Book the 11:00 UTC slot.
 	startStr := resp.Slots[0].Start.UTC().Format(time.RFC3339)
-	bReq := httptest.NewRequest(http.MethodPost, "/v1/public/group/alice+bob/bookings",
-		strings.NewReader(`{"start_at":"`+startStr+`","duration_minutes":30,"attendee_name":"Client","attendee_email":"client@example.com","attendee_tz":"UTC"}`))
-	bReq.SetPathValue("handles", "alice+bob")
+	bReq := httptest.NewRequest(http.MethodPost, "/v1/event-types/"+slug+"/bookings", strings.NewReader(`{"event_type_slug":"`+slug+`","single_use_token":"`+token+`","start_at":"`+startStr+`","duration_minutes":30,"name":"Client","email":"client@example.com","timezone":"UTC"}`))
+	bReq.SetPathValue("slug", slug)
 	bRec := httptest.NewRecorder()
-	h.CreateDynamicGroupBooking(bRec, bReq)
+	h.CreateBooking(bRec, bReq)
 	if bRec.Code != http.StatusCreated {
 		t.Fatalf("CreateDynamicGroupBooking: got %d — %s", bRec.Code, bRec.Body.String())
 	}

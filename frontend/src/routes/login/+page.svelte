@@ -1,6 +1,7 @@
 <script lang="ts">
+ import { redirectAuthStep,signInWithPasskey } from '$lib/native-auth';
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
@@ -37,7 +38,7 @@
 		link: $t('auth.login.oauth.link')
 	});
 
-	const errorKey = $derived($page.url.searchParams.get('error') ?? '');
+	const errorKey = $derived(page.url.searchParams.get('error') ?? '');
 	const oauthError = $derived(errorKey ? (oauthErrorMessages[errorKey] ?? $t('auth.login.error.generic')) : '');
 
 	onMount(async () => {
@@ -65,7 +66,7 @@
 				body: JSON.stringify({ email: email.trim().toLowerCase(), password })
 			});
 			if (res.ok) {
-				window.location.href = '/admin';
+				if(!redirectAuthStep(res))window.location.href = '/admin';
 			} else {
 				const data = await res.json().catch(() => ({}));
 				if (res.status === 403) {
@@ -78,6 +79,8 @@
 			submitting = false;
 		}
 	}
+
+ async function passkeyLogin(){submitting=true;loginError='';try{await signInWithPasskey();window.location.assign('/admin');}catch(e){loginError=e instanceof Error?e.message:tr('nativeAuth.failed');}finally{submitting=false;}}
 
 	const isValidEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
@@ -153,7 +156,8 @@
 				</Button>
 			{/if}
 
-			{#if showGoogle}
+			<Button type="button" variant="outline" class="mb-3 h-11 w-full" disabled={submitting} onclick={passkeyLogin}>{$t('nativeAuth.usePasskey')}</Button>
+   {#if showGoogle}
 				<Button variant="outline" class="h-11 w-full {showMicrosoft ? 'mt-3' : ''}" onclick={() => window.location.href = '/v1/auth/login'}>
 					<svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true" class="mr-2">
 						<path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>

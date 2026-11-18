@@ -18,8 +18,10 @@ import (
 // handlers fail closed; the server contract test keeps the inventory complete.
 var handlerPermissions = func() map[string]string {
 	groups := map[string]string{
-		"profile.read":          "GetMe ListDirectoryUsers",
-		"profile.update":        "PatchMe UploadAvatar DeleteAvatar ChangePassword RevokeAllSessions StopImpersonation",
+		"profile.read":          "GetMe ListDirectoryUsers GetAuthSecurity",
+		"dynamic_links.create":  "CreateDynamicLink",
+		"members.reset_mfa":     "ResetUserMFA",
+		"profile.update":        "BeginTOTP ConfirmTOTP DeleteAuthFactor GenerateRecoveryCodes BeginPasskeyRegistration FinishPasskeyRegistration PatchMe UploadAvatar DeleteAvatar ChangePassword RevokeAllSessions StopImpersonation",
 		"members.password":      "AdminSetPassword",
 		"members.invite_member": "CreateInvite ListInvites RevokeInvite ResendInvite",
 		"members.read":          "ListUsers ListUserUpcomingBookings",
@@ -29,7 +31,7 @@ var handlerPermissions = func() map[string]string {
 		"roles.read":            "ListRoles",
 		"impersonation.use":     "StartImpersonation",
 		"impersonation.audit":   "ListImpersonationLogs ListSecurityAudit",
-		"settings.security":     "TransferOwnership ClaimOwnership Reauthenticate GetSigninPolicy PutSigninPolicy",
+		"settings.security":     "TransferOwnership ClaimOwnership Reauthenticate GetSigninPolicy PutSigninPolicy GetSecurityOperations RetrySecurityJob",
 		"teams.read":            "ListTeams GetTeam",
 		"teams.create":          "CreateTeam",
 		"teams.update":          "PatchTeam",
@@ -46,7 +48,7 @@ var handlerPermissions = func() map[string]string {
 		"event_types.links":     "CreateSingleUseLink RevokeSingleUseLink",
 		"availability.read":     "ListAvailabilityRules ListAvailabilityOverrides ListAvailabilitySchedules ListOOOEntries",
 		"availability.update":   "CreateAvailabilityRule UpdateAvailabilityRule DeleteAvailabilityRule CreateAvailabilityOverride UpdateAvailabilityOverride DeleteAvailabilityOverride DeleteAvailabilityOverrideGroup CreateAvailabilitySchedule PatchAvailabilitySchedule DeleteAvailabilitySchedule CreateOOOEntry UpdateOOOEntry DeleteOOOEntry",
-		"bookings.read":         "ListBookings",
+		"bookings.read":         "ListBookings GetBookingPrivate",
 		"bookings.create":       "CreateBooking",
 		"bookings.cancel":       "CancelBooking",
 		"bookings.approve":      "ConfirmBooking DeclineBooking",
@@ -93,6 +95,10 @@ func (h *Handler) authorizedCall(w http.ResponseWriter, r *http.Request, u AuthU
 		return
 	}
 	p, known := handlerPermissions[name]
+	if known && u.ImpersonatorID != "" && name != "StopImpersonation" && (!access.Delegable(access.Full()).Has(p) || p == "profile.update" || p == "integrations.update" || (strings.HasPrefix(p, "webhooks.") && p != "webhooks.read" && p != "webhooks.deliveries")) {
+		h.writeError(w, 403, "exit impersonation before changing credentials, connections, or security settings")
+		return
+	}
 	if !known { // Anonymous wrappers are used only by middleware tests, never routes.
 		if !strings.Contains(runtime.FuncForPC(reflect.ValueOf(next).Pointer()).Name(), ".func") {
 			h.writeError(w, 403, "unclassified operation")
@@ -173,6 +179,13 @@ func (h *Handler) loadAuthorization(ctx context.Context, u *AuthUser, keyID stri
 		return err
 	}
 	u.InstanceOwner = u.IsOwner
+	if u.ImpersonatorID != "" {
+		actorGrants, err := access.Load(ctx, h.db, u.ImpersonatorID)
+		if err != nil {
+			return err
+		}
+		grants = access.Intersect(grants, actorGrants)
+	}
 	u.Permissions = grants
 	u.InstanceAdmin = u.IsAdmin || u.IsOwner
 	if keyID != "" {

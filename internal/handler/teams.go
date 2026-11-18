@@ -368,14 +368,9 @@ func (h *Handler) AddTeamMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	teamID := r.PathValue("id")
-	allowed, err := h.canManageTeam(r.Context(), user, teamID)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "add team member: auth lookup", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
+	allowed := user.InstanceAdmin || user.InstanceOwner
 	if !allowed {
-		h.writeError(w, http.StatusForbidden, "admin or team head access required")
+		h.writeError(w, http.StatusForbidden, "instance administrator access required")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
@@ -445,14 +440,9 @@ func (h *Handler) UpdateTeamMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	teamID := r.PathValue("id")
-	allowed, err := h.canManageTeam(r.Context(), user, teamID)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "update team member: auth lookup", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
+	allowed := user.InstanceAdmin || user.InstanceOwner
 	if !allowed {
-		h.writeError(w, http.StatusForbidden, "admin or team head access required")
+		h.writeError(w, http.StatusForbidden, "instance administrator access required")
 		return
 	}
 	userID := r.PathValue("userId")
@@ -507,14 +497,9 @@ func (h *Handler) RemoveTeamMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	teamID := r.PathValue("id")
-	allowed, err := h.canManageTeam(r.Context(), user, teamID)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "remove team member: auth lookup", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
+	allowed := user.InstanceAdmin || user.InstanceOwner
 	if !allowed {
-		h.writeError(w, http.StatusForbidden, "admin or team head access required")
+		h.writeError(w, http.StatusForbidden, "instance administrator access required")
 		return
 	}
 	userID := r.PathValue("userId")

@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { page } from '$app/stores';
-	import { base } from '$app/paths';
+	import { page } from '$app/state';
+	import { base } from '$lib/paths';
 	import { currentUser } from '$lib/stores';
 	import { t } from '$lib/i18n';
 	import type { Snippet } from 'svelte';
@@ -10,6 +10,7 @@
 	const navItems = $derived([
 		{ section: '', href: `${base}/settings`, label: 'Overview', exact: true },
 		{ section: 'Personal Account', href: `${base}/settings/profile`, label: $t('settings.nav.profile') },
+		{section:'Personal Account',href:`${base}/settings/account-security`,label:$t('nativeAuth.title')},
 		{ section: 'Personal Account', href: `${base}/settings/notifications`, label: $t('settings.nav.notifications') },
 		{ section: 'Team Settings', href: `${base}/settings/teams`, label: 'Teams & Routing' },
 		{ section: 'Instance Settings', href: `${base}/settings/security`, label: $t('securitySettings.title'), adminOnly: true },
@@ -29,7 +30,7 @@
 	const visibleNavItems = $derived(navItems.filter((item) => !item.adminOnly || !!$currentUser?.permissions?.[item.href.endsWith('/security')?'settings.security':item.href.endsWith('/members')?'members.read':item.href.endsWith('/branding')?'branding.read':'settings.read']));
 
 	function isActive(href: string, exact?: boolean): boolean {
-		const path = $page.url.pathname.replace(/\/+$/, '');
+		const path = page.url.pathname.replace(/\/+$/, '');
 		const target = href.replace(/\/+$/, '');
 		if (exact) return path === target;
 		return path.startsWith(target);

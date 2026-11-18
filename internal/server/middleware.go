@@ -64,7 +64,7 @@ func Logging(logger *slog.Logger, next http.Handler) http.Handler {
 // and invite tokens (/invites/{token}) would otherwise land verbatim in stdout
 // and any log drain. Query strings are never logged here (only Path is).
 func redactTokenPaths(path string) string {
-	for _, prefix := range []string{"/manage/", "/room/", "/invites/"} {
+	for _, prefix := range []string{"/manage/", "/room/", "/invites/", "/admin/invite/", "/v1/invites/", "/t/", "/d/", "/v1/public/group/", "/v1/single-use-links/", "/v1/auth/recovery/"} {
 		if strings.HasPrefix(path, prefix) {
 			return prefix + "[redacted]"
 		}
@@ -345,13 +345,11 @@ func (rl *rateLimiter) cleanup() {
 // INSTEAD of honouring the CSP, breaking the embedding this exists to enable. Every
 // browser that can frame anything today supports frame-ancestors.
 //
-// ⚠️ With the list empty the wrapped handler sends no frame header at all, which is what
-// /admin/ has always sent: this middleware does not add a default deny, because that
-// would be a behaviour change smuggled in on an opt-in setting. See
-// TestAdminSPA_sendsNoFrameHeadersWhenUnset, which pins it.
+// Default to same-origin framing to prevent clickjacking of authenticated controls.
+// Operators can explicitly allow a trusted external management console.
 func FrameAncestors(origins []string) func(http.Handler) http.Handler {
 	if len(origins) == 0 {
-		return func(next http.Handler) http.Handler { return next }
+		origins = []string{"'self'"}
 	}
 	policy := "frame-ancestors " + strings.Join(origins, " ")
 	return func(next http.Handler) http.Handler {
@@ -524,4 +522,18 @@ func ipInAny(ip string, nets []*net.IPNet) bool {
 		}
 	}
 	return false
+}
+
+func SecurityHeaders(secure bool, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if secure {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/") || strings.HasPrefix(r.URL.Path, "/t/") || strings.HasPrefix(r.URL.Path, "/manage/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		next.ServeHTTP(w, r)
+	})
 }

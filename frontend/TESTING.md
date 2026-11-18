@@ -65,3 +65,17 @@ that's the Day button (`[data-bits-day]`), not the parent `<td>` cell.
   transitions/animations (so `getComputedStyle` reads final values).
 - Requires the Chromium binary: `pnpm exec playwright install chromium`
   (already downloaded locally; CI must run this).
+
+## Native authentication end-to-end check
+
+`node scripts/verify-native-auth.mjs` exercises a real WebAuthn registration and
+sign-in using Chromium's virtual authenticator, then verifies that password login
+stops at MFA and a recovery code completes it. CI starts a fresh in-memory server
+and runs this after the normal browser suite.
+
+Set `CALNODE_AUTH_TEST_URL` to a **fresh disposable localhost instance** built with
+the current frontend. The script refuses an already-claimed instance. It creates
+test Owner credentials and a virtual passkey; it never uses an operator's real
+passkey, password, browser profile, or production database. Use a separate port
+and `DATABASE_URL=sqlite://:memory:`. Normal provider sign-in still needs a staging
+tenant test; a virtual authenticator does not prove real-device interoperability.

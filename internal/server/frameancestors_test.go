@@ -17,17 +17,12 @@ func serveAdminSPA(origins []string, path string) *httptest.ResponseRecorder {
 	return rec
 }
 
-// ⚠️ This pins what /admin/ sends TODAY, which is no frame header at all: the SPA is
-// framable by any site unless an operator says otherwise. FRAME_ANCESTORS deliberately
-// does not change that when unset — an opt-in setting must not smuggle in a default deny
-// — so this test exists to make the next person's change to it deliberate rather than
-// incidental. The public booking pages are the ones that carry an unconditional DENY.
-func TestAdminSPA_sendsNoFrameHeadersWhenUnset(t *testing.T) {
+func TestAdminSPA_defaultsToSameOriginFraming(t *testing.T) {
 	for _, path := range []string{"/", "/bookings", "/favicon.svg"} {
 		t.Run(path, func(t *testing.T) {
 			rec := serveAdminSPA(nil, path)
-			if got := rec.Header().Get("Content-Security-Policy"); got != "" {
-				t.Errorf("Content-Security-Policy = %q; want it absent", got)
+			if got := rec.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'self'" {
+				t.Errorf("Content-Security-Policy = %q; want same-origin framing", got)
 			}
 			if got := rec.Header().Get("X-Frame-Options"); got != "" {
 				t.Errorf("X-Frame-Options = %q; want it absent", got)

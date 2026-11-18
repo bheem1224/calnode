@@ -149,18 +149,34 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if _, err := h.db.ExecContext(r.Context(),
-		`UPDATE users SET password_hash = ? WHERE id = ?`, string(newHash), userID); err != nil {
-		h.logger.ErrorContext(r.Context(), "password reset: update", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		h.writeError(w, 500, "could not reset password")
 		return
 	}
-	// Unauthenticated request, so there is no current session to preserve — revoke
-	// everything (a compromised session must not survive the reset), then sign in.
-	if _, err := h.db.ExecContext(r.Context(),
-		`DELETE FROM sessions WHERE user_id = ?`, userID); err != nil {
-		h.logger.ErrorContext(r.Context(), "password reset: revoke sessions", "error", err, "user_id", userID)
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(r.Context(), `UPDATE users SET password_hash=? WHERE id=?`, string(newHash), userID); err != nil {
+		h.writeError(w, 500, "could not reset password")
+		return
 	}
+	for _, table := range []string{"sessions", "auth_challenges", "oauth_access_tokens", "oauth_auth_codes", "magic_link_tokens", "password_reset_tokens"} {
+		query := `DELETE FROM ` + table + ` WHERE user_id=?`
+		args := []any{userID}
+		if table == "sessions" {
+			query += ` OR impersonator_user_id=?`
+			args = append(args, userID)
+		}
+		if _, err = tx.ExecContext(r.Context(), query, args...); err != nil {
+			h.writeError(w, 500, "could not revoke old authentication")
+			return
+		}
+	}
+	if tx.Commit() != nil {
+		h.writeError(w, 500, "could not reset password")
+		return
+	}
+	h.securityNotice(r.Context(), userID, "Your password was reset using an emailed link", "")
+
 	if err := h.createSession(r.Context(), w, userID); err != nil {
 		// The password IS reset; only the convenience sign-in failed. The login
 		// page bounces to /admin/login without a session, so report success and

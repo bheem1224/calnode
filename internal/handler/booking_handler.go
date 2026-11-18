@@ -16,13 +16,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/booking"
 	"github.com/calnode/calnode/internal/calendar"
 	"github.com/calnode/calnode/internal/db"
 	"github.com/calnode/calnode/internal/i18n"
 	"github.com/calnode/calnode/internal/mailer"
 	"github.com/calnode/calnode/internal/slots"
-	"github.com/calnode/calnode/internal/uid"
 	"github.com/calnode/calnode/internal/webhook"
 	"github.com/calnode/calnode/internal/zoom"
 )
@@ -701,7 +701,7 @@ func (h *Handler) createBookingForSlug(ctx context.Context, slug string, startAt
 	if err != nil {
 		return nil, err
 	}
-	go h.dispatchBookingConfirmation(b, bookingConfirmationInput{ // #nosec G118 -- deliberately its own context.Background(); the request context is cancelled the moment this handler returns, which would abort these side effects immediately
+	h.queueBookingConfirmation(b, bookingConfirmationInput{ // #nosec G118 -- deliberately its own context.Background(); the request context is cancelled the moment this handler returns, which would abort these side effects immediately
 		EventTypeName:     et.Name,
 		EventTypeSlug:     slug,
 		LocationType:      et.LocationType,
@@ -1237,7 +1237,7 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 	// Run calendar/email/webhook side effects in the background once confirmed.
 	// Pending-approval bookings wait for ConfirmBooking before pushing to calendars.
 	if !b.PendingApproval {
-		go h.dispatchBookingConfirmation(b, bookingConfirmationInput{ // #nosec G118 -- deliberately its own context.Background(); see dispatchBookingConfirmation's doc comment
+		h.queueBookingConfirmation(b, bookingConfirmationInput{ // #nosec G118 -- deliberately its own context.Background(); see dispatchBookingConfirmation's doc comment
 			EventTypeName:     et.Name,
 			EventTypeSlug:     req.EventTypeSlug,
 			LocationType:      et.LocationType,
@@ -1699,6 +1699,7 @@ func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConf
 
 	mailCtx, cancelMail := context.WithTimeout(context.Background(), dispatchMailBudget)
 	defer cancelMail()
+	_, _ = h.db.ExecContext(mailCtx, `UPDATE bookings SET confirm_failed=0 WHERE id=?`, b.ID)
 	primaryPrefs, confirmFailed := h.notifyHosts(mailCtx, b, bData, hosts, livekitHostURL)
 
 	// Attendee confirmation, once. "With:" names the primary host; gated on the
@@ -1737,7 +1738,20 @@ func (h *Handler) GetBooking(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	h.writeJSON(w, http.StatusOK, toBookingJSON(b))
+	if extractAPIKey(r) != "" {
+		h.RequireAuth(h.GetBookingPrivate)(w, r)
+		return
+	}
+	userID, _, signed := h.sessionUser(r)
+	if signed {
+		grants, err := access.Load(r.Context(), h.db, userID)
+		if err == nil && access.BookingAllowed(r.Context(), h.db, userID, grants["bookings.read"], id) {
+			h.writeJSON(w, 200, toBookingJSON(b))
+			return
+		}
+	}
+	h.writeJSON(w, 200, map[string]any{"id": b.ID, "status": b.Status, "payment_status": b.PaymentStatus, "pending_approval": b.PendingApproval})
+
 }
 
 // Bookings are paginated. The list used to be unbounded: it loaded every booking the
@@ -2155,7 +2169,15 @@ func (h *Handler) ConfirmBooking(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := h.validateApprovalTime(r.Context(), existing); err != nil {
+		h.writeError(w, 409, "this request is no longer available; choose another time")
+		return
+	}
 	b, err := h.bookingSvc.Approve(r.Context(), id)
+	if errors.Is(err, booking.ErrDoubleBooked) {
+		h.writeError(w, 409, "the requested time is already booked")
+		return
+	}
 	if errors.Is(err, booking.ErrNotFound) {
 		h.writeError(w, http.StatusConflict, "booking is not pending confirmation")
 		return
@@ -2176,7 +2198,7 @@ func (h *Handler) ConfirmBooking(w http.ResponseWriter, r *http.Request) {
 		Scan(&orgName, &orgEmail, &orgTZ, &orgLocale)
 
 	h.writeJSON(w, http.StatusOK, toBookingJSON(b))
-	go h.dispatchBookingConfirmation(b, bookingConfirmationInput{ // #nosec G118 -- intentionally detached background context
+	h.queueBookingConfirmation(b, bookingConfirmationInput{ // #nosec G118 -- intentionally detached background context
 		EventTypeName:     etName,
 		EventTypeSlug:     etSlug,
 		LocationType:      locType,
@@ -2599,7 +2621,7 @@ func (h *Handler) enqueueReminder(ctx context.Context, bookingID string, startAt
 	_, err = h.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO jobs (id, type, payload, run_at, status, attempts, max_attempts)
 		VALUES (?, 'reminder.send', ?, ?, 'pending', 0, 3)`,
-		uid.New(), string(payload), runAt.Format(time.RFC3339))
+		fmt.Sprintf("reminder:%s:%d", bookingID, hoursBefore), string(payload), runAt.Format(time.RFC3339))
 	return err
 }
 
@@ -2689,9 +2711,18 @@ func (h *Handler) replaceReminderJobs(ctx context.Context, bookingID, etID strin
 		if _, err := tx.ExecContext(ctx, `
 			INSERT OR IGNORE INTO jobs (id, type, payload, run_at, status, attempts, max_attempts)
 			VALUES (?, 'reminder.send', ?, ?, 'pending', 0, 3)`,
-			uid.New(), string(payload), runAt.Format(time.RFC3339)); err != nil {
+			fmt.Sprintf("reminder:%s:%d", bookingID, hb), string(payload), runAt.Format(time.RFC3339)); err != nil {
 			return fmt.Errorf("replace reminder jobs: insert: %w", err)
 		}
 	}
 	return tx.Commit()
+}
+
+func (h *Handler) GetBookingPrivate(w http.ResponseWriter, r *http.Request) {
+	b, err := h.bookingSvc.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.writeError(w, 404, "booking not found")
+		return
+	}
+	h.writeJSON(w, 200, toBookingJSON(b))
 }

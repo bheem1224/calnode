@@ -6,8 +6,12 @@ served under `/admin/`. Public booking pages are server-rendered Go templates
 
 ## Frontend toolchain
 
-- Vite 8 (Rolldown) · SvelteKit 2 · Svelte 5 · Tailwind v4 (`@tailwindcss/vite`)
+- Vite 8 (Rolldown) · SvelteKit 3 · Svelte 5 · Tailwind v4 (`@tailwindcss/vite`)
   · bits-ui / shadcn-svelte · Vitest 4 browser mode.
+- Kit configuration lives in `frontend/vite.config.ts`'s `sveltekit({...})`.
+  TypeScript extends `$app/tsconfig`; use `$app/state`, and use `$lib/paths`
+  for the configured admin root. The retained `$lib` alias is supported but
+  deprecated upstream; do not reintroduce a Kit 2 `svelte.config.js`.
 - The frontend is embedded at Go compile time (`frontend/embed.go` →
   `//go:embed all:build`). To see frontend changes in the running app: rebuild
   the frontend (`pnpm build` in `frontend/`) **and** rebuild/restart the Go

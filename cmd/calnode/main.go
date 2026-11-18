@@ -25,6 +25,9 @@ func main() {
 	if len(os.Args) > 1 {
 		_ = godotenv.Load()
 		switch os.Args[1] {
+		case "recover-owner":
+			runRecoverOwner(os.Args[2:])
+			return
 		case "reset-admin":
 			runResetAdmin(os.Args[2:])
 			return

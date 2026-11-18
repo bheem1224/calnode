@@ -1,6 +1,7 @@
 <script lang="ts">
+ import { redirectAuthStep,signInWithPasskey } from '$lib/native-auth';
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
@@ -13,7 +14,7 @@
 	let error = $state('');
 
 	onMount(() => {
-		token = $page.url.searchParams.get('token') ?? '';
+		token = page.url.searchParams.get('token') ?? '';
 		if (!token) {
 			error = tr('auth.reset.missingToken');
 		}
@@ -39,7 +40,7 @@
 			});
 			if (res.ok) {
 				// The reset signs the user straight in.
-				window.location.href = '/admin';
+				if(!redirectAuthStep(res))window.location.href = '/admin';
 			} else {
 				const data = await res.json().catch(() => ({}));
 				error = data.error || tr('auth.reset.failed');

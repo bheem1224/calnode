@@ -123,7 +123,11 @@ func (h *Handler) VerifyMagicLink(w http.ResponseWriter, r *http.Request) {
 		fail()
 		return
 	}
-	http.Redirect(w, r, h.baseURL+"/admin/", http.StatusFound)
+	dest := h.baseURL + "/admin/"
+	if step := w.Header().Get("X-Calnode-Auth-Step"); step != "" {
+		dest = h.baseURL + "/admin/auth/" + step
+	}
+	http.Redirect(w, r, dest, http.StatusFound)
 }
 
 // magicLinkMessage builds the login-link email (multipart text + minimal HTML).

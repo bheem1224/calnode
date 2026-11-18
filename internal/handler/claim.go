@@ -120,8 +120,8 @@ func (h *Handler) Claim(w http.ResponseWriter, r *http.Request) {
 
 	userID := uid.New()
 	if _, err := tx.ExecContext(r.Context(), `
-		INSERT INTO users (id, email, name, iana_timezone, is_admin, email_login, password_hash)
-		VALUES (?, ?, ?, ?, 1, 1, ?)`,
+		INSERT INTO users (id, email, name, iana_timezone, is_admin, is_owner, email_login, password_hash)
+		VALUES (?, ?, ?, ?, 1, 1, 1, ?)`,
 		userID, req.Email, req.Name, req.Timezone, string(hash)); err != nil {
 		h.logger.ErrorContext(r.Context(), "claim: insert user", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")

@@ -124,6 +124,7 @@ func (h *Handler) calendarFreeAt(ctx context.Context, gc calendarFreeBusy, userI
 		return false, fmt.Errorf("load own calendar events: %w", err)
 	}
 	busy, err := gc.FreeBusy(ctx, userID, window.Start, window.End)
+	h.recordCalendarHealth(ctx, userID, err)
 	if err != nil {
 		return false, fmt.Errorf("%w: %w", errCalendarUnavailable, err)
 	}

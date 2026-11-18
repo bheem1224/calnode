@@ -415,6 +415,10 @@ func (h *Handler) StartImpersonation(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusForbidden, "cannot impersonate the workspace owner")
 		return
 	}
+	if targetIsAdmin != 0 && !actor.InstanceAdmin && !actor.InstanceOwner {
+		h.writeError(w, 403, "only an instance administrator can impersonate an administrator")
+		return
+	}
 	if targetRoleImpersonatable == 0 {
 		h.writeError(w, http.StatusForbidden, "this user's role does not allow impersonation")
 		return
@@ -429,7 +433,7 @@ func (h *Handler) StartImpersonation(w http.ResponseWriter, r *http.Request) {
 
 	// Recheck after acquiring the transaction, so a concurrent transfer cannot turn the target into an owner between the guard and session mutation.
 	var eligible int
-	if err := tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM users u LEFT JOIN roles r ON r.id=u.custom_role_id WHERE u.id=? AND u.is_owner=0 AND u.archived_at IS NULL AND COALESCE(r.is_impersonatable,1)=1`, targetID).Scan(&eligible); err != nil || eligible != 1 {
+	if err := tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM users u LEFT JOIN roles r ON r.id=u.custom_role_id WHERE u.id=? AND u.is_owner=0 AND (u.is_admin=0 OR ?=1) AND u.archived_at IS NULL AND COALESCE(r.is_impersonatable,1)=1`, targetID, actor.InstanceAdmin || actor.InstanceOwner).Scan(&eligible); err != nil || eligible != 1 {
 		h.writeError(w, 409, "target account changed; reload and try again")
 		return
 	}

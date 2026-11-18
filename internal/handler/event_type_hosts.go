@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/calnode/calnode/internal/access"
 	"net/http"
 
 	"github.com/calnode/calnode/internal/uid"
@@ -205,6 +206,13 @@ func (h *Handler) SetEventTypeHosts(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	// Reusable publishing authority is separate from one-time dynamic scheduling.
+	for _, hh := range req.Hosts {
+		if !canPublishForHost(r.Context(), tx, user, etID, hh.UserID) {
+			h.writeError(w, 403, "you may publish events only for yourself or a team you head")
+			return
+		}
+	}
 	// Every host must be an existing, active member.
 	for _, hh := range req.Hosts {
 		var archivedAt sql.NullString
@@ -249,4 +257,20 @@ func (h *Handler) SetEventTypeHosts(w http.ResponseWriter, r *http.Request) {
 	h.logForeignEventTypeChange(r.Context(), "set_hosts", etID, ownerID, user)
 
 	h.ListEventTypeHosts(w, r)
+}
+
+func canPublishForHost(ctx context.Context, q access.Querier, u AuthUser, eventID, hostID string) bool {
+	if (u.InstanceAdmin || u.InstanceOwner) && (u.CredentialID == "" || u.Permissions["event_types.update"] == "all") {
+		return true
+	}
+	var team sql.NullString
+	if q.QueryRowContext(ctx, `SELECT team_id FROM event_types WHERE id=?`, eventID).Scan(&team) != nil {
+		return false
+	}
+	if !team.Valid || team.String == "" {
+		return hostID == u.ID
+	}
+	var n int
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM team_members head JOIN team_members host ON host.team_id=head.team_id WHERE head.team_id=? AND head.user_id=? AND head.role='owner' AND host.user_id=?`, team.String, u.ID, hostID).Scan(&n)
+	return err == nil && n > 0
 }

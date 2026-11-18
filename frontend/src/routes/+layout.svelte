@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { page } from '$app/stores';
-	import { base } from '$app/paths';
+	import { page } from '$app/state';
+	import { base } from '$lib/paths';
 	import '../app.css';
 	import { api, type User } from '$lib/api';
 	import { currentUser, authStatus, type AuthStatus } from '$lib/stores';
@@ -38,7 +38,7 @@
 	}
 	let sidebarHovered = $state(false);
 	const isCompactNav = $derived(
-		$page.route.id === '/event-types/[slug]' || ($page.route.id?.startsWith('/settings') ?? false)
+		page.route.id === '/event-types/[slug]' || (page.route.id?.startsWith('/settings') ?? false)
 	);
 	// Focus handling: opening moves focus into the drawer, closing returns it to the
 	// trigger. Without this, opening leaves focus on the button the backdrop covers,
@@ -52,13 +52,14 @@
 	const NEW_ISSUE_URL = 'https://github.com/Calnode/calnode/issues/new/choose';
 	const RELEASES_URL = 'https://github.com/Calnode/calnode/releases';
 
-	const isLogin = $derived($page.route.id === '/login');
+	const isLogin = $derived(page.route.id === '/login');
 	const isPublicRoute = $derived(
-		$page.route.id === '/login' ||
-		$page.route.id === '/claim' ||
-		$page.route.id === '/forgot-password' ||
-		$page.route.id === '/reset-password' ||
-		$page.route.id === '/invite/[token]'
+		(page.route.id?.startsWith('/auth/') ?? false) ||
+		page.route.id === '/login' ||
+		page.route.id === '/claim' ||
+		page.route.id === '/forgot-password' ||
+		page.route.id === '/reset-password' ||
+		page.route.id === '/invite/[token]'
 	);
 
 	const navItems = $derived([
@@ -176,7 +177,7 @@
 	// Close the mobile drawer whenever the route changes, so tapping a nav link does not
 	// leave it open over the page it just navigated to.
 	$effect(() => {
-		void $page.url.pathname;
+		void page.url.pathname;
 		sidebarOpen = false;
 	});
 
@@ -389,8 +390,8 @@
 						<div class="my-2 border-t border-sidebar-border"></div>
 					{/if}
 					{@const active = item.exact
-						? $page.url.pathname === item.href || $page.url.pathname === base
-						: $page.url.pathname.startsWith(item.href)}
+						? page.url.pathname === item.href || page.url.pathname === base
+						: page.url.pathname.startsWith(item.href)}
 					<a
 						href={item.href}
 						title={item.label}

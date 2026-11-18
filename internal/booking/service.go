@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/db"
 	"github.com/calnode/calnode/internal/uid"
 )
@@ -58,6 +59,17 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 		if err != nil {
 			return nil, fmt.Errorf("booking: read single-use token: %w", err)
 		}
+		var creator, hostJSON string
+		linkErr := tx.QueryRowContext(ctx, `SELECT d.creator_id,d.host_ids_json FROM dynamic_links d JOIN single_use_tokens t ON t.id=d.token_id WHERE t.token=?`, token).Scan(&creator, &hostJSON)
+		if linkErr == nil {
+			var hosts []string
+			grants, e := access.Load(ctx, tx, creator)
+			if e != nil || json.Unmarshal([]byte(hostJSON), &hosts) != nil || !access.DynamicHostsAllowed(ctx, tx, creator, grants["dynamic_links.create"], hosts) {
+				return nil, ErrSingleUseTokenGone
+			}
+		} else if linkErr != sql.ErrNoRows {
+			return nil, linkErr
+		}
 		if raw.Valid && raw.String != "" {
 			var offered []AdHocSlot
 			if json.Unmarshal([]byte(raw.String), &offered) != nil || len(offered) == 0 {
@@ -76,6 +88,12 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 		}
 	}
 
+	var before, after int
+	if err := tx.QueryRowContext(ctx, `SELECT buffer_before_minutes,buffer_after_minutes FROM event_types WHERE id=?`, p.EventTypeID).Scan(&before, &after); err != nil {
+		return nil, err
+	}
+	checkStart := p.StartAt.UTC().Add(-time.Duration(after) * time.Minute).Format(time.RFC3339Nano)
+	checkEnd := p.EndAt.UTC().Add(time.Duration(before) * time.Minute).Format(time.RFC3339Nano)
 	// Select hosts. Round-robin picks one *free* candidate from the rotation pool
 	// per p.RRStrategy (free candidates stay in priority order). Any
 	// other mode requires every HostID free and all of them attend (Normal = one
@@ -86,7 +104,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 	if p.RoutingMode == "round_robin" {
 		// Fixed hosts always attend — all must be free.
 		for _, hostID := range p.RequiredHosts {
-			busy, err := hostBusy(ctx, tx, hostID, startStr, endStr, "")
+			busy, err := hostBusy(ctx, tx, hostID, checkStart, checkEnd, "")
 			if err != nil {
 				return nil, fmt.Errorf("booking: overlap check: %w", err)
 			}
@@ -98,7 +116,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 		// Rotation pool — pick exactly one free host by strategy.
 		var free []string
 		for _, hostID := range p.HostIDs {
-			busy, err := hostBusy(ctx, tx, hostID, startStr, endStr, "")
+			busy, err := hostBusy(ctx, tx, hostID, checkStart, checkEnd, "")
 			if err != nil {
 				return nil, fmt.Errorf("booking: overlap check: %w", err)
 			}
@@ -117,7 +135,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 		assigned = append(assigned, chosen)
 	} else {
 		for _, hostID := range p.HostIDs {
-			busy, err := hostBusy(ctx, tx, hostID, startStr, endStr, "")
+			busy, err := hostBusy(ctx, tx, hostID, checkStart, checkEnd, "")
 			if err != nil {
 				return nil, fmt.Errorf("booking: overlap check: %w", err)
 			}
@@ -134,7 +152,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 		if slices.Contains(assigned, hostID) {
 			continue
 		}
-		busy, err := hostBusy(ctx, tx, hostID, startStr, endStr, "")
+		busy, err := hostBusy(ctx, tx, hostID, checkStart, checkEnd, "")
 		if err != nil {
 			return nil, fmt.Errorf("booking: optional overlap check: %w", err)
 		}
@@ -269,6 +287,11 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 		}
 	}
 
+	if !p.PendingApproval {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(id,type,payload,run_at,max_attempts)SELECT ?,'booking.confirm',json_object('booking_id',?),?,8 WHERE (SELECT COALESCE(price_cents,0) FROM event_types WHERE id=?)=0`, "booking.confirm:"+bookingID, bookingID, now, p.EventTypeID); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("booking: commit: %w", err)
 	}
@@ -399,19 +422,66 @@ func hostBusy(ctx context.Context, tx *sql.Tx, hostID, start, end, excludeBookin
 
 // Approve marks a pending booking as confirmed (pending_approval = 0).
 func (s *Service) Approve(ctx context.Context, bookingID string) (*Booking, error) {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	res, err := s.db.ExecContext(ctx, `
-		UPDATE bookings SET pending_approval = 0, updated_at = ?
-		WHERE id = ? AND status = 'confirmed' AND pending_approval = 1`, now, bookingID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		if db.IsUniqueViolation(err) {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	var start, end string
+	var pending bool
+	if err = tx.QueryRowContext(ctx, `SELECT start_at,end_at,pending_approval FROM bookings WHERE id=? AND status='confirmed'`, bookingID).Scan(&start, &end, &pending); err != nil || !pending {
+		return nil, ErrNotFound
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT user_id FROM booking_hosts WHERE booking_id=? UNION SELECT host_id FROM bookings WHERE id=?`, bookingID, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	var hosts []string
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		hosts = append(hosts, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	var before, after int
+	if err = tx.QueryRowContext(ctx, `SELECT et.buffer_before_minutes,et.buffer_after_minutes FROM event_types et JOIN bookings b ON b.event_type_id=et.id WHERE b.id=?`, bookingID).Scan(&before, &after); err != nil {
+		return nil, err
+	}
+	startTime, e := time.Parse(time.RFC3339Nano, start)
+	if e != nil {
+		return nil, e
+	}
+	endTime, e := time.Parse(time.RFC3339Nano, end)
+	if e != nil {
+		return nil, e
+	}
+	start = startTime.Add(-time.Duration(after) * time.Minute).Format(time.RFC3339Nano)
+	end = endTime.Add(time.Duration(before) * time.Minute).Format(time.RFC3339Nano)
+	for _, id := range hosts {
+		busy, e := hostBusy(ctx, tx, id, start, end, bookingID)
+		if e != nil {
+			return nil, e
+		}
+		if busy {
 			return nil, ErrDoubleBooked
 		}
-		return nil, fmt.Errorf("booking: approve: %w", err)
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return nil, ErrNotFound
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err = tx.ExecContext(ctx, `UPDATE bookings SET pending_approval=0,updated_at=? WHERE id=?`, now, bookingID); err != nil {
+		return nil, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(id,type,payload,run_at,max_attempts)SELECT ?,'booking.confirm',json_object('booking_id',?),?,8 WHERE (SELECT payment_status FROM bookings WHERE id=?)<>'pending'`, "booking.confirm:"+bookingID, bookingID, now, bookingID); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
 	}
 	return s.Get(ctx, bookingID)
 }

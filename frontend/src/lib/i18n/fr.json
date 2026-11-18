@@ -2134,7 +2134,8 @@
 			"recordings": "Enregistrements",
 			"transcripts": "Transcriptions",
 			"notes": "Notes de réunion",
-			"impersonation": "Accès en tant qu’utilisateur"
+			"impersonation": "Accès en tant qu’utilisateur",
+			"dynamic_links": "Liens dynamiques"
 		},
 		"labels": {
 			"profile": {
@@ -2226,7 +2227,9 @@
 			"impersonation": {
 				"use": "Accéder en tant qu’utilisateur",
 				"audit": "Consulter le journal de sécurité"
-			}
+			},
+			"dynamic_links.create": "Créer des liens de groupe à usage unique",
+			"members.reset_mfa": "Récupérer le MFA local"
 		},
 		"scope": {
 			"none": "Aucun accès",
@@ -2306,7 +2309,7 @@
 		"legacy": "Les utilisateurs existants conservent leur accès jusqu’à modification de cette politique. Le groupe d’inscription s’applique aux nouvelles inscriptions automatiques.",
 		"save": "Vérifier et enregistrer",
 		"verify": "Vérifier ce changement de sécurité",
-		"verifyHint": "Saisissez votre mot de passe actuel. Avec Microsoft ou Google, reconnectez-vous puis enregistrez dans les cinq minutes.",
+		"verifyHint": "Vérifiez votre code d’authentification ou votre clé d’accès. Sans MFA, vérifiez votre mot de passe ou reconnectez-vous auprès de votre fournisseur d’identité. La vérification dure cinq minutes.",
 		"currentPassword": "Mot de passe actuel",
 		"cancel": "Annuler",
 		"confirm": "Enregistrer les paramètres",
@@ -2318,5 +2321,71 @@
 		"inviteSSOHint": "Connectez-vous avec le compte Microsoft correspondant à cette invitation. Le groupe d’inscription automatique n’est pas requis.",
 		"inviteUnavailable": "Votre administrateur doit activer une méthode de connexion avant que vous puissiez accepter cette invitation.",
 		"enrollmentLocation": "Gérez les domaines approuvés, les groupes de sécurité et la connexion dans"
+	},
+	"nativeAuth": {
+		"title": "Sécurité du compte",
+		"description": "Protégez la connexion locale avec une clé d’accès ou une application d’authentification. Conservez vos codes de récupération en lieu sûr.",
+		"failed": "Impossible de terminer l’authentification. Réessayez.",
+		"verified": "Identité vérifiée pour cinq minutes",
+		"enrolled": "Méthode d’authentification ajoutée",
+		"setupRequired": "Terminez la configuration pour accéder à votre compte. Cette session permet uniquement d’enregistrer une méthode d’authentification.",
+		"ssoManaged": "Votre connexion est gérée par votre organisation. Contactez le support informatique pour récupérer l’accès.",
+		"verifyTitle": "Vérifiez votre identité",
+		"verifyHint": "Utilisez un code d’authentification, de récupération ou une clé d’accès. Sans MFA, utilisez votre mot de passe.",
+		"code": "Code d’authentification ou de récupération",
+		"verify": "Vérifier",
+		"usePasskey": "Utiliser une clé d’accès",
+		"passkeys": "Clés d’accès · recommandé",
+		"passkeyHint": "Utilisez le code PIN, l’empreinte, la reconnaissance faciale ou une clé de sécurité. Enregistrez aussi une solution de secours.",
+		"keyName": "Nom de l’appareil",
+		"addPasskey": "Ajouter une clé d’accès",
+		"authenticator": "Application d’authentification",
+		"totpHint": "Utilisez les codes temporaires d’une application d’authentification comme alternative aux clés d’accès.",
+		"enabled": "Activé",
+		"qrAlt": "Scannez ce code QR avec votre application d’authentification",
+		"confirmAuthenticator": "Confirmer l’application",
+		"addAuthenticator": "Configurer l’application",
+		"recoveryCodes": "Codes de récupération",
+		"recoveryHint": "{count} codes restants. Chaque code est à usage unique. Les nouveaux codes remplacent les anciens.",
+		"generateCodes": "Générer des codes de récupération",
+		"saveCodes": "Conservez ces codes maintenant. Ils ne seront plus affichés.",
+		"copied": "Codes de récupération copiés",
+		"continue": "Continuer vers l’application",
+		"removeTitle": "Supprimer cette méthode ?",
+		"removeHint": "Ajoutez d’abord une méthode de secours. Les autres sessions seront déconnectées.",
+		"challengeHint": "Saisissez un code de votre application ou un code de récupération inutilisé.",
+		"recoverTitle": "Récupérer l’accès au compte",
+		"recoverHint": "Votre administrateur a autorisé une session de configuration unique. Vous devez enregistrer une nouvelle méthode pour accéder à l’application.",
+		"recoverStart": "Commencer la récupération",
+		"adminMFA": "Exiger le MFA pour la connexion locale du propriétaire et des administrateurs",
+		"memberMFA": "Exiger le MFA pour la connexion locale des membres",
+		"policyHint": "Configurez votre propre méthode avant d’imposer le MFA. Les comptes SSO continuent d’utiliser leur fournisseur d’identité.",
+		"sessionHours": "Durée maximale d’une session (heures)",
+		"linkDays": "Expiration des liens dynamiques (jours)",
+		"recoverMember": "Récupérer le MFA",
+		"recoverMemberHint": "Vérifiez l’identité par un canal connu de l’entreprise. Indiquez le ticket de support. Les sessions seront révoquées et une nouvelle méthode sera requise. Pour les administrateurs, les clés API sont aussi révoquées.",
+		"ticket": "Vérification d’identité / référence du ticket",
+		"authorizeRecovery": "Autoriser la récupération",
+		"deliverLink": "Transmettez ce lien unique à la personne vérifiée par un canal approuvé. Il expire dans 15 minutes.",
+		"passwordRecovery": "Réinitialiser le mot de passe local",
+		"newPassword": "Nouveau mot de passe",
+		"passwordHint": "La réinitialisation du mot de passe ne supprime pas le MFA. Vérifiez votre identité avant de continuer.",
+		"operations": "État de sécurité et des envois",
+		"operationsHint": "Consultez les problèmes de calendrier et les tâches en échec. Une nouvelle tentative peut renvoyer une notification.",
+		"retry": "Réessayer",
+		"healthy": "Aucun échec en attente",
+		"disableOptional": "Désactiver le MFA facultatif sans demander de nouvelle configuration"
+	},
+	"securityOperations": {
+		"title": "État des envois et calendriers",
+		"description": "Dernières vérifications des calendriers et échecs des envois en arrière-plan.",
+		"refresh": "Actualiser",
+		"counts": "{pending} tâches en attente · {failed} réservations nécessitent un envoi de confirmation",
+		"healthy": "Aucune erreur de calendrier ou d’envoi enregistrée.",
+		"calendarError": "La disponibilité n’a pas pu être vérifiée. Demandez à ce membre de reconnecter le calendrier concerné si le problème persiste.",
+		"retry": "Réessayer l’envoi",
+		"retryHint": "Vérifiez votre identité avant de relancer cette tâche. Une nouvelle tentative peut renvoyer une notification.",
+		"loadError": "Impossible de charger l’état des envois.",
+		"retryError": "Impossible de relancer cet envoi."
 	}
 }

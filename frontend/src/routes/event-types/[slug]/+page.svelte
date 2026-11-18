@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { page } from "$app/stores";
+  import { page } from "$app/state";
   import { goto, beforeNavigate } from "$app/navigation";
-  import { base } from "$app/paths";
+  import { base } from "$lib/paths";
   import {
     api,
     type EventType,
@@ -733,7 +733,7 @@
     } finally { if (request === availabilityRequest) availabilityLoading = false; }
   }
 
-  const slug = $page.params.slug;
+  const slug = page.params.slug;
 
   async function loadET() {
     etError = "";

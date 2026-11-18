@@ -18,6 +18,7 @@ const ctxKeyUser contextKey = "user"
 
 // AuthUser is the authenticated caller stored in request context.
 type AuthUser struct {
+	RecoveryOnly  bool
 	Permissions   access.Grants
 	CredentialID  string
 	InstanceAdmin bool
@@ -129,7 +130,7 @@ func (h *Handler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 			var allowImp, canUsers, canSettings, canTeams sql.NullInt64
 			var authMethod string
 			if err := h.db.QueryRowContext(r.Context(), `
-				SELECT s.id, COALESCE(s.impersonator_user_id,''),s.auth_method,
+				SELECT s.id, COALESCE(s.impersonator_user_id,''),s.auth_method,s.recovery_only,
 				       u.id, u.email, u.name, u.iana_timezone, u.time_format, u.week_start, u.date_format, COALESCE(u.avatar_url,''), u.is_admin, u.is_owner,
 				       COALESCE(u.notify_confirmation,1), COALESCE(u.notify_cancellation,1), COALESCE(u.notify_reschedule,1), COALESCE(u.notify_reminder,1),
 				       COALESCE(u.notify_host_booking,1), COALESCE(u.notify_host_cancel,1), COALESCE(u.notify_host_reschedule,1),
@@ -140,12 +141,23 @@ func (h *Handler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 				LEFT JOIN roles r ON r.id = u.custom_role_id
 				WHERE s.id = ? AND s.expires_at > ? AND u.archived_at IS NULL`,
 				cookie.Value, now).
-				Scan(&user.SessionID, &user.ImpersonatorID, &authMethod,
+				Scan(&user.SessionID, &user.ImpersonatorID, &authMethod, &user.RecoveryOnly,
 					&user.ID, &user.Email, &user.Name, &user.IANATZ, &user.TimeFormat, &user.WeekStart, &user.DateFormat, &user.AvatarURL, &user.IsAdmin, &user.IsOwner,
 					&nc, &nca, &nr, &nrm, &nhb, &nhc, &nhr,
 					&user.CustomRoleID, &user.CustomRoleName, &allowImp, &canUsers, &canSettings, &canTeams); err == nil {
+				if user.RecoveryOnly {
+					allowed := map[string]bool{"GetAuthSecurity": true, "BeginTOTP": true, "ConfirmTOTP": true, "BeginPasskeyRegistration": true, "FinishPasskeyRegistration": true}
+					if !allowed[handlerName(next)] {
+						h.writeError(w, 403, "complete authentication setup before accessing the application")
+						return
+					}
+				}
 				p, policyErr := h.signinPolicy(r.Context())
-				if policyErr != nil || (user.ImpersonatorID == "" && !policyAllowsSession(p, authMethod, user.IsAdmin || user.IsOwner)) {
+				if user.ImpersonatorID != "" && !h.impersonationSessionValid(r.Context(), user, authMethod, p) {
+					h.writeError(w, 401, "support session is no longer authorized")
+					return
+				}
+				if policyErr != nil || (user.ImpersonatorID == "" && (!policyAllowsSession(p, authMethod, user.IsAdmin || user.IsOwner) || !h.sessionSecurityValid(r.Context(), user.SessionID, user.ID, authMethod, p, user.RecoveryOnly))) {
 					h.writeError(w, 401, "sign in again using an allowed method")
 					return
 				}

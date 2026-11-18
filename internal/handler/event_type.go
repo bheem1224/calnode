@@ -709,6 +709,9 @@ func (h *Handler) ListEventTypes(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
+		if strings.HasPrefix(et.Slug, "__dynamic__") {
+			continue
+		}
 		items = append(items, *et)
 	}
 	if err := rows.Err(); err != nil {

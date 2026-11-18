@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { base } from '$app/paths';
+	import { base } from '$lib/paths';
 	import { t } from '$lib/i18n';
 	import { currentUser } from '$lib/stores';
 

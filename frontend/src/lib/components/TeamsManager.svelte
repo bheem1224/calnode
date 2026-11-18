@@ -63,6 +63,7 @@
 	}
 
 	function canManage(team: Team, action = 'teams.update'): boolean {
+        if(action==='teams.members')return Boolean(($currentUser?.is_admin||$currentUser?.is_owner)&&$currentUser?.permissions?.['teams.members']);
         const scope=$currentUser?.permissions?.[action];
         if($currentUser?.permissions) return scope==='all' || (scope==='team' && !!team.my_role) || (scope==='own' && team.my_role==='owner');
         return Boolean($currentUser?.is_admin || team.my_role==='owner');

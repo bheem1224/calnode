@@ -180,7 +180,14 @@ func TestSigninPolicySessionsAndPassword(t *testing.T) {
 	}{{"admin", "password", 200}, {"member", "password", 401}, {"member", "legacy", 401}, {"member", "google", 401}, {"member", "microsoft", 200}} {
 		t.Run(tc.id+tc.method, func(t *testing.T) {
 			session := httptest.NewRecorder()
-			if err := h.createSessionMethod(context.Background(), session, tc.id, tc.method); err != nil {
+			if tc.method == "password" && tc.id == "member" || tc.method == "legacy" {
+				token := "legacy-" + tc.id + tc.method
+				_, err := h.db.Exec(`INSERT INTO sessions(id,user_id,expires_at,auth_method)VALUES(?,?,?,?)`, token, tc.id, time.Now().UTC().Add(time.Hour).Format(time.RFC3339), tc.method)
+				if err != nil {
+					t.Fatal(err)
+				}
+				http.SetCookie(session, &http.Cookie{Name: sessionCookieName, Value: token})
+			} else if err := h.createSessionMethod(context.Background(), session, tc.id, tc.method); err != nil {
 				t.Fatal(err)
 			}
 			req := httptest.NewRequest("GET", "/v1/users/me", nil)

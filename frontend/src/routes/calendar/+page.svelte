@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { api, type CalendarStatus, type ZoomStatus, type CalendarPick, type CalendarConnection } from '$lib/api';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -156,8 +156,8 @@
 	}
 
 	onMount(() => {
-		justConnected = $page.url.searchParams.get('connected') === 'true';
-		zoomJustConnected = $page.url.searchParams.get('zoom') === 'connected';
+		justConnected = page.url.searchParams.get('connected') === 'true';
+		zoomJustConnected = page.url.searchParams.get('zoom') === 'connected';
 		load();
 		loadZoom();
 	});

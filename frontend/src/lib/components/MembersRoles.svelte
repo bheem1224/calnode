@@ -1,4 +1,7 @@
 <script lang="ts">
+ import MemberRecoveryDialog from '$lib/components/MemberRecoveryDialog.svelte';
+ let recoveryDialog=$state(false),recoveryUser=$state(''),passwordRecovery=$state(false);
+ function recoverMember(id:string,passwordMode=false){recoveryUser=id;passwordRecovery=passwordMode;recoveryDialog=true;}
 	import { onMount } from 'svelte';
  import PermissionEditor from '$lib/components/PermissionEditor.svelte';
  import OwnershipDialog from '$lib/components/OwnershipDialog.svelte';
@@ -64,12 +67,6 @@
 		confirmOpen = true;
 	}
 
-	// Password reset — keyed by user id
-	let resetTarget = $state<string | null>(null);
-	let resetPassword = $state('');
-	let resetting = $state(false);
-	let resetError = $state('');
-	let resetOk = $state(false);
 
 	// Resolve-meetings (archive) dialog
 	let resolveOpen = $state(false);
@@ -338,21 +335,6 @@
 		}
 	}
 
-	// --- Password reset ---
-	function startReset(id: string) { resetTarget = id; resetPassword = ''; resetError = ''; resetOk = false; }
-	function cancelReset() { resetTarget = null; resetPassword = ''; resetError = ''; resetOk = false; }
-
-	async function submitReset(userId: string) {
-		resetError = ''; resetOk = false;
-		if (!resetPassword) { resetError = tr('members.validation.password'); return; }
-		resetting = true;
-		try {
-			await api.post(`/v1/users/${userId}/password`, { password: resetPassword });
-			resetOk = true; resetPassword = '';
-			setTimeout(() => { resetTarget = null; resetOk = false; }, 2000);
-		} catch (e: any) { resetError = e.message; }
-		finally { resetting = false; }
-	}
 
 	async function copyInviteUrl(url: string) {
 		await navigator.clipboard.writeText(url);
@@ -624,21 +606,7 @@
 													<Button size="sm" variant="outline" class="h-7 text-xs" onclick={() => restoreMember(m)}>{$t('members.restore')}</Button>
 												{/if}
 											{:else if m.id !== $currentUser?.id}
-												{#if resetTarget === m.id}
-													<div class="flex items-center gap-1.5">
-														{#if resetOk}
-															<span class="text-xs text-green-600 font-medium">{$t('members.passwordUpdated')}</span>
-														{:else}
-															<Input type="password" bind:value={resetPassword} placeholder={$t('members.passwordPlaceholder')}
-																class="h-7 w-36 text-xs" onkeydown={(e) => e.key === 'Enter' && submitReset(m.id)} />
-															{#if resetError}<span class="text-xs text-destructive">{resetError}</span>{/if}
-															<Button size="sm" variant="outline" class="h-7 text-xs" onclick={() => submitReset(m.id)} disabled={resetting}>
-																{resetting ? '…' : $t('members.setPassword')}
-															</Button>
-															<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={cancelReset}>{$t('common.cancel')}</Button>
-														{/if}
-													</div>
-												{:else}
+
 													{#if can('members.update_role') && !m.is_owner}
  {#if m.legacy_access && !m.is_admin && !m.custom_role_id}<Button type="button" size="sm" variant="ghost" class="h-7 text-xs" onclick={()=>assignCustomRole(m,'')}>{$t('permissions.applyMember')}</Button>{/if}
 														{#if m.is_admin}
@@ -667,15 +635,15 @@
 																</Select.Content>
 															</Select.Root>
 														{/if}
-														<Button size="sm" variant="ghost" class="h-7 text-xs" disabled={!can('members.password')} onclick={() => startReset(m.id)}>{$t('members.resetPassword')}</Button>
-														<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:text-destructive" disabled={!can('members.archive')} onclick={() => startArchive(m)}>{$t('members.archive')}</Button>
+														<Button size="sm" variant="ghost" class="h-7 text-xs" disabled={!can('members.password') || (m.is_admin && !$currentUser?.is_admin && !$currentUser?.is_owner)} onclick={() => recoverMember(m.id,true)}>{$t('members.resetPassword')}</Button>
+														{#if can('members.reset_mfa') && (!m.is_admin || $currentUser?.is_admin || $currentUser?.is_owner)}<Button type="button" size="sm" variant="ghost" class="h-7 text-xs" onclick={()=>recoverMember(m.id)}>{$t('nativeAuth.recoverMember')}</Button>{/if}
+              <Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:text-destructive" disabled={!can('members.archive')} onclick={() => startArchive(m)}>{$t('members.archive')}</Button>
 													{/if}
 													{#if $currentUser?.can_impersonate && m.id !== $currentUser?.id && m.is_impersonatable !== false && (!m.is_owner || $currentUser?.is_owner)}
 														<Button size="sm" variant="outline" class="h-7 text-xs" onclick={() => impersonateUser(m)}>
 															Impersonate
 														</Button>
 													{/if}
-												{/if}
 											{/if}
 										</div>
 									</td>
@@ -785,3 +753,5 @@
 {/if}
 
 {#if can('impersonation.audit')}<SecurityAudit />{/if}
+
+<MemberRecoveryDialog bind:open={recoveryDialog} userID={recoveryUser} passwordMode={passwordRecovery} />

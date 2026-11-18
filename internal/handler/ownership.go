@@ -22,9 +22,24 @@ func (h *Handler) Reauthenticate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var in struct {
 		Password string `json:"password"`
+		Code     string `json:"code"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		h.writeError(w, 400, "invalid JSON")
+		return
+	}
+	if in.Code != "" {
+		if h.verifyReauthCode(w, r, u, in.Code) {
+			return
+		}
+		h.writeError(w, 403, "invalid or already-used authentication code")
+		return
+	}
+	if h.hasMFA(r.Context(), u.ID) {
+		if h.freshAuthFactor(w, r, u) {
+			_, _ = h.db.ExecContext(r.Context(), `UPDATE sessions SET reauthenticated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), u.SessionID)
+			h.writeJSON(w, 200, map[string]bool{"ok": true})
+		}
 		return
 	}
 	var hash, created, method string
@@ -33,7 +48,7 @@ func (h *Handler) Reauthenticate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	valid := h.passwordAllowed(r.Context(), u.ID) && hash != "" && bcrypt.CompareHashAndPassword([]byte(hash), []byte(in.Password)) == nil
-	if method == "microsoft" || method == "google" || hash == "" {
+	if method == "microsoft" || method == "google" {
 		started, err := time.Parse(time.RFC3339Nano, created)
 		valid = valid || (err == nil && time.Since(started) >= 0 && time.Since(started) < 5*time.Minute)
 	}
