@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/calnode/calnode/internal/calendar"
 	"github.com/calnode/calnode/internal/gcal"
@@ -91,6 +92,15 @@ func (h *Handler) PatchGoogleSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	p, policyErr := h.signinPolicy(r.Context())
+	if policyErr != nil {
+		h.writeError(w, 503, "sign-in policy unavailable")
+		return
+	}
+	if strings.TrimSpace(req.ClientID) == "" && !p.AdminPasswordEnabled && (!p.MicrosoftEnabled || h.getMicrosoftAuth() == nil) {
+		h.writeError(w, 400, "keep another administrator sign-in method enabled in Security & sign-in before removing Google credentials")
+		return
+	}
 	if req.ClientID == "" {
 		// Clearing credentials — wipe both columns so the encrypted secret
 		// doesn't linger in the DB after the admin removes Google OAuth.

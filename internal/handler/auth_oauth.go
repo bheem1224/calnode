@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -49,16 +50,35 @@ func (h *Handler) verifyOAuthState(w http.ResponseWriter, r *http.Request) bool 
 	return ok
 }
 
-// finishOAuthLogin resolves an OAuth-verified email to an existing, non-archived
-// user and starts a session. When allowedSignupDomains is empty, self-registration
-// is blocked and unknown emails redirect to /admin/login?error=no_account. When
-// allowedSignupDomains is configured, matching domains auto-provision a "member"
-// user and non-matching domains are rejected with 403 Forbidden.
+// finishOAuthLogin completes Google sign-in for an explicitly admitted account.
+// Microsoft supplies a verified principal, group-check revision and object ID via
+// the internal signinIdentity context before calling the shared completion path.
 func (h *Handler) finishOAuthLogin(w http.ResponseWriter, r *http.Request, email string) {
 	h.finishOAuthLoginWithJITEmail(w, r, email, email)
 }
 
 func (h *Handler) finishOAuthLoginWithJITEmail(w http.ResponseWriter, r *http.Request, email, jitEmail string) {
+	identity, _ := r.Context().Value(ctxKeySigninIdentity).(signinIdentity)
+	if identity.PolicyRevision != nil {
+		current, err := h.signinPolicy(r.Context())
+		if err != nil || current.revision != *identity.PolicyRevision {
+			h.writeError(w, 403, "sign-in policy changed; please sign in again")
+			return
+		}
+	}
+	provider := identity.Provider
+	if provider == "" {
+		provider = "google"
+	}
+	policy, policyErr := h.signinPolicy(r.Context())
+	if policyErr != nil {
+		h.writeError(w, 503, "sign-in policy unavailable")
+		return
+	}
+	if (provider == "google" && !policy.GoogleEnabled) || (provider == "microsoft" && !policy.MicrosoftEnabled) {
+		h.writeError(w, 403, "this sign-in method is disabled")
+		return
+	}
 	email = strings.ToLower(strings.TrimSpace(email))
 	jitEmail = strings.ToLower(strings.TrimSpace(jitEmail))
 	var userID string
@@ -79,7 +99,10 @@ func (h *Handler) finishOAuthLoginWithJITEmail(w http.ResponseWriter, r *http.Re
 			http.Redirect(w, r, "/admin/login?error=no_account", http.StatusFound)
 			return
 		}
-		allowed := h.getAllowedSignupDomains()
+		allowed := parseDomainsCSV(policy.ApprovedDomains)
+		if !policy.AutoProvision || provider != "microsoft" {
+			allowed = nil
+		}
 		if len(allowed) == 0 {
 			h.logger.WarnContext(r.Context(), "auth: no account for email", "email", email)
 			http.Redirect(w, r, "/admin/login?error=no_account", http.StatusFound)
@@ -97,8 +120,8 @@ func (h *Handler) finishOAuthLoginWithJITEmail(w http.ResponseWriter, r *http.Re
 			name = email
 		}
 		if _, insErr := h.db.ExecContext(r.Context(), `
-			INSERT INTO users (id, email, name, iana_timezone, is_admin, is_owner, email_login)
-			VALUES (?, ?, ?, 'UTC', 0, 0, 0)`,
+			INSERT INTO users (id, email, name, iana_timezone, is_admin, is_owner, email_login,enrollment_source)
+			VALUES (?, ?, ?, 'UTC', 0, 0, 0,'microsoft_group')`,
 			userID, email, name); insErr != nil {
 			// Handle concurrent login race if another request inserted the same email first.
 			if reErr := h.db.QueryRowContext(r.Context(),
@@ -119,7 +142,24 @@ func (h *Handler) finishOAuthLoginWithJITEmail(w http.ResponseWriter, r *http.Re
 		http.Redirect(w, r, "/admin/login?error=archived", http.StatusFound)
 		return
 	}
-	if err := h.createSession(r.Context(), w, userID); err != nil {
+	var admin bool
+	if h.db.QueryRowContext(r.Context(), `SELECT (is_admin=1 OR is_owner=1) FROM users WHERE id=?`, userID).Scan(&admin) != nil || (policy.MembersSSOOnly && !admin && provider != "microsoft") {
+		h.writeError(w, 403, "Members must sign in with Microsoft")
+		return
+	}
+	if identity.Subject != "" {
+		res, err := h.db.ExecContext(r.Context(), `UPDATE users SET microsoft_subject=? WHERE id=? AND (microsoft_subject='' OR microsoft_subject=?)`, identity.Subject, userID, identity.Subject)
+		if err != nil {
+			h.writeError(w, 403, "Microsoft identity does not match this account")
+			return
+		}
+		n, _ := res.RowsAffected()
+		if n != 1 {
+			h.writeError(w, 403, "Microsoft identity does not match this account")
+			return
+		}
+	}
+	if err := h.createSessionMethod(r.Context(), w, userID, provider); err != nil {
 		h.logger.ErrorContext(r.Context(), "auth: create session", "error", err)
 		http.Redirect(w, r, "/admin/login?error=session", http.StatusFound)
 		return
@@ -144,4 +184,15 @@ func emailDomainAllowed(email string, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+const ctxKeySigninIdentity contextKey = "signin_identity"
+
+type signinIdentity struct {
+	Provider, Subject, Email, InviteHash string
+	PolicyRevision                       *string
+}
+
+func withSigninIdentity(r *http.Request, i signinIdentity) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), ctxKeySigninIdentity, i))
 }

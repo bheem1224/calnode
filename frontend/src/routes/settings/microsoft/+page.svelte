@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+ import { base } from '$app/paths';
+ import { t } from '$lib/i18n';
 	import { api } from '$lib/api';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -146,13 +148,10 @@
 					</p>
 				</div>
 
-				<div class="space-y-1.5">
-					<Label for="ms-domains">Allowed SSO Domains (optional)</Label>
-					<Input id="ms-domains" bind:value={allowedDomains} placeholder="example.com, subsidiary.com" />
-					<p class="text-xs text-muted-foreground">
-						Comma-separated list of email domains allowed to auto-provision accounts on Microsoft SSO login.
-					</p>
-				</div>
+    <div class="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+     {$t('securitySettings.enrollmentLocation')}
+     <Button type="button" variant="link" size="sm" href={`${base}/settings/security`} class="h-auto px-1 py-0">{$t('securitySettings.title')}</Button>
+    </div>
 
 				<div class="space-y-3 rounded-md border p-4">
 					<div class="flex items-center justify-between gap-4">

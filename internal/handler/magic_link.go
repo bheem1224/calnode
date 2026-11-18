@@ -40,7 +40,7 @@ func (h *Handler) RequestMagicLink(w http.ResponseWriter, r *http.Request) {
 		var archivedAt sql.NullString
 		err := h.db.QueryRowContext(r.Context(),
 			`SELECT id, archived_at FROM users WHERE email = ?`, email).Scan(&userID, &archivedAt)
-		if err == nil && !archivedAt.Valid {
+		if err == nil && !archivedAt.Valid && h.passwordAllowed(r.Context(), userID) {
 			go h.sendMagicLink(context.WithoutCancel(r.Context()), userID, email)
 		}
 	}
@@ -113,12 +113,12 @@ func (h *Handler) VerifyMagicLink(w http.ResponseWriter, r *http.Request) {
 	var archivedAt sql.NullString
 	if err := h.db.QueryRowContext(r.Context(),
 		`SELECT u.id, u.archived_at FROM magic_link_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?`,
-		tokenHash).Scan(&userID, &archivedAt); err != nil || archivedAt.Valid {
+		tokenHash).Scan(&userID, &archivedAt); err != nil || archivedAt.Valid || !h.passwordAllowed(r.Context(), userID) {
 		fail()
 		return
 	}
 
-	if err := h.createSession(r.Context(), w, userID); err != nil {
+	if err := h.createSessionMethod(r.Context(), w, userID, "magic_link"); err != nil {
 		h.logger.ErrorContext(r.Context(), "magic link: create session", "error", err)
 		fail()
 		return

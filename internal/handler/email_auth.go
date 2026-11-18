@@ -72,6 +72,10 @@ func (h *Handler) LoginEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.passwordAllowed(r.Context(), userID) {
+		h.writeError(w, 401, "invalid email or password")
+		return
+	}
 	if err := h.createSession(r.Context(), w, userID); err != nil {
 		h.logger.ErrorContext(r.Context(), "email login: create session", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -85,6 +89,10 @@ func (h *Handler) LoginEmail(w http.ResponseWriter, r *http.Request) {
 // user's own password. Requires email_login = 1 and the current password.
 func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
+	if !h.passwordAllowed(r.Context(), user.ID) {
+		h.writeError(w, 403, "password sign-in is disabled for this account")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var req struct {
 		CurrentPassword string `json:"current_password"`
@@ -196,6 +204,10 @@ func (h *Handler) AdminSetPassword(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "admin set password: db query", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !h.passwordAllowed(r.Context(), targetID) {
+		h.writeError(w, 403, "password sign-in is disabled for this account")
 		return
 	}
 	if targetIsOwner != 0 {

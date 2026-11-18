@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { base } from '$app/paths';
+	import { t } from '$lib/i18n';
 	import { currentUser } from '$lib/stores';
 
 	let query = $state('');
@@ -12,7 +13,8 @@
 		adminOnly?: boolean;
 	}
 
-	const cards: SettingCard[] = [
+	const cards: SettingCard[] = $derived([
+ {section:"Instance Settings",title:$t("securitySettings.title"),description:$t("securitySettings.subtitle"),href:`${base}/settings/security`,adminOnly:true},
 		{
 			section: 'Personal Account',
 			title: 'Profile',
@@ -108,12 +110,12 @@
 			href: `${base}/settings/members`,
 			adminOnly: true,
 		},
-	];
+	]);
 
 	const visibleCards = $derived.by(() => {
 		const q = query.trim().toLowerCase();
 		return cards.filter((c) => {
-			if (c.adminOnly && !$currentUser?.permissions?.[c.href.endsWith('/members')?'members.read':c.href.endsWith('/branding')?'branding.read':'settings.read']) return false;
+			if (c.adminOnly && !$currentUser?.permissions?.[c.href.endsWith('/security')?'settings.security':c.href.endsWith('/members')?'members.read':c.href.endsWith('/branding')?'branding.read':'settings.read']) return false;
 			if (!q) return true;
 			return (
 				c.title.toLowerCase().includes(q) ||

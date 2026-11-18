@@ -45,7 +45,7 @@ func (h *Handler) RequestPasswordReset(w http.ResponseWriter, r *http.Request) {
 		err := h.db.QueryRowContext(r.Context(),
 			`SELECT id, archived_at, email_login FROM users WHERE email = ?`, email).
 			Scan(&userID, &archivedAt, &emailLogin)
-		if err == nil && !archivedAt.Valid && emailLogin != 0 {
+		if err == nil && !archivedAt.Valid && emailLogin != 0 && h.passwordAllowed(r.Context(), userID) {
 			go h.sendPasswordReset(context.WithoutCancel(r.Context()), userID, email)
 		}
 	}
@@ -138,7 +138,7 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	// The token was emailed to this address, so saying *why* it can't be used leaks
 	// nothing — but an archived or email-login-disabled account must not gain access.
-	if archivedAt.Valid || emailLogin == 0 {
+	if archivedAt.Valid || emailLogin == 0 || !h.passwordAllowed(r.Context(), userID) {
 		h.writeError(w, http.StatusForbidden, "password reset is not available for this account")
 		return
 	}

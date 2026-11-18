@@ -257,23 +257,38 @@ func (h *Handler) GetInvite(w http.ResponseWriter, r *http.Request) {
 	tokenHash := hashInviteToken(token)
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	var id, email string
+	var id, email, role string
 	err := h.db.QueryRowContext(r.Context(), `
-		SELECT id, email FROM invite_tokens
+		SELECT id, email,role FROM invite_tokens
 		WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`,
-		tokenHash, now).Scan(&id, &email)
+		tokenHash, now).Scan(&id, &email, &role)
 	if err != nil {
 		h.writeError(w, http.StatusNotFound, "invite not found or expired")
 		return
 	}
-	h.writeJSON(w, http.StatusOK, map[string]any{"id": id, "email": email})
+	p, err := h.signinPolicy(r.Context())
+	if err != nil {
+		h.writeError(w, 503, "sign-in policy unavailable")
+		return
+	}
+	local := (!p.MembersSSOOnly && role != "admin") || (role == "admin" && p.AdminPasswordEnabled)
+	h.writeJSON(w, http.StatusOK, map[string]any{"id": id, "email": email, "password_allowed": local, "microsoft_available": p.MicrosoftEnabled && h.getMicrosoftAuth() != nil})
 }
 
 // ClaimInvite handles POST /v1/invites/{token}/claim — public. Creates the user
 // account from a valid invite token.
 func (h *Handler) ClaimInvite(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
+	identity, sso := r.Context().Value(ctxKeySigninIdentity).(signinIdentity)
 	tokenHash := hashInviteToken(token)
+	if sso {
+		tokenHash = identity.InviteHash
+	}
+	policy, policyErr := h.signinPolicy(r.Context())
+	if policyErr != nil {
+		h.writeError(w, 503, "sign-in policy unavailable")
+		return
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
@@ -282,16 +297,19 @@ func (h *Handler) ClaimInvite(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 		Timezone string `json:"timezone"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if sso {
+		req.Name = identity.Email
+		req.Timezone = "UTC"
+	} else if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" || req.Password == "" {
+	if !sso && (req.Name == "" || req.Password == "") {
 		h.writeError(w, http.StatusBadRequest, "name and password are required")
 		return
 	}
-	if msg := validatePassword(req.Password); msg != "" {
+	if msg := validatePassword(req.Password); !sso && msg != "" {
 		h.writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -316,6 +334,14 @@ func (h *Handler) ClaimInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if sso && (!policy.MicrosoftEnabled || identity.Provider != "microsoft" || !strings.EqualFold(identity.Email, email) || identity.Subject == "") {
+		h.writeError(w, 403, "sign in with the Microsoft account this invitation was sent to")
+		return
+	}
+	if !sso && ((role != "admin" && policy.MembersSSOOnly) || (role == "admin" && !policy.AdminPasswordEnabled)) {
+		h.writeError(w, 403, "accept this invitation using Microsoft sign-in")
+		return
+	}
 	issuerGrants, grantErr := access.Load(r.Context(), tx, issuer)
 	if role == "admin" && customRoleID != "" {
 		h.writeError(w, 400, "admin invitations cannot also assign a custom role")
@@ -340,7 +366,14 @@ func (h *Handler) ClaimInvite(w http.ResponseWriter, r *http.Request) {
 	if role == "admin" {
 		isAdmin = 1
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	var hash []byte
+	emailLogin := 0
+	method := "microsoft"
+	if !sso {
+		emailLogin = 1
+		method = "password"
+		hash, err = bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	}
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "claim invite: bcrypt", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -349,9 +382,9 @@ func (h *Handler) ClaimInvite(w http.ResponseWriter, r *http.Request) {
 
 	userID := uid.New()
 	if _, err := tx.ExecContext(r.Context(), `
-		INSERT INTO users (id, email, name, iana_timezone, is_admin, email_login, password_hash,custom_role_id)
-		VALUES (?, ?, ?, ?, ?, 1, ?,NULLIF(?,''))`,
-		userID, email, req.Name, req.Timezone, isAdmin, string(hash), customRoleID); err != nil {
+		INSERT INTO users (id, email, name, iana_timezone, is_admin, email_login, password_hash,custom_role_id,enrollment_source,microsoft_subject)
+		VALUES (?, ?, ?, ?, ?, ?, ?,NULLIF(?,''),'invite',?)`,
+		userID, email, req.Name, req.Timezone, isAdmin, emailLogin, string(hash), customRoleID, identity.Subject); err != nil {
 		h.logger.ErrorContext(r.Context(), "claim invite: insert user", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -370,13 +403,17 @@ func (h *Handler) ClaimInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.createSession(r.Context(), w, userID); err != nil {
+	if err := h.createSessionMethod(r.Context(), w, userID, method); err != nil {
 		h.logger.ErrorContext(r.Context(), "claim invite: create session", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
 	h.securityAudit(r.Context(), issuer, "invite.claim", userID, map[string]string{"role": role})
+	if sso {
+		http.Redirect(w, r, "/admin", http.StatusFound)
+		return
+	}
 	h.writeJSON(w, http.StatusCreated, map[string]any{
 		"user_id": userID,
 		"email":   email,

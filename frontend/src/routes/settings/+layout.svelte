@@ -12,6 +12,7 @@
 		{ section: 'Personal Account', href: `${base}/settings/profile`, label: $t('settings.nav.profile') },
 		{ section: 'Personal Account', href: `${base}/settings/notifications`, label: $t('settings.nav.notifications') },
 		{ section: 'Team Settings', href: `${base}/settings/teams`, label: 'Teams & Routing' },
+		{ section: 'Instance Settings', href: `${base}/settings/security`, label: $t('securitySettings.title'), adminOnly: true },
 		{ section: 'Instance Settings', href: `${base}/settings/branding`, label: $t('settings.nav.branding'), adminOnly: true },
 		{ section: 'Instance Settings', href: `${base}/settings/email`, label: 'Email & RSVP', adminOnly: true },
 		{ section: 'Instance Settings', href: `${base}/settings/google`, label: $t('settings.nav.google'), adminOnly: true },
@@ -25,7 +26,7 @@
 		{ section: 'Instance Settings', href: `${base}/settings/members`, label: 'Members & Roles', adminOnly: true },
 	]);
 
-	const visibleNavItems = $derived(navItems.filter((item) => !item.adminOnly || !!$currentUser?.permissions?.[item.href.endsWith('/members')?'members.read':item.href.endsWith('/branding')?'branding.read':'settings.read']));
+	const visibleNavItems = $derived(navItems.filter((item) => !item.adminOnly || !!$currentUser?.permissions?.[item.href.endsWith('/security')?'settings.security':item.href.endsWith('/members')?'members.read':item.href.endsWith('/branding')?'branding.read':'settings.read']));
 
 	function isActive(href: string, exact?: boolean): boolean {
 		const path = $page.url.pathname.replace(/\/+$/, '');

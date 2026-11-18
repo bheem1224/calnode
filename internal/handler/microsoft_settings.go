@@ -134,6 +134,19 @@ func (h *Handler) PutMicrosoftSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	p, policyErr := h.signinPolicy(r.Context())
+	if policyErr != nil {
+		h.writeError(w, 503, "sign-in policy unavailable")
+		return
+	}
+	if (p.MembersSSOOnly || p.AutoProvision || p.RequiredGroupID != "") && (strings.TrimSpace(req.ClientID) == "" || strings.TrimSpace(req.TenantID) == "" || isMultiTenantMicrosoftAuthority("/"+req.TenantID+"/")) {
+		h.writeError(w, 400, "update Security & sign-in before removing the Microsoft tenant configuration")
+		return
+	}
+	if strings.TrimSpace(req.ClientID) == "" && !p.AdminPasswordEnabled && (!p.GoogleEnabled || h.getGoogleAuth() == nil) {
+		h.writeError(w, 400, "keep another administrator sign-in method enabled before removing Microsoft credentials")
+		return
+	}
 	req.ClientID = strings.TrimSpace(req.ClientID)
 	req.TenantID = strings.TrimSpace(req.TenantID)
 	req.AllowedSignupDomains = strings.TrimSpace(req.AllowedSignupDomains)

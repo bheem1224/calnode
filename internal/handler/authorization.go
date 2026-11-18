@@ -29,7 +29,7 @@ var handlerPermissions = func() map[string]string {
 		"roles.read":            "ListRoles",
 		"impersonation.use":     "StartImpersonation",
 		"impersonation.audit":   "ListImpersonationLogs ListSecurityAudit",
-		"settings.security":     "TransferOwnership ClaimOwnership Reauthenticate",
+		"settings.security":     "TransferOwnership ClaimOwnership Reauthenticate GetSigninPolicy PutSigninPolicy",
 		"teams.read":            "ListTeams GetTeam",
 		"teams.create":          "CreateTeam",
 		"teams.update":          "PatchTeam",

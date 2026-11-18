@@ -487,6 +487,8 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("PATCH /v1/settings/email", settingsRL(h.RequireAuth(h.PatchEmailSettings)))
 	mux.HandleFunc("POST /v1/settings/email/test", settingsRL(h.RequireAuth(h.TestEmailConnection)))
 	mux.HandleFunc("POST /v1/settings/email/rsvp-webhook", settingsRL(h.RequireAuth(h.SetupRSVPWebhook)))
+	mux.HandleFunc("GET /v1/settings/security", h.RequireAuth(h.GetSigninPolicy))
+	mux.HandleFunc("PUT /v1/settings/security", settingsRL(h.RequireAuth(h.PutSigninPolicy)))
 	mux.HandleFunc("GET /v1/settings/google", h.RequireAuth(h.GetGoogleSettings))
 	mux.HandleFunc("PATCH /v1/settings/google", settingsRL(h.RequireAuth(h.PatchGoogleSettings)))
 	mux.HandleFunc("GET /v1/settings/microsoft", h.RequireAuth(h.GetMicrosoftSettings))

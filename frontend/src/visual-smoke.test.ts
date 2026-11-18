@@ -9,6 +9,7 @@ import EmailTemplateModal from '$lib/components/event-types/EmailTemplateModal.s
 import BookingPreviewCard from '$lib/components/event-types/BookingPreviewCard.svelte';
 import QuickLinkPalette from '$lib/components/QuickLinkPalette.svelte';
 import { api } from '$lib/api';
+import SecuritySettings from './routes/settings/security/+page.svelte';
 
 // Resolve a CSS value (e.g. `var(--primary)`) to the browser's computed color
 // string, so comparisons are exact and color-space-agnostic (same engine, same
@@ -173,4 +174,29 @@ describe('timezone options', () => {
 		}
 		expect(kolkata!.label).toContain('UTC+05:30');
 	});
+});
+
+
+describe('security settings', () => {
+ test.each(['light', 'dark'])('keeps %s policy controls compact and labelled', async (mode) => {
+  const wasDark=document.documentElement.classList.contains('dark');
+  document.documentElement.classList.toggle('dark',mode==='dark');
+  vi.spyOn(api,'get').mockResolvedValue({policy:{google_enabled:false,microsoft_enabled:true,members_sso_only:true,admin_password_enabled:true,auto_provision:true,approved_domains:'company.com',required_group_id:'11111111-1111-4111-8111-111111111111'},google_configured:true,microsoft_configured:true});
+  try {
+   const {container}=await render(SecuritySettings);
+   await expect.poll(()=>container.querySelectorAll('[role="switch"]').length).toBe(5);
+   const content=container.firstElementChild as HTMLElement;
+   expect(content.getBoundingClientRect().width).toBeLessThanOrEqual(672);
+   expect(content.scrollWidth).toBeLessThanOrEqual(content.clientWidth);
+   const group=container.querySelector<HTMLInputElement>('#security-group')!;
+   expect(group.value).toContain('11111111');
+   expect(container.querySelector('label[for="members-sso"]')).not.toBeNull();
+   const save=[...container.querySelectorAll('button')].find(b=>b.textContent?.includes('Review & save'))!;
+   save.click();
+   await expect.poll(()=>document.querySelector('[role="dialog"]')).not.toBeNull();
+   const dialog=document.querySelector<HTMLElement>('[role="dialog"]')!;
+   expect(dialog.scrollWidth).toBeLessThanOrEqual(dialog.clientWidth);
+   expect(dialog.querySelector('input[autocomplete="current-password"]')).not.toBeNull();
+  } finally {document.documentElement.classList.toggle('dark',wasDark);}
+ });
 });

@@ -43,6 +43,10 @@ func (h *Handler) LoginGoogle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Google OAuth not configured — set GOOGLE_CLIENT_ID", http.StatusServiceUnavailable)
 		return
 	}
+	if !h.signinEnabled(r.Context(), "google") {
+		h.writeError(w, 403, "Google sign-in is disabled; calendar connections are unaffected")
+		return
+	}
 	state, err := h.newOAuthState(w)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "auth: generate state", "error", err)
@@ -61,6 +65,10 @@ func (h *Handler) CallbackGoogle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.signinEnabled(r.Context(), "google") {
+		h.writeError(w, 403, "Google sign-in is disabled")
+		return
+	}
 	// Verify CSRF state (cookie must match the URL param) and consume it.
 	if !h.verifyOAuthState(w, r) {
 		http.Redirect(w, r, "/admin/login?error=state", http.StatusFound)

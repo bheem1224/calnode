@@ -28,7 +28,7 @@ func TestFinishOAuthLogin_allowedSignupDomainsJITProvisioning(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/v1/auth/microsoft/callback", nil)
 		rec := httptest.NewRecorder()
 
-		h.finishOAuthLogin(rec, req, "newuser@example.com")
+		h.finishOAuthLogin(rec, withSigninIdentity(req, signinIdentity{Provider: "microsoft"}), "newuser@example.com")
 		if rec.Code != http.StatusFound {
 			t.Fatalf("status = %d; want 302", rec.Code)
 		}
@@ -43,7 +43,7 @@ func TestFinishOAuthLogin_allowedSignupDomainsJITProvisioning(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, "/v1/auth/microsoft/callback", nil)
 		rec := httptest.NewRecorder()
-		h.finishOAuthLogin(rec, req, "Member@example.com")
+		h.finishOAuthLogin(rec, withSigninIdentity(req, signinIdentity{Provider: "microsoft"}), "Member@example.com")
 
 		if rec.Code != http.StatusFound {
 			t.Fatalf("status = %d; want 302", rec.Code)
@@ -62,7 +62,7 @@ func TestFinishOAuthLogin_allowedSignupDomainsJITProvisioning(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, "/v1/auth/microsoft/callback", nil)
 		rec := httptest.NewRecorder()
-		h.finishOAuthLogin(rec, req, "Member@example.com")
+		h.finishOAuthLogin(rec, withSigninIdentity(req, signinIdentity{Provider: "microsoft"}), "Member@example.com")
 
 		if rec.Code != http.StatusFound {
 			t.Fatalf("status = %d; want 302 — body: %s", rec.Code, rec.Body.String())
@@ -104,7 +104,7 @@ func TestFinishOAuthLogin_allowedSignupDomainsJITProvisioning(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, "/v1/auth/microsoft/callback", nil)
 		rec := httptest.NewRecorder()
-		h.finishOAuthLogin(rec, req, "intruder@gmail.com")
+		h.finishOAuthLogin(rec, withSigninIdentity(req, signinIdentity{Provider: "microsoft"}), "intruder@gmail.com")
 
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d; want 403", rec.Code)

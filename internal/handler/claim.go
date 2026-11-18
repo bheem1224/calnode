@@ -24,20 +24,23 @@ func (h *Handler) AuthStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	providers := []string{}
-	if h.getGoogleAuth() != nil {
+	if h.getGoogleAuth() != nil && h.signinEnabled(r.Context(), "google") {
 		providers = append(providers, "google")
 	}
-	if h.getMicrosoftAuth() != nil {
+	if h.getMicrosoftAuth() != nil && h.signinEnabled(r.Context(), "microsoft") {
 		providers = append(providers, "microsoft")
 	}
 
-	// Best-effort status flag: on query error emailLoginCount simply stays 0 (treated
-	// as "no email-login users yet"), which is a safe default for this UI hint.
+	p, err := h.signinPolicy(r.Context())
+	if err != nil {
+		h.writeError(w, 503, "sign-in policy unavailable")
+		return
+	}
 	var emailLoginCount int
-	//nolint:errcheck
-	// #nosec G104
-	h.db.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM users WHERE email_login = 1`).Scan(&emailLoginCount)
+	if err = h.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM users WHERE email_login=1 AND archived_at IS NULL AND (((is_admin=1 OR is_owner=1) AND ?=1) OR (is_admin=0 AND is_owner=0 AND ?=0))`, p.AdminPasswordEnabled, p.MembersSSOOnly).Scan(&emailLoginCount); err != nil {
+		h.writeError(w, 503, "database unavailable")
+		return
+	}
 
 	resp := map[string]any{
 		"claimed":         userCount > 0,

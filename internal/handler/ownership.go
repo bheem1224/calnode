@@ -27,15 +27,15 @@ func (h *Handler) Reauthenticate(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, 400, "invalid JSON")
 		return
 	}
-	var hash, created string
-	if h.db.QueryRowContext(r.Context(), `SELECT COALESCE(u.password_hash,''),s.created_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=? AND u.archived_at IS NULL`, u.SessionID).Scan(&hash, &created) != nil {
+	var hash, created, method string
+	if h.db.QueryRowContext(r.Context(), `SELECT COALESCE(u.password_hash,''),s.created_at,s.auth_method FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=? AND u.archived_at IS NULL`, u.SessionID).Scan(&hash, &created, &method) != nil {
 		h.writeError(w, 401, "session expired")
 		return
 	}
-	valid := hash != "" && bcrypt.CompareHashAndPassword([]byte(hash), []byte(in.Password)) == nil
-	if hash == "" {
+	valid := h.passwordAllowed(r.Context(), u.ID) && hash != "" && bcrypt.CompareHashAndPassword([]byte(hash), []byte(in.Password)) == nil
+	if method == "microsoft" || method == "google" || hash == "" {
 		started, err := time.Parse(time.RFC3339Nano, created)
-		valid = err == nil && time.Since(started) >= 0 && time.Since(started) < 5*time.Minute
+		valid = valid || (err == nil && time.Since(started) >= 0 && time.Since(started) < 5*time.Minute)
 	}
 	if !valid {
 		h.writeError(w, 403, "verify your password, or sign in again with your identity provider before continuing")

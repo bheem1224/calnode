@@ -504,10 +504,16 @@ func (h *Handler) sessionUser(r *http.Request) (userID, email string, ok bool) {
 		return "", "", false
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	var method string
+	var admin bool
 	err = h.db.QueryRowContext(r.Context(), `
-		SELECT u.id, u.email FROM sessions s JOIN users u ON u.id = s.user_id
-		WHERE s.id = ? AND s.expires_at > ? AND u.archived_at IS NULL`, c.Value, now).Scan(&userID, &email)
+		SELECT u.id, u.email,s.auth_method,(u.is_admin=1 OR u.is_owner=1) FROM sessions s JOIN users u ON u.id = s.user_id
+		WHERE s.id = ? AND s.expires_at > ? AND u.archived_at IS NULL`, c.Value, now).Scan(&userID, &email, &method, &admin)
 	if err != nil {
+		return "", "", false
+	}
+	p, err := h.signinPolicy(r.Context())
+	if err != nil || !policyAllowsSession(p, method, admin) {
 		return "", "", false
 	}
 	return userID, email, true
