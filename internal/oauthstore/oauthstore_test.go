@@ -106,3 +106,22 @@ func TestSavingTokenSource_innerErrorPropagates(t *testing.T) {
 		t.Errorf("err = %v; want %v", err, wantErr)
 	}
 }
+
+func TestSavingTokenSourceRetriesPersistence(t *testing.T) {
+	attempts := 0
+	s := SavingTokenSource{Inner: &fakeTokenSource{tok: &oauth2.Token{AccessToken: "refreshed"}}, Save: func(context.Context, *oauth2.Token) error {
+		attempts++
+		if attempts == 1 {
+			return errors.New("temporary database failure")
+		}
+		return nil
+	}}
+	for i := 0; i < 3; i++ {
+		if _, err := s.Token(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if attempts != 2 {
+		t.Fatalf("save attempts=%d, want failed save then successful retry", attempts)
+	}
+}

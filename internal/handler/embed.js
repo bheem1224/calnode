@@ -657,6 +657,7 @@
       var errBox = el('p', { class: 'form-error' });
       var cta = el('button', { class: 'btn-primary', type: 'submit', text: t(this.i18n, 'confirm_booking') });
       form.appendChild(errBox); form.appendChild(cta);
+      globalThis.CalnodePhoneInput.mount(form,this.locale);
       form.addEventListener('submit', function (e) {
         e.preventDefault();
         errBox.textContent = '';

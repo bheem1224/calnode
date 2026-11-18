@@ -1066,3 +1066,22 @@ html.dark .confirmation-details p, html.dark .confirm-view .confirmation-details
   .card.is-confirm:not(.is-success) .right-col { padding: 1.25rem 1rem; }
   .card.is-success .right-col { padding: 1.5rem; flex: 0 0 auto; }
 }
+
+/* Shared international phone control, including the widget's shadow root. */
+.phone-control{position:relative;display:flex;align-items:stretch;gap:6px;min-width:0}
+.phone-control>input{min-width:0;flex:1;width:0!important}
+.phone-country{flex:none;border:1px solid #d1d5db;border-radius:8px;padding:0 10px;background:#f1f3f5;color:#111827;font:inherit;cursor:pointer}
+.phone-country-panel{position:absolute;z-index:50;top:calc(100% + 6px);left:0;width:min(360px,100%);padding:8px;background:#fff;color:#111827;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 10px 30px #0002}
+.phone-country-panel[hidden]{display:none}
+.phone-country-panel input{width:100%;box-sizing:border-box;margin-bottom:6px}
+.phone-country-options{max-height:230px;overflow:auto;display:grid;gap:2px}
+.phone-country-options button{width:100%;border:0;text-align:left;border-radius:6px;background:transparent;color:inherit;font:inherit;padding:8px;cursor:pointer}
+.phone-country-options button:hover,.phone-country-options button:focus-visible{background:#f1f3f5;outline:2px solid #a1a1aa}
+html.dark .phone-country, :host-context(.dark) .phone-country{background:#22242a;border-color:#32353f;color:#f4f4f5}
+html.dark .phone-country-panel,:host-context(.dark) .phone-country-panel{background:#141518;border-color:#32353f;color:#f4f4f5}
+html.dark .phone-country-options button:hover,:host-context(.dark) .phone-country-options button:hover{background:#22242a}
+
+html.dark .phone-country-options button:focus-visible,:host-context(.dark) .phone-country-options button:focus-visible{background:#22242a}
+.phone-country,.phone-country-options button{transition:background-color 180ms cubic-bezier(.2,0,0,1),transform 180ms cubic-bezier(.2,0,0,1)}
+.phone-country:active,.phone-country-options button:active{transform:scale(.985)}
+@media(prefers-reduced-motion:reduce){.phone-country,.phone-country-options button{transition:none}}

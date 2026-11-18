@@ -5,6 +5,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import { api, type EventType, type SingleUseLink } from '$lib/api';
   import { t } from '$lib/i18n';
+  import { currentUser } from '$lib/stores';
   import { toast } from 'svelte-sonner';
   import OfferCustomTimes from '$lib/components/OfferCustomTimes.svelte';
   import DynamicLinkDialog from '$lib/components/DynamicLinkDialog.svelte';
@@ -16,6 +17,11 @@
     let i = 0; for (const c of text.toLowerCase()) if (c === search[i]) i++;
     return i === search.length;
   }
+  const quickActions=$derived([
+    {id:'ooo',permission:'availability.update',url:'/admin/availability?ooo=new',keywords:'ooo out of office away'},
+    {id:'bookings',permission:'bookings.read',url:'/admin/bookings',keywords:'meetings attendees join'},
+    {id:'availability',permission:'availability.read',url:'/admin/availability',keywords:'working hours schedule'}
+  ].filter(action=>(!$currentUser?.permissions||!!$currentUser.permissions[action.permission])&&matches(`${$t(`quickLink.actions.${action.id}`)} ${action.keywords}`,query.trim().toLowerCase())));
   const visible = $derived(items.filter(x => matches(`${x.name} ${x.slug}`, query.trim().toLowerCase())));
   $effect(() => { if (open) { query = ''; selected = 0; error = ''; api.get<{items: EventType[]}>('/v1/event-types').then(r => items = r.items.filter(x => x.is_active && !x.archived)).catch(() => error = $t('quickLink.loadError')); } });
   async function copy(item: EventType, once = false) {
@@ -26,7 +32,8 @@
     } catch { toast.error($t('quickLink.copyError')); } finally { busy = false; }
   }
   function keys(e: KeyboardEvent) {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); selected = Math.max(0, Math.min(visible.length - 1, selected + (e.key === 'ArrowDown' ? 1 : -1))); }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); selected = Math.max(0, Math.min((visible.length || quickActions.length) - 1, selected + (e.key === 'ArrowDown' ? 1 : -1))); }
+    if(e.key==='Enter' && !visible.length && quickActions[selected]){e.preventDefault();open=false;window.location.assign(quickActions[selected].url);return;}
     if (e.key === 'Enter' && visible[selected]) { e.preventDefault(); void copy(visible[selected], e.shiftKey); }
   }
 </script>
@@ -36,9 +43,10 @@
   <Dialog.Content class="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-y-auto sm:max-w-xl">
     <Dialog.Header><Dialog.Title>{$t('quickLink.title')}</Dialog.Title><Dialog.Description>{$t('quickLink.description')}</Dialog.Description></Dialog.Header>
     <Input aria-label={$t('quickLink.search')} placeholder={$t('quickLink.search')} bind:value={query} oninput={() => selected = 0} onkeydown={keys} />
+    {#if quickActions.length}<div class="flex flex-wrap gap-2">{#each quickActions as action}<Button type="button" variant="outline" size="sm" onclick={()=>{open=false;window.location.assign(action.url);}}>{$t(`quickLink.actions.${action.id}`)}</Button>{/each}</div>{/if}
     <Button type="button" variant="outline" class="justify-start" onclick={() => { open = false; dynamicOpen = true; }}>{$t('dynamicLink.title')}</Button>
     <div class="max-h-80 space-y-1 overflow-y-auto">
-      {#if error}<p class="text-sm text-destructive">{error}</p>{:else if visible.length === 0}<p class="p-3 text-sm text-muted-foreground">{$t('quickLink.empty')}</p>{/if}
+      {#if error}<p class="text-sm text-destructive">{error}</p>{:else if visible.length === 0 && !quickActions.length}<p class="p-3 text-sm text-muted-foreground">{$t('quickLink.empty')}</p>{/if}
       {#each visible as item, i (item.id)}
         <div class="flex flex-wrap items-center gap-2 rounded-md p-2 {selected === i ? 'bg-muted' : ''}">
           <div class="min-w-0 flex-1 basis-32"><p class="truncate text-sm font-medium">{item.name}</p><p class="truncate text-xs text-muted-foreground">/{item.slug}</p></div>

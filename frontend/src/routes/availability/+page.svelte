@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
+ import {replaceState} from '$app/navigation';
 	import { api, type User, type AvailabilityRule, type AvailabilityOverride, type AvailabilitySchedule, type OOOEntry } from '$lib/api';
 	import { prefs, prefsFromUser, fmtDate, weekDays } from '$lib/prefs';
 	import { t, tr, localeTag } from '$lib/i18n';
@@ -653,6 +654,8 @@
 		oooRedirectUserId = '';
 		oooModalOpen = true;
 	}
+
+ $effect(()=>{if($page.url.searchParams.get('ooo')==='new'){openCreateOOO();const url=new URL($page.url);url.searchParams.delete('ooo');replaceState(url,$page.state);}});
 
 	function openEditOOO(entry: OOOEntry) {
 		oooEditingId = entry.id;

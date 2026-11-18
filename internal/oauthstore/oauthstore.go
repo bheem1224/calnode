@@ -35,11 +35,14 @@ func (s *SavingTokenSource) Token() (*oauth2.Token, error) {
 		return nil, err
 	}
 	if tok.AccessToken != s.last {
-		s.last = tok.AccessToken
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := s.Save(ctx, tok); err != nil {
-			s.Logger.Error(s.LogMsg, "error", err, "user_id", s.UserID)
+			if s.Logger != nil {
+				s.Logger.Error(s.LogMsg, "error", err, "user_id", s.UserID)
+			}
+		} else {
+			s.last = tok.AccessToken
 		}
 	}
 	return tok, nil

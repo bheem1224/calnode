@@ -2046,7 +2046,12 @@
 		"once": "Lien à usage unique",
 		"copied": "Lien copié",
 		"loadError": "Impossible de charger les types d’événement",
-		"copyError": "Impossible de créer ou copier le lien"
+		"copyError": "Impossible de créer ou copier le lien",
+		"actions": {
+			"ooo": "Définir une absence",
+			"bookings": "Trouver une réservation à venir",
+			"availability": "Modifier mes disponibilités"
+		}
 	},
 	"customTimes": {
 		"title": "Proposer des horaires",
@@ -2232,7 +2237,12 @@
 		"presets": {
 			"assistant": "Assistant de planification",
 			"reporting": "Rapports en lecture seule",
-			"invitations": "Automatisation des invitations"
+			"invitations": "Automatisation des invitations",
+			"admin": "Admin",
+			"member": "Membre",
+			"analyst": "Analyste de réunions IA",
+			"coordinator": "Coordinateur de planification IA",
+			"concierge": "Concierge de liens IA"
 		},
 		"clear": "Effacer la sélection",
 		"search": "Rechercher des permissions",
@@ -2265,6 +2275,8 @@
 		"account": "Compte",
 		"myAccount": "Mon compte",
 		"legacyMember": "Accès hérité",
-		"applyMember": "Appliquer les droits Membre"
+		"applyMember": "Appliquer les droits Membre",
+		"startFrom": "Partir d’un modèle",
+		"count": "Autorisations : {count}"
 	}
 }

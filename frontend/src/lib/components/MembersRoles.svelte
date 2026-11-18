@@ -743,7 +743,7 @@
 					<div class="flex flex-wrap items-center justify-between gap-3 p-4">
 						<div class="min-w-0 space-y-1"><div class="flex flex-wrap items-center gap-2"><span class="font-medium text-sm">{r.name}</span>{#if r.is_system}<Badge variant="secondary">{$t('roles.builtIn')}</Badge>{/if}</div>
 							{#if r.description}<p class="text-sm text-muted-foreground">{r.description}</p>{/if}
-							<div class="flex flex-wrap gap-1">{#each Object.entries(r.permissions||{}).slice(0,5) as [id,scope]}<Badge variant="outline">{$t(`permissions.groups.${id.split('.')[0]}`)}: {$t(`permissions.labels.${id}`)} · {$t(`permissions.scope.${scope}`)}</Badge>{/each}{#if Object.keys(r.permissions||{}).length>5}<Badge variant="secondary">+{Object.keys(r.permissions).length-5}</Badge>{/if}{#if !r.is_impersonatable}<Badge variant="outline">{$t('roles.protected')}</Badge>{/if}</div>
+							<p class="text-xs text-muted-foreground">{$t('permissions.count',{count:Object.keys(r.permissions||{}).length})}</p>
 						</div>
 						{#if !r.is_system && can('roles.manage')}<div class="flex items-center gap-1"><Button type="button" size="sm" variant="ghost" onclick={() => startEditRole(r)}>{$t('roles.edit')}</Button><Button type="button" size="sm" variant="ghost" class="text-destructive" onclick={() => openConfirm({ title: tr('roles.deleteTitle'), description: tr('roles.deleteDescription', { name: r.name }), confirmText: tr('roles.delete'), action: () => deleteCustomRole(r.id) })}>{$t('roles.delete')}</Button></div>{/if}
 					</div>

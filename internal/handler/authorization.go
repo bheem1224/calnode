@@ -225,7 +225,7 @@ func (h *Handler) securityAudit(ctx context.Context, actor, action, target strin
 }
 func (h *Handler) GetPermissionCatalog(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
-	h.writeJSON(w, 200, map[string]any{"items": access.Catalog, "permissions": u.Permissions, "delegable": access.Delegable(u.Permissions)})
+	h.writeJSON(w, 200, map[string]any{"items": access.Catalog, "presets": map[string]access.Grants{"admin": access.Full(), "member": access.Member(false)}, "permissions": u.Permissions, "delegable": access.Delegable(u.Permissions)})
 }
 func (h *Handler) ListSecurityAudit(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.QueryContext(r.Context(), `SELECT actor_user_id,action,target_id,details,created_at FROM security_audit_logs ORDER BY created_at DESC LIMIT 200`)

@@ -2046,7 +2046,12 @@
 		"once": "1-Time link",
 		"copied": "Link copied",
 		"loadError": "Could not load event types",
-		"copyError": "Could not create or copy the link"
+		"copyError": "Could not create or copy the link",
+		"actions": {
+			"ooo": "Set out of office",
+			"bookings": "Find an upcoming booking",
+			"availability": "Edit my availability"
+		}
 	},
 	"customTimes": {
 		"title": "Offer custom times",
@@ -2232,7 +2237,12 @@
 		"presets": {
 			"assistant": "Scheduling assistant",
 			"reporting": "Read-only reporting",
-			"invitations": "Invitation automation"
+			"invitations": "Invitation automation",
+			"admin": "Admin",
+			"member": "Member",
+			"analyst": "AI meeting analyst",
+			"coordinator": "AI scheduling coordinator",
+			"concierge": "AI link concierge"
 		},
 		"clear": "Clear selection",
 		"search": "Search permissions",
@@ -2265,6 +2275,8 @@
 		"account": "Account",
 		"myAccount": "My account",
 		"legacyMember": "Legacy access",
-		"applyMember": "Apply Member permissions"
+		"applyMember": "Apply Member permissions",
+		"startFrom": "Start from a template",
+		"count": "Permissions: {count}"
 	}
 }

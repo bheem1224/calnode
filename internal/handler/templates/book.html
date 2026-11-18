@@ -86,6 +86,7 @@ body {
   .card, .card.has-day, .card.is-confirm { min-height: 0; border-radius: 0; box-shadow: none; }
 </style>
 {{end}}
+<script src="/phone-input.js" defer></script>
 </head>
 <body style="--booking-accent:{{.AccentColor}};--booking-accent-text:{{.AccentForeground}}">
 {{if not .Preview}}{{template "themeSwitcher"}}{{template "demoBanner" .}}{{end}}

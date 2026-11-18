@@ -12,6 +12,25 @@ import (
 //go:embed embed.js
 var embedJS []byte
 
+//go:embed assets/libphonenumber-min.js
+var phoneLibrary []byte
+
+//go:embed assets/libphonenumber-LICENSE
+var phoneLicense []byte
+
+//go:embed assets/phone-input.js
+var phoneControls []byte
+var phoneBundle = bytes.Join([][]byte{[]byte("/*! libphonenumber-js 1.13.16\n"), phoneLicense, []byte("\n*/\n(function(module,exports,define){\n"), phoneLibrary, []byte("\n}).call(globalThis,undefined,undefined,undefined);\n"), phoneControls}, nil)
+var widgetBundle = append(append(append([]byte{}, phoneBundle...), []byte("\n")...), embedJS...)
+
+var publicPhoneBundle = append(append([]byte{}, phoneBundle...), []byte("\nCalnodePhoneInput.mount(document);\n")...)
+
+func (h *Handler) PhoneInputJS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	http.ServeContent(w, r, "phone-input.js", time.Time{}, bytes.NewReader(publicPhoneBundle))
+}
+
 //go:embed templates/booking.css
 var bookingCSS []byte
 
@@ -32,7 +51,7 @@ func BookingCSSVersion() string { return bookingCSSVersion }
 // cheaply: a redeploy that changes the script ships fresh bytes, an unchanged one gets
 // a 304. Unlike a process-start Last-Modified, it doesn't churn caches on every restart.
 var embedJSVersion = func() string {
-	sum := sha256.Sum256(embedJS)
+	sum := sha256.Sum256(widgetBundle)
 	return `"` + hex.EncodeToString(sum[:])[:16] + `"`
 }()
 
@@ -66,5 +85,5 @@ func (h *Handler) EmbedJS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", embedJSVersion)
 	w.Header().Set("Cache-Control", "public, max-age=300, must-revalidate")
 	w.Header().Set("Access-Control-Allow-Origin", "*") // the script itself is public
-	http.ServeContent(w, r, "embed.js", time.Time{}, bytes.NewReader(embedJS))
+	http.ServeContent(w, r, "embed.js", time.Time{}, bytes.NewReader(widgetBundle))
 }

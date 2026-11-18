@@ -612,6 +612,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	// Public booking page
 	mux.HandleFunc("GET /embed.js", h.EmbedJS)
 	mux.HandleFunc("GET /booking.css", h.BookingCSS)
+	mux.HandleFunc("GET /phone-input.js", h.PhoneInputJS)
 	mux.HandleFunc("GET /book/{slug}", h.BookPage)
 	mux.HandleFunc("GET /t/{token}", h.SingleUseBookPage)
 	mux.HandleFunc("GET /u/{handle}", func(w http.ResponseWriter, r *http.Request) {

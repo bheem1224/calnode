@@ -10,6 +10,8 @@
   let { value = $bindable({}), delegated = false, scrollable = true }: { value: PermissionGrant; delegated?: boolean; scrollable?: boolean } = $props();
   let catalog = $state<PermissionDefinition[]>([]);
   let search = $state('');
+  let starting=$state('');
+  let defaults=$state<Record<string,PermissionGrant>>({});
   let error = $state('');
   const rank: Record<string,number> = { own:1, team:2, all:3 };
   const allowed = $derived(catalog.filter(p => (delegated || p.group!=='profile') && (!delegated || p.delegable) && !!$currentUser?.permissions?.[p.id]));
@@ -17,20 +19,22 @@
   function options(p: PermissionDefinition) { return p.scopes.filter(s => rank[s] <= rank[$currentUser?.permissions?.[p.id] || '']); }
   function set(id: string, scope: string) { const next = {...value}; if(scope === 'none') delete next[id]; else next[id] = scope as 'own'|'team'|'all'; value = next; }
   function preset(kind: string) {
-    const ids = kind === 'assistant' ? ['event_types.read','availability.read','bookings.read','bookings.create','bookings.reschedule','mcp.connect','mcp.manage'] : kind === 'reporting' ? ['event_types.read','bookings.read'] : ['members.invite_member'];
+    const templates:Record<string,string[]>={assistant:['event_types.read','availability.read','bookings.read','bookings.create','bookings.reschedule','mcp.connect','mcp.manage'],reporting:['event_types.read','bookings.read'],invitations:['members.invite_member'],analyst:['bookings.read','notes.read','transcripts.read','mcp.connect','mcp.manage'],coordinator:['event_types.read','availability.read','bookings.read','bookings.create','bookings.reschedule','bookings.cancel','mcp.connect','mcp.manage'],concierge:['event_types.read','event_types.links','mcp.connect','mcp.manage']};
     const next: PermissionGrant = {};
-    for (const p of allowed) if (ids.includes(p.id)) next[p.id] = options(p)[0] as 'own'|'team'|'all';
+    for (const p of allowed) {
+      const scope=defaults[kind]?.[p.id];
+      if(scope)next[p.id]=(options(p).includes(scope)?scope:options(p).at(-1)) as 'own'|'team'|'all';
+      else if(templates[kind]?.includes(p.id))next[p.id]=options(p)[0] as 'own'|'team'|'all';
+    }
     value = next;
   }
-  onMount(async () => { try {catalog = (await api.get<{items:PermissionDefinition[]}>('/v1/permissions')).items ?? [];} catch {error = $t('permissions.loadError');} });
+  onMount(async () => { try {const result=await api.get<{items:PermissionDefinition[];presets?:Record<string,PermissionGrant>}>('/v1/permissions');catalog=result.items??[];defaults=result.presets??{};} catch {error = $t('permissions.loadError');} });
 </script>
 
 <div class="space-y-4">
-  <div class="flex flex-wrap gap-2">
-    <Button type="button" variant="outline" size="sm" onclick={() => preset('assistant')}>{$t('permissions.presets.assistant')}</Button>
-    <Button type="button" variant="outline" size="sm" onclick={() => preset('reporting')}>{$t('permissions.presets.reporting')}</Button>
-    <Button type="button" variant="outline" size="sm" onclick={() => preset('invitations')}>{$t('permissions.presets.invitations')}</Button>
-    <Button type="button" variant="ghost" size="sm" onclick={() => value = {}}>{$t('permissions.clear')}</Button>
+  <div class="flex flex-wrap items-center gap-2">
+    <Select.Root type="single" bind:value={starting} onValueChange={preset}><Select.Trigger aria-label={$t('permissions.startFrom')} class="w-64 rounded-lg">{starting ? $t(`permissions.presets.${starting}`) : $t('permissions.startFrom')}</Select.Trigger><Select.Content>{#each ['member','admin','assistant','reporting','invitations','analyst','coordinator','concierge'] as kind}<Select.Item value={kind}>{$t(`permissions.presets.${kind}`)}</Select.Item>{/each}</Select.Content></Select.Root>
+    <Button type="button" variant="ghost" size="sm" onclick={() => {value={};starting='';}}>{$t('permissions.clear')}</Button>
   </div>
   <p class="text-xs leading-relaxed text-muted-foreground">{$t(delegated ? 'permissions.credentialHint' : 'permissions.roleHint')}</p>
   <Input type="search" bind:value={search} placeholder={$t('permissions.search')} aria-label={$t('permissions.search')} />

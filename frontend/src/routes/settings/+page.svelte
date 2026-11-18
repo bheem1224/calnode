@@ -29,7 +29,7 @@
 			section: 'Team Settings',
 			title: 'Teams & Routing',
 			description: 'Manage team members, team heads, routing priority, and team booking pages.',
-			href: `${base}/teams`,
+			href: `${base}/settings/teams`,
 		},
 		{
 			section: 'Instance Settings',

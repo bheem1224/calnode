@@ -18,8 +18,8 @@ describe('scoped credential controls', () => {
    { id:'webhooks.create',group:'webhooks',scopes:['own'],delegable:true }
   ]});
   await render(PermissionEditor,{props:{value:{},delegated:true}});
-  await expect.poll(()=>document.querySelectorAll('[role="combobox"]').length).toBe(1);
-  const trigger=document.querySelector<HTMLButtonElement>('[role="combobox"]')!;trigger.click();
+  await expect.poll(()=>document.querySelectorAll('[aria-labelledby^="permission-"]').length).toBe(1);
+  const trigger=document.querySelector<HTMLButtonElement>('[aria-labelledby^="permission-"]')!;trigger.click();
   await expect.poll(()=>document.querySelectorAll('[role="option"]').length).toBe(2);
   expect(document.body.textContent).not.toContain('Team resources');
  });

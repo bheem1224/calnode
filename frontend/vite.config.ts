@@ -25,6 +25,7 @@ export default defineConfig({
 			'/u': apiProxy,
 			'/team': apiProxy,
 			'/booking.css': apiProxy,
+            '/phone-input.js': apiProxy,
 			'/embed.js': apiProxy
 		}
 	}

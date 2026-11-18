@@ -196,3 +196,25 @@ func TestFreeBusy_rejectsIncompleteCalendarResponse(t *testing.T) {
 		})
 	}
 }
+
+func TestFreeBusyFallsBackToReadableEvents(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/freeBusy" {
+			w.Write([]byte(`{"calendars":{"primary":{"errors":[{"reason":"notFound"}]}}}`))
+			return
+		}
+		if r.URL.Query().Get("singleEvents") != "true" {
+			t.Error("recurring events were not expanded")
+		}
+		w.Write([]byte(`{"kind":"calendar#events","items":[{"start":{"dateTime":"2026-11-20T10:00:00Z"},"end":{"dateTime":"2026-11-20T11:00:00Z"}},{"transparency":"transparent","start":{"dateTime":"2026-11-20T12:00:00Z"},"end":{"dateTime":"2026-11-20T13:00:00Z"}}]}`))
+	}))
+	defer srv.Close()
+	c := newTestClient(t)
+	c.apiBase = srv.URL
+	saveAndConnectClient(t, c, "user-1", "primary", "token")
+	intervals, err := c.FreeBusy(context.Background(), "user-1", time.Now(), time.Now().Add(time.Hour))
+	if err != nil || len(intervals) != 1 {
+		t.Fatalf("intervals=%v err=%v", intervals, err)
+	}
+}

@@ -231,7 +231,7 @@ func (h *Handler) previewCSP(r *http.Request, slug string) string {
 	origin := (&url.URL{Scheme: scheme, Host: r.Host}).String()
 	// A preview can only connect to its read-only slots endpoint. Even a future
 	// accidental fetch to /v1/bookings, verification, payment, or chat is blocked.
-	return "default-src 'none'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src " + origin + "/v1/event-types/" + url.PathEscape(slug) + "/preview/slots; form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
+	return "default-src 'none'; script-src 'unsafe-inline' " + origin + "/phone-input.js; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src " + origin + "/v1/event-types/" + url.PathEscape(slug) + "/preview/slots; form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
 }
 
 func (p *bookingPreview) configJSON(slug string) template.JS {

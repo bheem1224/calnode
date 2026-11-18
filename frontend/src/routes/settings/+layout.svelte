@@ -11,7 +11,7 @@
 		{ section: '', href: `${base}/settings`, label: 'Overview', exact: true },
 		{ section: 'Personal Account', href: `${base}/settings/profile`, label: $t('settings.nav.profile') },
 		{ section: 'Personal Account', href: `${base}/settings/notifications`, label: $t('settings.nav.notifications') },
-		{ section: 'Team Settings', href: `${base}/teams`, label: 'Teams & Routing' },
+		{ section: 'Team Settings', href: `${base}/settings/teams`, label: 'Teams & Routing' },
 		{ section: 'Instance Settings', href: `${base}/settings/branding`, label: $t('settings.nav.branding'), adminOnly: true },
 		{ section: 'Instance Settings', href: `${base}/settings/email`, label: 'Email & RSVP', adminOnly: true },
 		{ section: 'Instance Settings', href: `${base}/settings/google`, label: $t('settings.nav.google'), adminOnly: true },
