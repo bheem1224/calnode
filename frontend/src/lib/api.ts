@@ -1,6 +1,7 @@
 export type PermissionGrant = Record<string, 'own' | 'team' | 'all'>;
 export type PermissionDefinition = { id:string; group:string; scopes:string[]; delegable:boolean };
 export type User = {
+ public_base_url?: string;
 	permissions?: PermissionGrant;
 	can_claim_ownership?: boolean;
 	booking_accent: string;

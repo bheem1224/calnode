@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/booking"
 )
 
@@ -53,7 +54,7 @@ func (h *Handler) RescheduleBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Return 404 for unauthorized access to avoid leaking booking IDs.
-	if hostID != user.ID {
+	if !access.BookingAllowed(r.Context(), h.db, user.ID, user.Permissions["bookings.reschedule"], id) {
 		h.writeError(w, http.StatusNotFound, "booking not found")
 		return
 	}
@@ -82,7 +83,7 @@ func (h *Handler) RescheduleBooking(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	newEnd := newStart.Add(time.Duration(durMins) * time.Minute)
+	newEnd := booking.RescheduledEnd(previousStart, previousEnd, newStart, durMins)
 
 	if err := h.validateRescheduleTime(r.Context(), id, etID, hostID, newStart, newEnd); err != nil {
 		if errors.Is(err, errSlotUnavailable) {

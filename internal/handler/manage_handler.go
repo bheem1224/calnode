@@ -273,11 +273,7 @@ func (h *Handler) RescheduleByToken(w http.ResponseWriter, r *http.Request) {
 
 	previousStart := b.StartAt
 	previousEnd := b.EndAt
-	length := b.EndAt.Sub(b.StartAt)
-	if length <= 0 {
-		length = time.Duration(durMins) * time.Minute
-	}
-	newEnd := newStart.Add(length)
+	newEnd := booking.RescheduledEnd(b.StartAt, b.EndAt, newStart, durMins)
 
 	if err := h.validateRescheduleTime(r.Context(), b.ID, b.EventTypeID, b.HostID, newStart, newEnd); err != nil {
 		if errors.Is(err, errSlotUnavailable) {

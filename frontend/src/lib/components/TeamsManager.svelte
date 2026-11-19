@@ -163,14 +163,6 @@
 		}
 	}
 
-	async function savePriority(teamId: string, userId: string, value: number) {
-		try {
-			await api.patch(`/v1/teams/${teamId}/members/${userId}`, { routing_priority: Number(value) });
-		} catch (e: any) {
-			toast.error(e.message || tr('common.failed'));
-			await refreshTeam(teamId);
-		}
-	}
 
 	async function saveRole(teamId: string, userId: string, role: 'owner' | 'member') {
 		try {
@@ -305,7 +297,6 @@
 									<tr class="border-b">
 										<th class="pb-2 text-left text-xs font-medium text-muted-foreground">{$t('teams.members.column')}</th>
 										<th class="pb-2 text-left text-xs font-medium text-muted-foreground">Role</th>
-										<th class="pb-2 text-left text-xs font-medium text-muted-foreground">{$t('teams.members.routingPriority')}</th>
 										<th class="pb-2"></th>
 									</tr>
 								</thead>
@@ -341,15 +332,6 @@
 												{:else}
 													<span class="text-xs text-muted-foreground">{m.role === 'owner' ? 'Team Head' : 'Member'}</span>
 												{/if}
-											</td>
-											<td class="py-2">
-												<Input
-													type="number"
-													value={m.routing_priority}
-													disabled={!canManage(team,'teams.members')}
-													class="h-7 w-20 text-xs"
-													onchange={(e) => savePriority(team.id, m.id, +(e.currentTarget as HTMLInputElement).value)}
-												/>
 											</td>
 											<td class="py-2 text-right">
 												{#if canManage(team,'teams.members')}
@@ -392,7 +374,6 @@
 								{/if}
 							</div>
 						{/if}
-						<p class="mt-2 text-xs text-muted-foreground">{$t('teams.routingHint')}</p>
 
 						{#if canManage(team) && profileEdits[team.id]}
 							<div class="mt-5 border-t pt-4">

@@ -102,3 +102,36 @@ func TestBookPage_selectPlaceholderIsTranslated(t *testing.T) {
 			"Body contains 'Choose an option': %v", strings.Contains(body, "Choose an option"))
 	}
 }
+
+// Exercise each renderer branch: a 200 alone does not catch a template that stops
+// streaming half way through a radio/checkbox option range.
+func TestBookPageEveryQuestionTypeRendersCompleteDocument(t *testing.T) {
+	for _, kind := range []string{"text", "number", "phone", "address", "url", "multiple_emails", "checkbox", "select", "radio_group", "checkbox_group", "multiselect"} {
+		t.Run(kind, func(t *testing.T) {
+			h, key, _ := setupWorkspace(t)
+			slug, _ := seedEventTypeHTTP(t, h, key)
+			addQuestion(t, h, key, slug, `{"label":"Test question","type":"`+kind+`","options":["First","Second"]}`)
+			req := httptest.NewRequest(http.MethodGet, "/book/"+slug, nil)
+			req.SetPathValue("slug", slug)
+			rec := httptest.NewRecorder()
+			h.BookPage(rec, req)
+			body := rec.Body.String()
+			if rec.Code != 200 || !strings.Contains(body, "</html>") || !strings.Contains(body, "CalnodeBookingUI.collectAnswers") {
+				t.Fatalf("%s page is incomplete: %d", kind, rec.Code)
+			}
+		})
+	}
+}
+
+func TestBookPageAllowsFirstPartyPhoneControls(t *testing.T) {
+	h, key, _ := setupWorkspace(t)
+	slug, _ := seedEventTypeHTTP(t, h, key)
+	req := httptest.NewRequest(http.MethodGet, "/book/"+slug, nil)
+	req.SetPathValue("slug", slug)
+	rec := httptest.NewRecorder()
+	h.BookPage(rec, req)
+	policy := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(policy, "script-src 'unsafe-inline' 'self'") || !strings.Contains(policy, "frame-ancestors 'none'") {
+		t.Fatalf("phone control or framing policy regressed: %s", policy)
+	}
+}

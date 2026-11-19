@@ -25,7 +25,14 @@ var bookTmplSrc string
 // book + manage pages. The standalone embed widget deliberately mirrors its helpers.
 //
 //go:embed assets/booking-logic.js
-var bookingLogicJS string
+var bookingDateLogicJS string
+
+// Both public runtimes receive the same UI controls; the widget never loads BookingLogic.
+//
+//go:embed assets/booking-ui.js
+var bookingUIJS string
+
+var bookingLogicJS = bookingUIJS + "\n" + bookingDateLogicJS
 
 // Shared chrome partials (consent/tracking/footer) are parsed first so book.html can
 // reference them via {{template "trackingHead" .}} etc. supportedLocales is registered
@@ -43,14 +50,14 @@ type bookLocationOption struct {
 }
 
 type bookQuestion struct {
-	ID              string
-	Label           string
-	QType           string
-	Options         []string
-	Required        bool
-	Identifier      string
-	Hidden          bool
-	LockIfPrefilled bool
+	ID              string   `json:"id"`
+	Label           string   `json:"label"`
+	QType           string   `json:"type"`
+	Options         []string `json:"options"`
+	Required        bool     `json:"required"`
+	Identifier      string   `json:"identifier"`
+	Hidden          bool     `json:"hidden"`
+	LockIfPrefilled bool     `json:"lock_if_prefilled"`
 }
 
 type bookingFormConfigItem struct {
@@ -60,10 +67,10 @@ type bookingFormConfigItem struct {
 }
 
 type bookFormItem struct {
-	Kind     string // "name" | "email" | "phone" | "notes" | "guests" | "question"
-	Hidden   bool
-	Required bool
-	Question *bookQuestion
+	Kind     string        `json:"kind"` // "name" | "email" | "phone" | "notes" | "guests" | "question"
+	Hidden   bool          `json:"hidden"`
+	Required bool          `json:"required"`
+	Question *bookQuestion `json:"question"`
 }
 
 func buildBookFormItems(raw string, questions []bookQuestion, phoneChoice bool) []bookFormItem {
@@ -457,6 +464,38 @@ func assistantGreeting(msgGreeting sql.NullString, loc *i18n.Locale) string {
 	return loc.T("assistant_greeting")
 }
 
+func (h *Handler) bookingQuestions(ctx context.Context, eventID string) ([]bookQuestion, error) {
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT id, label, type, COALESCE(options, '[]'), required,
+		       COALESCE(identifier, ''), hidden, lock_if_prefilled
+		FROM event_type_questions
+		WHERE event_type_id = ?
+		ORDER BY position`, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	questions := []bookQuestion{}
+	for rows.Next() {
+		var q bookQuestion
+		var options string
+		if err := rows.Scan(&q.ID, &q.Label, &q.QType, &options, &q.Required, &q.Identifier, &q.Hidden, &q.LockIfPrefilled); err != nil {
+			return nil, err
+		}
+		if json.Unmarshal([]byte(options), &q.Options) != nil || q.Options == nil {
+			q.Options = []string{}
+		}
+		questions = append(questions, q)
+	}
+	return questions, rows.Err()
+}
+
+// Booking pages load the first-party phone control. Directory pages retain their
+// existing inline-only script policy; framing protection is unchanged everywhere.
+func bookingCSP(track trackingSettings) string {
+	return strings.Replace(publicCSP(track), "script-src 'unsafe-inline'", "script-src 'unsafe-inline' 'self'", 1)
+}
+
 // PublicEventType handles GET /v1/event-types/{slug}/public — the public display
 // info a booking client (e.g. the embeddable widget) needs before rendering the
 // form: name, duration, location label, host faces, and brand. No PII, no auth;
@@ -533,11 +572,39 @@ func (h *Handler) PublicEventType(w http.ResponseWriter, r *http.Request) {
 	}
 	var additionalLocations []LocationOption
 	_ = json.Unmarshal([]byte(locOptionsRaw), &additionalLocations)
+	settings, err := scanEventType(h.db.QueryRowContext(r.Context(), selectETCols+" WHERE id=?", etID))
+	if err != nil {
+		h.writeError(w, 500, "could not load booking settings")
+		return
+	}
+	questions, err := h.bookingQuestions(r.Context(), etID)
+	if err != nil {
+		h.writeError(w, 500, "could not load booking form")
+		return
+	}
+	phoneChoice := settings.LocationType == "attendee_phone"
+	for _, option := range settings.LocationOptions {
+		phoneChoice = phoneChoice || option.Type == "attendee_phone"
+	}
+	durations := []map[string]any{}
+	seenDurations := map[int]bool{}
+	for _, minutes := range append(settings.DurationOptions, settings.DurationMinutes) {
+		if minutes <= 0 || seenDurations[minutes] {
+			continue
+		}
+		seenDurations[minutes] = true
+		durations = append(durations, map[string]any{"minutes": minutes, "label": durationLabel(minutes, loc)})
+	}
 	h.writeJSON(w, http.StatusOK, map[string]any{
-		"slug":             slug,
-		"name":             name,
-		"description":      description,
-		"duration_minutes": durMins,
+		"form_items":                 buildBookFormItems(settings.BookingFormConfig, questions, phoneChoice),
+		"allow_multiple_durations":   settings.AllowMultipleDurations,
+		"duration_options":           durations,
+		"require_email_verification": settings.RequireEmailVerification,
+		"redirect_url":               settings.RedirectURL,
+		"slug":                       slug,
+		"name":                       name,
+		"description":                description,
+		"duration_minutes":           durMins,
 		// duration_label is the translated, human form ("30 min", "1 hour", "1 hora") —
 		// the same server-computed label book.html/manage.html render, so the widget
 		// doesn't have to rebuild it from duration_minutes (it used to hardcode " min",
@@ -660,35 +727,11 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 	}
 	accentColor = accentOrDefault(accentColor)
 
-	// Load active intake questions.
-	var questions []bookQuestion
-	qRows, qErr := h.db.QueryContext(r.Context(), `
-		SELECT id, label, type, COALESCE(options, '[]'), required,
-		       COALESCE(identifier, ''), hidden, lock_if_prefilled
-		FROM event_type_questions
-		WHERE event_type_id = ?
-		ORDER BY position`, etID)
-	if qErr == nil {
-		defer qRows.Close()
-		for qRows.Next() {
-			var q bookQuestion
-			var optJSON string
-			var req, hiddenInt, lockInt int
-			if err := qRows.Scan(&q.ID, &q.Label, &q.QType, &optJSON, &req, &q.Identifier, &hiddenInt, &lockInt); err != nil {
-				h.logger.ErrorContext(r.Context(), "book page: scan question", "error", err)
-				continue
-			}
-			q.Required = req != 0
-			q.Hidden = hiddenInt != 0
-			q.LockIfPrefilled = lockInt != 0
-			if err := json.Unmarshal([]byte(optJSON), &q.Options); err != nil || q.Options == nil {
-				q.Options = []string{}
-			}
-			questions = append(questions, q)
-		}
-		if err := qRows.Err(); err != nil {
-			h.logger.ErrorContext(r.Context(), "book page: questions query", "error", err)
-		}
+	questions, qErr := h.bookingQuestions(r.Context(), etID)
+	if qErr != nil {
+		h.logger.ErrorContext(r.Context(), "book questions", "error", qErr)
+		http.Error(w, "Internal server error", 500)
+		return
 	}
 
 	if preview := prefill.Preview; preview != nil && preview.Request.Questions != nil {
@@ -857,7 +900,7 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		h.persistLangOverride(w, r)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", publicCSP(track))
+	w.Header().Set("Content-Security-Policy", bookingCSP(track))
 	w.Header().Set("X-Frame-Options", "DENY")
 	if prefill.Preview != nil {
 		w.Header().Set("Content-Security-Policy", h.previewCSP(r, slug))

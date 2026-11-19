@@ -1134,7 +1134,6 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	needsApproval := shouldRequireConfirmation(et, req.Email, startAt.UTC())
 	b, err := h.bookingSvc.Create(r.Context(), booking.CreateParams{
 		EventTypeID:   et.ID,
 		HostIDs:       candidates,
@@ -1163,7 +1162,6 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		EventTimezone:       et.OwnerTimezone,
 		SingleUseToken:      singleUseToken,
 		InviteDelivery:      et.InviteDelivery,
-		PendingApproval:     needsApproval,
 	})
 	if err != nil {
 		if errors.Is(err, booking.ErrInvalidGuests) {
@@ -2202,43 +2200,6 @@ func (h *Handler) CancelBooking(w http.ResponseWriter, r *http.Request) {
 
 	// Cancel calendar events and send cancellation emails in the background.
 	go h.cancelSideEffects(*b) // #nosec G118 -- deliberately its own context.Background(); see cancelSideEffects' doc comment
-}
-
-var freeEmailDomains = map[string]bool{
-	"gmail.com":      true,
-	"googlemail.com": true,
-	"outlook.com":    true,
-	"hotmail.com":    true,
-	"live.com":       true,
-	"msn.com":        true,
-	"yahoo.com":      true,
-	"icloud.com":     true,
-	"me.com":         true,
-	"aol.com":        true,
-	"proton.me":      true,
-	"protonmail.com": true,
-}
-
-func isFreeEmailProvider(email string) bool {
-	parts := strings.Split(strings.TrimSpace(strings.ToLower(email)), "@")
-	if len(parts) != 2 {
-		return false
-	}
-	return freeEmailDomains[parts[1]]
-}
-
-func shouldRequireConfirmation(et *bookableEventType, email string, startAt time.Time) bool {
-	if !et.RequiresConfirmation {
-		return false
-	}
-	switch et.ConfirmMode {
-	case "under_notice":
-		return startAt.Sub(bookingNow().UTC()) < time.Duration(et.ConfirmNoticeMinutes)*time.Minute
-	case "free_email":
-		return isFreeEmailProvider(email)
-	default:
-		return true
-	}
 }
 
 // ConfirmBooking handles POST /v1/bookings/{id}/confirm (admin/host).

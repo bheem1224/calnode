@@ -1468,3 +1468,24 @@ matching section in the same PR. Notable rounds:
   location validation** for every type + smart default + picker reorder, and
   **Microsoft OAuth sign-in** (`/v1/auth/microsoft/*`, identity-only). Touched §3,
   §4, §6, §10. Known constraint: Teams auto-links need a work account (§18).
+
+
+### Booking transport parity
+
+Host approval is decided transactionally by `booking.Service.Create`, so REST,
+MCP and the assistant share the policy. Every reschedule transport uses
+`booking.RescheduledEnd` to retain the actual booked duration. The public widget
+keeps its framework-free Shadow DOM design and consumes the same `form_items`
+model as the hosted page. DOM controls are shared through `booking-ui.js`;
+page-only date helpers remain in `booking-logic.js`.
+
+Priority is configured on event hosts in the event editor. The former team-level
+priority control was removed because assignment has always used event-host
+priority. Legacy `team_members.routing_priority` and `seat_limit` columns remain
+for stored-data compatibility, not as advertised routing/capacity controls. The
+retired handle-based group URLs retain their 410 responses; their unused resolver
+and slot-computation implementation has been removed.
+
+Checkout return URLs are display hints only. The confirmation endpoint requires
+an opaque checkout session bound to that event and a durable paid state written
+by the signed Stripe webhook before returning booking/calendar/manage details.

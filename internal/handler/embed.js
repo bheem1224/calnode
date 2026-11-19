@@ -91,124 +91,6 @@
     return n;
   }
 
-  // Enhance the native select without changing its values, validation or change events.
-  // Mirrored in embed.js, which is standalone and cannot use BookingLogic.
-  function enhanceLocationSelect(select) {
-    if (!select || select.hidden) return;
-    var wrapper = document.createElement('div'); wrapper.className = 'location-picker';
-    select.before(wrapper); wrapper.appendChild(select);
-    var trigger = document.createElement('button'); trigger.type = 'button'; trigger.className = 'location-trigger'; trigger.id = select.id + '-trigger';
-    trigger.setAttribute('aria-haspopup', 'listbox'); trigger.setAttribute('aria-expanded', 'false');
-    var value = document.createElement('span'); value.className = 'location-value';
-    var chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    chevron.setAttribute('viewBox', '0 0 24 24'); chevron.setAttribute('aria-hidden', 'true');
-    chevron.innerHTML = '<path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>';
-    trigger.append(value, chevron);
-    var panel = document.createElement('div'); panel.className = 'location-options'; panel.id = select.id + '-options'; panel.hidden = true;
-    panel.setAttribute('role', 'listbox'); trigger.setAttribute('aria-controls', panel.id);
-    if (panel.showPopover) panel.setAttribute('popover', 'auto');
-    var label = select.parentElement.parentElement.querySelector('label');
-    if (label) { label.htmlFor = trigger.id; label.id = select.id + '-label'; panel.setAttribute('aria-labelledby', label.id); }
-    wrapper.append(trigger, panel); select.hidden = true;
-    var items = [], outsideEvents;
-    function sync() {
-      value.textContent = select.options[select.selectedIndex]?.textContent || '';
-      trigger.classList.toggle('is-placeholder', select.value === '');
-      trigger.disabled = select.disabled;
-      items.forEach(function (item) { item.setAttribute('aria-selected', String(item.dataset.value === select.value)); });
-    }
-    function close(focus) {
-      if (panel.hidePopover && panel.matches(':popover-open')) panel.hidePopover();
-      panel.hidden = true; trigger.setAttribute('aria-expanded', 'false');
-      if (outsideEvents) outsideEvents.abort();
-      if (focus) trigger.focus();
-    }
-    Array.from(select.options).forEach(function (option) {
-      if (option.value === '' || option.disabled) return;
-      var item = document.createElement('div'); item.className = 'location-option'; item.tabIndex = -1;
-      item.setAttribute('role', 'option'); item.dataset.value = option.value; item.textContent = option.textContent;
-      item.addEventListener('click', function () { select.value = option.value; select.dispatchEvent(new Event('change', { bubbles: true })); close(true); });
-      items.push(item); panel.appendChild(item);
-    });
-    function open(last) {
-      sync(); panel.hidden = false; trigger.setAttribute('aria-expanded', 'true');
-      if (panel.showPopover) {
-        var rect = trigger.getBoundingClientRect(), height = Math.min(240, items.length * 40 + 12);
-        panel.style.width = Math.min(rect.width, innerWidth - 16) + 'px';
-        panel.style.left = Math.max(8, Math.min(rect.left, innerWidth - rect.width - 8)) + 'px';
-        panel.style.top = (rect.bottom + height + 8 <= innerHeight ? rect.bottom + 6 : Math.max(8, rect.top - height - 6)) + 'px';
-        panel.showPopover();
-        outsideEvents = new AbortController();
-        window.addEventListener('resize', function () { close(false); }, { signal: outsideEvents.signal });
-        window.addEventListener('scroll', function (event) { if (!event.composedPath().includes(panel)) close(false); }, { capture: true, signal: outsideEvents.signal });
-      }
-      (items.find(function (item) { return item.dataset.value === select.value; }) || items[last ? items.length - 1 : 0])?.focus();
-    }
-    trigger.addEventListener('click', function () { if (panel.hidden) open(false); else close(false); });
-    trigger.addEventListener('keydown', function (event) {
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); open(event.key === 'ArrowUp'); }
-    });
-    var typed = '', typedAt = 0;
-    panel.addEventListener('keydown', function (event) {
-      var index = items.indexOf(select.getRootNode().activeElement), next;
-      if (event.key === 'Escape') { event.preventDefault(); close(true); return; }
-      if (event.key === 'Tab') { close(true); return; }
-      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); items[index]?.click(); return; }
-      if (event.key === 'ArrowDown') next = (index + 1) % items.length;
-      if (event.key === 'ArrowUp') next = (index - 1 + items.length) % items.length;
-      if (event.key === 'Home') next = 0;
-      if (event.key === 'End') next = items.length - 1;
-      if (next !== undefined) { event.preventDefault(); items[next]?.focus(); }
-      else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
-        typed = (Date.now() - typedAt < 700 ? typed : '') + event.key.toLocaleLowerCase(); typedAt = Date.now();
-        items.find(function (item) { return item.textContent.toLocaleLowerCase().startsWith(typed); })?.focus();
-      }
-    });
-    panel.addEventListener('toggle', function (event) { if (event.newState === 'closed' && !panel.hidden) close(false); });
-    wrapper.addEventListener('focusout', function (event) { if (!wrapper.contains(event.relatedTarget)) close(false); });
-    select.addEventListener('invalid', function (event) { event.preventDefault(); trigger.setAttribute('aria-invalid', 'true'); trigger.focus(); });
-    select.addEventListener('change', function () { trigger.removeAttribute('aria-invalid'); sync(); });
-    sync();
-  }
-
-  // Inline brand marks avoid third-party image requests on private booking pages.
-  function calendarActionIcon(kind) {
-    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('focusable', 'false'); svg.classList.add('calendar-action-icon');
-    if (kind === 'google') svg.innerHTML = '<path fill="#fff" d="M5 5h14v14H5z"/><path fill="#4285F4" d="M5 5h14v4H5zM5 9h4v10H5z"/><path fill="#34A853" d="M9 19h10v-4h4v4l-4 4H9z"/><path fill="#FBBC04" d="M19 9h4v10h-4z"/><path fill="#EA4335" d="M19 19h4l-4 4z"/><path fill="#188038" d="M5 19h4v4H5z"/><path fill="#1967D2" d="M1 5a4 4 0 0 1 4-4h14v4H5v14H1z"/><path fill="#FBBC04" d="M19 1a4 4 0 0 1 4 4v4h-4z"/><path fill="#4285F4" d="M10 10h4v1.4l-1.5 1 1.5 1V16h-4v-1.4h2.5v-.8l-1.5-1v-.9l1.5-1H10zm5 0h2v6h-1.4v-4.6H15z"/>';
-    else if (kind === 'outlook') svg.innerHTML = '<path fill="#0364B8" d="M9 2h13v15H9z"/><path fill="#0078D4" d="M9 2h6v5H9zm6 5h7v5h-7z"/><path fill="#28A8EA" d="M15 2h7v5h-7zM9 7h6v5H9z"/><path fill="#50D9FF" d="M9 12h6v5H9z"/><path fill="#0078D4" d="m8 11 7 5 8-5v10a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1z"/><path fill="#1490DF" d="m8 21 7-5 8 5z"/><rect width="13" height="16" y="4" rx="1.5" fill="#0A5CAB"/><ellipse cx="6.5" cy="12" rx="3.1" ry="4.2" fill="#fff"/><ellipse cx="6.5" cy="12" rx="1.6" ry="2.6" fill="#0A5CAB"/>';
-    else { svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.7'); svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round'); svg.innerHTML = '<path d="M12 3v12m-4-4 4 4 4-4M5 16v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4"/>'; }
-    return svg;
-  }
-
-  function calendarActions(data, labels) {
-    var root = document.createElement('div'); root.className = 'calendar-actions';
-    var title = document.createElement('p'); title.textContent = labels.title; root.appendChild(title);
-    var row = document.createElement('div'); row.className = 'calendar-actions-row'; root.appendChild(row);
-    var start = new Date(data.start), end = new Date(data.end);
-    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return root;
-    var stamp = function (d) { return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, ''); };
-    var details = [data.description, data.manageURL].filter(Boolean).join('\n\n');
-    function link(label, kind, base, params) {
-      var action = document.createElement(labels.disabled ? 'button' : 'a');
-      if (labels.disabled) { action.type = 'button'; action.disabled = true; }
-      else { action.href = base + new URLSearchParams(params); action.target = '_blank'; action.rel = 'noopener noreferrer'; }
-      action.appendChild(calendarActionIcon(kind)); action.appendChild(document.createTextNode(label)); row.appendChild(action);
-    }
-    link('Google Calendar', 'google', 'https://calendar.google.com/calendar/render?', { action: 'TEMPLATE', text: data.title, dates: stamp(start) + '/' + stamp(end), details: details, location: data.location || '' });
-    link('Outlook', 'outlook', 'https://outlook.office.com/calendar/0/action/compose?', { rru: 'addevent', subject: data.title, startdt: start.toISOString(), enddt: end.toISOString(), body: details, location: data.location || '' });
-    var download = document.createElement('button'); download.type = 'button'; download.disabled = !!labels.disabled;
-    download.appendChild(calendarActionIcon('download')); download.appendChild(document.createTextNode(labels.download));
-    download.addEventListener('click', function () {
-      var escape = function (v) { return String(v || '').replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;'); };
-      // Fold at 75 UTF-8 octets, without splitting a Unicode code point.
-      function fold(line) { var out = '', bytes = 0; for (var c of line) { var n = new TextEncoder().encode(c).length; if (bytes + n > 75) { out += '\r\n '; bytes = 1; } out += c; bytes += n; } return out; }
-      var lines = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Calnode//Booking//EN','BEGIN:VEVENT','UID:' + escape(data.uid || stamp(start) + '@calnode'),'DTSTAMP:' + stamp(new Date()),'DTSTART:' + stamp(start),'DTEND:' + stamp(end),'SUMMARY:' + escape(data.title),'DESCRIPTION:' + escape(details),'LOCATION:' + escape(data.location),'END:VEVENT','END:VCALENDAR'];
-      var url = URL.createObjectURL(new Blob([lines.map(fold).join('\r\n') + '\r\n'], {type: 'text/calendar;charset=utf-8'}));
-      var a = document.createElement('a'); a.href = url; a.download = 'booking.ics'; a.click(); setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-    }); row.appendChild(download); return root;
-  }
-
   function dayKey(iso) { return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso)); }
   // locale is the resolved server-side locale (this.locale), not the browser's own
   // ([]) — see the matching fix/comment in book.html / internal-docs/i18n-plan.md.
@@ -352,17 +234,17 @@
         var publicPath = '/v1/event-types/' + encodeURIComponent(this.slug) + '/public' + (lang ? '?lang=' + encodeURIComponent(lang) : '');
         var r = await Promise.all([
           api(publicPath),
-          api('/v1/event-types/' + encodeURIComponent(this.slug) + '/questions'),
           ensurePhoneInput(),
         ]);
         this.info = r[0];
+        this.selectedDuration=this.info.duration_minutes;
+        this.verification={token:'',email:''};
         this.style.setProperty('--booking-accent', this.info.booking_accent || '#111827');
         this.style.setProperty('--booking-accent-text', this.info.booking_accent_foreground || '#ffffff');
         this.locale = this.info.locale || '';
         this.i18n = this.info.i18n || {};
         this.dow = dowLabels(this.locale);
         this.setAttribute('lang', this.locale || 'en'); // accessibility: announce the resolved language
-        this.questions = (r[1] && r[1].items) || [];
         this.ensureAsstDrawer();
         await this.loadMonth();
         this.render();
@@ -379,7 +261,7 @@
       var today = new Date(); today.setHours(0, 0, 0, 0);
       var from = first < today ? today : first;
       try {
-        var r = await api('/v1/event-types/' + encodeURIComponent(this.slug) + '/slots?from=' + ymd(from) + '&to=' + ymd(last) + '&tz=' + encodeURIComponent(TZ));
+        var r = await api('/v1/event-types/' + encodeURIComponent(this.slug) + '/slots?from=' + ymd(from) + '&to=' + ymd(last) + '&tz=' + encodeURIComponent(TZ) + '&duration=' + encodeURIComponent(this.selectedDuration));
         // `taken` is present only when the event type opts into showing booked times.
         // Tag on the way in so the renderer needs no second lookup, and so a taken entry
         // can never be mistaken for a bookable one further down.
@@ -410,6 +292,11 @@
           hm[id] = { name: m.name || '', avatar_url: av && av.charAt(0) === '/' ? BASE + av : av };
         });
       } catch (e) { this.state.slotsByDay = {}; this.state.noticeDates = []; }
+    }
+
+    durationLabel() {
+        var choice = (this.info.duration_options || []).find(option => option.minutes === this.selectedDuration);
+        return choice ? choice.label : this.info.duration_label;
     }
 
     infoPane() {
@@ -450,11 +337,19 @@
         el('div', { class: 'titlewrap' }, titleKids),
       ]);
       var meta = el('ul', { class: 'meta' }, [
-        el('li', { html: SVG_CLOCK + ' ' + esc(this.info.duration_label || (this.info.duration_minutes + ' min')) }),
+        el('li', { html: SVG_CLOCK + ' ' + esc(this.durationLabel()) }),
         this.info.location_label ? el('li', {}, [el('span', { html: SVG_PIN }), el('span', { id: 'summary-location', text: this.selectedLocationLabel() })]) : null,
         this.info.price_cents > 0 ? el('li', { html: SVG_CARD + ' ' + money(this.info.price_cents, this.info.currency) }) : null,
       ]);
       var kids = [head, meta];
+      if(this.info.allow_multiple_durations && (this.info.duration_options||[]).length>1 && this.state.view==='pick') {
+        var picker=el('div',{class:'dur-group',role:'group','aria-label':t(this.i18n,'duration_label')});
+        this.info.duration_options.forEach(option=>{
+          var button=el('button',{type:'button',class:'dur-pill'+(option.minutes===this.selectedDuration?' active':''),'aria-pressed':String(option.minutes===this.selectedDuration),text:option.label});
+          button.onclick=async()=>{this.selectedDuration=option.minutes;this.state.slot=null;await this.loadMonth();this.render();};picker.append(button);
+        });kids.push(picker);
+      }
+
       if (this.info.assistant_enabled) {
         var self = this;
         var asstLink = el('button', { class: 'asst-link', type: 'button', html: SVG_SPARK + ' ' + t(this.i18n, 'book_by_chat') + ' ' + SVG_CHEV2 });
@@ -734,126 +629,155 @@
     }
 
     formView(slot) {
-      var self = this;
-      var back = el('button', { class: 'back-btn', html: SVG_BACK + ' ' + t(this.i18n, 'back') });
-      back.addEventListener('click', function () { self.state.view = 'pick'; self.render(); });
-      var form = el('form', { novalidate: 'novalidate' });
-      var hp = el('input', { type: 'text', name: 'hp_extra', tabindex: '-1', autocomplete: 'off' });
-      form.appendChild(el('div', { 'aria-hidden': 'true', style: 'position:absolute;left:-5000px;height:0;width:0;overflow:hidden;' }, [hp]));
-
-      var locationChoices = this.info.location_options || [];
-      var locationSelect = null;
-      if (locationChoices.length > 1) {
-        locationSelect = el('select', { id: 'f-location-select', name: 'selected_location', required: 'required' }, [el('option', { value: '', text: t(this.i18n, 'choose_option') })]);
-        locationChoices.forEach(function (option, index) { locationSelect.appendChild(el('option', { value: String(index), text: option.label })); });
-        locationSelect.value = this.locationChoice == null ? '' : String(this.locationChoice);
-        locationSelect.addEventListener('change', function () {
-          self.locationChoice = locationSelect.value === '' ? null : Number(locationSelect.value);
-          var summary = self.root.querySelector('#summary-location');
-          if (summary) summary.textContent = self.selectedLocationLabel();
-          if (errBox && errBox.textContent === t(self.i18n, 'required_fields_error')) errBox.textContent = '';
-        });
-        form.appendChild(el('div', { class: 'field location-choice' }, [el('label', { for: 'f-location-select', text: t(this.i18n, 'location_label') }), locationSelect]));
-        enhanceLocationSelect(locationSelect);
-      }
-      var name = el('input', { type: 'text', required: 'required', autocomplete: 'name', placeholder: t(this.i18n, 'name_placeholder') });
-      var email = el('input', { type: 'email', required: 'required', autocomplete: 'email', placeholder: t(this.i18n, 'email_placeholder') });
-      form.appendChild(el('div', { class: 'field' }, [el('label', { text: t(this.i18n, 'name_label') }), name]));
-      form.appendChild(el('div', { class: 'field' }, [el('label', { text: t(this.i18n, 'email_label') }), email]));
-      var phone = el('input', { type: 'tel', maxlength: '40', autocomplete: 'tel', id: 'phone-call-number' });
-      if (this.info.allow_phone_call || this.info.location_type === 'attendee_phone' || locationChoices.some(function (option) { return option.type === 'attendee_phone'; })) form.appendChild(el('div', { class: 'field' }, [el('label', { for: 'phone-call-number', text: t(this.i18n, 'phone_call_number') }), phone]));
-      var qInputs = [];
-      this.questions.forEach(function (q) {
-        var inp, field;
-        if (q.type === 'checkbox') {
-          inp = el('input', { type: 'checkbox' });
-          // Native required on a checkbox means "must be ticked" — the browser blocks
-          // submit with its own prompt. This was the only branch not setting it, so a
-          // required consent box relied entirely on the server to reject it.
-          if (q.required) inp.required = true;
-          field = el('div', { class: 'field' }, [el('div', { class: 'field-checkbox' }, [inp, el('label', { html: esc(q.label) + (q.required ? ' <span class="required-star">*</span>' : '') })])]);
-        } else if (q.type === 'select') {
-          inp = el('select', {}, [el('option', { value: '', text: t(self.i18n, 'choose_option') })].concat((q.options || []).map(function (o) { return el('option', { value: o, text: o }); })));
-          if (q.required) inp.required = true;
-          field = el('div', { class: 'field' }, [el('label', { html: esc(q.label) + (q.required ? ' <span class="required-star">*</span>' : '') }), inp]);
-        } else {
-          inp = el('textarea', { rows: '3' });
-          if (q.required) inp.required = true;
-          field = el('div', { class: 'field' }, [el('label', { html: esc(q.label) + (q.required ? ' <span class="required-star">*</span>' : '') }), inp]);
+        var self = this;
+        var back = el('button', { class: 'back-btn', html: SVG_BACK + ' ' + t(this.i18n, 'back') });
+        back.addEventListener('click', function () { self.state.view = 'pick'; self.render(); });
+        var form = el('form', { novalidate: 'novalidate' });
+        var hp = el('input', { type: 'text', name: 'hp_extra', tabindex: '-1', autocomplete: 'off' });
+        form.appendChild(el('div', { 'aria-hidden': 'true', style: 'position:absolute;left:-5000px;height:0;width:0;overflow:hidden;' }, [hp]));
+        var locationChoices = this.info.location_options || [];
+        var locationSelect = null;
+        if (locationChoices.length > 1) {
+            locationSelect = el('select', { id: 'f-location-select', name: 'selected_location', required: 'required' }, [el('option', { value: '', text: t(this.i18n, 'choose_option') })]);
+            locationChoices.forEach(function (option, index) { locationSelect.appendChild(el('option', { value: String(index), text: option.label })); });
+            locationSelect.value = this.locationChoice == null ? '' : String(this.locationChoice);
+            locationSelect.addEventListener('change', function () {
+                self.locationChoice = locationSelect.value === '' ? null : Number(locationSelect.value);
+                var summary = self.root.querySelector('#summary-location');
+                if (summary)
+                    summary.textContent = self.selectedLocationLabel();
+                if (errBox && errBox.textContent === t(self.i18n, 'required_fields_error'))
+                    errBox.textContent = '';
+            });
+            form.appendChild(el('div', { class: 'field location-choice' }, [el('label', { for: 'f-location-select', text: t(this.i18n, 'location_label') }), locationSelect]));
+            CalnodeBookingUI.enhanceLocationSelect(locationSelect);
         }
-        form.appendChild(field);
-        qInputs.push({ q: q, inp: inp });
-      });
-      var errBox = el('p', { class: 'form-error' });
-      var cta = el('button', { class: 'btn-primary', type: 'submit', text: t(this.i18n, 'confirm_booking') });
-      form.appendChild(errBox); form.appendChild(cta);
-      globalThis.CalnodePhoneInput.mount(form,this.locale);
-      form.addEventListener('submit', function (e) {
-        e.preventDefault();
-        errBox.textContent = '';
-        if (locationSelect && locationSelect.value === '') { errBox.textContent = t(self.i18n, 'required_fields_error'); self.root.querySelector('#f-location-select-trigger').focus(); return; }
-        var selectedLocation = locationSelect && locationSelect.value !== '' ? locationChoices[Number(locationSelect.value)] : null;
-        var phoneAsLocation = self.info.allow_phone_call || (selectedLocation ? selectedLocation.type : self.info.location_type) === 'attendee_phone';
-        if ((selectedLocation ? selectedLocation.type : self.info.location_type) === 'attendee_phone' && !phone.value.trim()) { errBox.textContent = t(self.i18n, 'required_fields_error');phone.focus();return; }
-        cta.disabled = true; cta.textContent = t(self.i18n, 'confirming');
-        var answers = [];
-        qInputs.forEach(function (x) {
-          // Checkboxes always send an explicit yes/no, matching book.html — this used to
-          // send 'Yes' or omit the answer entirely, which both diverged from the booking
-          // page's stored value and made "declined" indistinguishable from "never asked".
-          if (x.inp.type === 'checkbox') {
-            answers.push({ question_id: x.q.id, value: x.inp.checked ? 'yes' : 'no' });
-          } else if (x.inp.value) {
-            answers.push({ question_id: x.q.id, value: x.inp.value });
-          }
+        var name = el('input', { id: 'f-name', type: 'text', required: 'required', autocomplete: 'name', placeholder: t(this.i18n, 'name_placeholder') });
+        var email = el('input', { id: 'f-email', type: 'email', required: 'required', autocomplete: 'email', placeholder: t(this.i18n, 'email_placeholder') });
+        var phone = el('input', { id: 'f-phone', type: 'tel', maxlength: '40', autocomplete: 'tel' });
+        var notes = el('textarea', { id: 'f-notes', name: 'notes', rows: '2', maxlength: '2000', placeholder: t(this.i18n, 'notes_placeholder') });
+        var guests = CalnodeBookingUI.guestControl(this.i18n);
+        var system = { name: name, email: email, phone: phone, notes: notes };
+        var labels = { name: 'name_label', email: 'email_label', phone: 'phone_label', notes: 'notes_label' };
+        (this.info.form_items || []).forEach(function (item) {
+            if (item.kind === 'question') {
+                form.append(CalnodeBookingUI.questionElement(item.question));
+                return;
+            }
+            if (item.hidden)
+                return;
+            if (item.kind === 'guests') { form.append(guests.element); return; }
+            var input = system[item.kind];
+            if (!input)
+                return;
+            input.required = !!item.required;
+            form.append(el('div', { class: 'field' }, [el('label', { for: input.id, text: t(self.i18n, labels[item.kind]) }), input]));
+            if (item.kind === 'email' && self.info.require_email_verification) {
+                form.append(el('div', { class: 'field', id: 'email-verify-box' }, [
+                    el('button', { type: 'button', class: 'btn-secondary', id: 'send-code-btn', text: t(self.i18n, 'send_verification_code') }),
+                    el('input', { type: 'text', id: 'verify-code-input', inputmode: 'numeric', maxlength: '6', autocomplete: 'one-time-code', placeholder: t(self.i18n, 'verification_code'), hidden: 'hidden' }),
+                    el('button', { type: 'button', id: 'check-code-btn', class: 'btn-secondary', text: t(self.i18n, 'verify_email'), hidden: 'hidden' }),
+                    el('p', { id: 'verify-status', role: 'status' })
+                ]));
+            }
         });
-        fetch(BASE + '/v1/bookings', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ event_type_slug: self.slug, start_at: slot.start, name: name.value.trim(), email: email.value.trim().toLowerCase(), phone: phoneAsLocation ? phone.value.trim() : "", contact_phone: phoneAsLocation ? "" : phone.value.trim(), timezone: TZ, language: self.locale, hp_extra: hp.value, selected_location: locationSelect && locationSelect.value !== '' ? { type: locationChoices[Number(locationSelect.value)].type, id: locationChoices[Number(locationSelect.value)].id } : undefined, answers: answers }),
-        }).then(function (r) {
-          return r.json().then(function (data) { return { ok: r.ok, status: r.status, data: data }; });
-        }).then(function (res) {
-          // 409 = the slot went while the form was open. Substitute our own translated
-          // copy, matching book.html/manage.html — this is the most common booking
-          // failure, and it used to surface the API's raw English message here.
-          if (res.status === 409) throw new Error(t(self.i18n, 'slot_taken_error'));
-          // Other failures: the API's message is translated server-side from the
-          // "language" field sent above (booker-reachable errors only — malformed-request
-          // messages stay English for API consumers), so showing it directly is correct.
-          if (!res.ok) throw new Error(res.data && res.data.error ? res.data.error : t(self.i18n, 'booking_failed_error'));
-          // Paid event types: the server returns a Stripe Checkout URL. Send the visitor
-          // there (top window, so it isn't trapped in the host page's frame).
-          if (res.data && res.data.checkout_url) { (window.top || window).location.href = res.data.checkout_url; return; }
-          self.booked = res.data; self.state.view = 'confirm'; self.render();
-          self.dispatchEvent(new CustomEvent('calnode:booked', { bubbles: true, composed: true, detail: res.data }));
-        }).catch(function (err) {
-          errBox.textContent = err.message || t(self.i18n, 'booking_failed_error');
-          cta.disabled = false; cta.textContent = t(self.i18n, 'confirm_booking');
+        if (this.info.require_email_verification)
+            CalnodeBookingUI.mountEmailVerification(form, { slug: this.slug, base: BASE, labels: this.i18n, state: this.verification });
+        var errBox = el('p', { class: 'form-error' });
+        var cta = el('button', { class: 'btn-primary', type: 'submit', text: t(this.i18n, 'confirm_booking') });
+        form.appendChild(errBox);
+        form.appendChild(cta);
+        CalnodeBookingUI.prefill(form,new URLSearchParams(this.getAttribute('prefill')||''));
+        globalThis.CalnodePhoneInput.mount(form, this.locale);
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            errBox.textContent = '';
+            if (locationSelect && locationSelect.value === '') {
+                errBox.textContent = t(self.i18n, 'required_fields_error');
+                self.root.querySelector('#f-location-select-trigger').focus();
+                return;
+            }
+            var selectedLocation = locationSelect && locationSelect.value !== '' ? locationChoices[Number(locationSelect.value)] : null;
+            var phoneAsLocation = self.info.allow_phone_call || (selectedLocation ? selectedLocation.type : self.info.location_type) === 'attendee_phone';
+            if ((selectedLocation ? selectedLocation.type : self.info.location_type) === 'attendee_phone' && !phone.value.trim()) {
+                errBox.textContent = t(self.i18n, 'required_fields_error');
+                phone.focus();
+                return;
+            }
+            if (!name.checkValidity() || !email.checkValidity()) {
+                form.reportValidity();
+                return;
+            }
+            var answers;
+            try {
+                answers = CalnodeBookingUI.collectAnswers(form, t(self.i18n, 'required_fields_error'));
+            }
+            catch (error) {
+                errBox.textContent = error.message;
+                return;
+            }
+            var guestList;
+            try { guestList=guests.element.isConnected?guests.values():[]; }
+            catch(error){errBox.textContent=error.message;return;}
+            cta.disabled = true;
+            cta.textContent = t(self.i18n, 'confirming');
+            fetch(BASE + '/v1/bookings', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ event_type_slug: self.slug, start_at: slot.start, name: name.value.trim(), email: email.value.trim().toLowerCase(), phone: phoneAsLocation ? phone.value.trim() : "", contact_phone: phoneAsLocation ? "" : phone.value.trim(), timezone: TZ, language: self.locale, hp_extra: hp.value, duration_minutes: self.selectedDuration, notes: notes.value.trim(), guests: guestList, verification_token: self.verification.email === email.value.trim().toLowerCase() ? self.verification.token : undefined, selected_location: locationSelect && locationSelect.value !== '' ? { type: locationChoices[Number(locationSelect.value)].type, id: locationChoices[Number(locationSelect.value)].id } : undefined, answers: answers }),
+            }).then(function (r) {
+                return r.json().then(function (data) { return { ok: r.ok, status: r.status, data: data }; });
+            }).then(function (res) {
+                // 409 = the slot went while the form was open. Substitute our own translated
+                // copy, matching book.html/manage.html — this is the most common booking
+                // failure, and it used to surface the API's raw English message here.
+                if (res.status === 409)
+                    throw new Error(t(self.i18n, 'slot_taken_error'));
+                // Other failures: the API's message is translated server-side from the
+                // "language" field sent above (booker-reachable errors only — malformed-request
+                // messages stay English for API consumers), so showing it directly is correct.
+                if (!res.ok)
+                    throw new Error(res.data && res.data.error ? res.data.error : t(self.i18n, 'booking_failed_error'));
+                // Paid event types: the server returns a Stripe Checkout URL. Send the visitor
+                // there (top window, so it isn't trapped in the host page's frame).
+                if (res.data && res.data.checkout_url) {
+                    (window.top || window).location.href = res.data.checkout_url;
+                    return;
+                }
+                self.booked = res.data;
+                self.state.view = 'confirm';
+                self.render();
+                self.dispatchEvent(new CustomEvent('calnode:booked', { bubbles: true, composed: true, detail: res.data }));
+                if (self.info.redirect_url && /^https?:\/\//i.test(self.info.redirect_url))
+                    window.location.assign(self.info.redirect_url);
+            }).catch(function (err) {
+                errBox.textContent = err.message || t(self.i18n, 'booking_failed_error');
+                cta.disabled = false;
+                cta.textContent = t(self.i18n, 'confirm_booking');
+            });
         });
-      });
-      return el('div', {}, [back, el('p', { class: 'slot-label', text: shortDay(slot.start, this.locale) + ' · ' + timeLabel(slot.start, this.locale, (this.clockOverride || clockFormat(this.i18n))) }), form]);
+        return el('div', {}, [back, el('p', { class: 'slot-label', text: shortDay(slot.start, this.locale) + ' · ' + timeLabel(slot.start, this.locale, (this.clockOverride || clockFormat(this.i18n))) }), form]);
     }
 
     confirmView(slot) {
-      var start = (this.booked && this.booked.start_at) || slot.start;
-      var end = (this.booked && this.booked.end_at) || slot.end;
-      var format = this.clockOverride || clockFormat(this.i18n);
-      return el('div', {}, [
-        el('div', { class: 'confirm-icon', html: SVG_CHECK }),
-        el('div', { class: 'confirm-view' }, [
-          el('h3', { text: t(this.i18n, 'booking_confirmed') }),
-          el('p', { class: 'sub', text: t(this.i18n, 'confirmation_email_sent') }),
-          el('div', { class: 'confirmation-details' }, [
-            el('strong', { text: this.info.name }),
-            el('p', { text: hostsLabel((this.booked && this.booked.hosts) || this.info.hosts || [], this.i18n) }),
-            el('p', { class: 'when', text: shortDay(start, this.locale) + ' · ' + timeLabel(start, this.locale, format) + (end ? ' – ' + timeLabel(end, this.locale, format) : '') }),
-            el('p', { text: TZ.replace(/_/g, ' ') }),
-            el('p', { text: (this.booked && this.booked.location_value) || this.selectedLocationLabel() || '' }),
-          ]),
-          calendarActions({ title: this.info.name, description: this.info.description, location: (this.booked && this.booked.location_value) || this.selectedLocationLabel(), start: (this.booked && this.booked.start_at) || slot.start, end: (this.booked && this.booked.end_at) || slot.end, uid: this.booked && this.booked.id, manageURL: this.booked && this.booked.manage_url }, { title: t(this.i18n, 'add_to_calendar'), download: t(this.i18n, 'download_ics') }),
-          this.booked && this.booked.manage_url ? el('a', { class: 'confirmation-manage', href: this.booked.manage_url, target: '_blank', rel: 'noopener noreferrer', text: t(this.i18n, 'reschedule') + ' / ' + t(this.i18n, 'cancel_booking') }) : null,
-        ]),
-      ]);
+        var start = (this.booked && this.booked.start_at) || slot.start;
+        var end = (this.booked && this.booked.end_at) || slot.end;
+        var format = this.clockOverride || clockFormat(this.i18n);
+        return el('div', {}, [
+            el('div', { class: 'confirm-icon', html: SVG_CHECK }),
+            el('div', { class: 'confirm-view' }, [
+                el('h3', { text: t(this.i18n, CalnodeBookingUI.pending(this.booked) ? 'booking_pending' : 'booking_confirmed') }),
+                el('p', { class: 'sub', text: t(this.i18n, CalnodeBookingUI.pending(this.booked) ? 'booking_pending_sub' : 'confirmation_email_sent') }),
+                el('div', { class: 'confirmation-details' }, [
+                    el('strong', { text: this.info.name }),
+                    el('p', { text: hostsLabel((this.booked && this.booked.hosts) || this.info.hosts || [], this.i18n) }),
+                    el('p', { class: 'when', text: shortDay(start, this.locale) + ' · ' + timeLabel(start, this.locale, format) + (end ? ' – ' + timeLabel(end, this.locale, format) : '') }),
+                    el('p', { text: TZ.replace(/_/g, ' ') }),
+                    el('p', { text: (this.booked && this.booked.location_value) || this.selectedLocationLabel() || '' }),
+                ]),
+                CalnodeBookingUI.calendarActions({ title: this.info.name, description: this.info.description, location: (this.booked && this.booked.location_value) || this.selectedLocationLabel(), start: (this.booked && this.booked.start_at) || slot.start, end: (this.booked && this.booked.end_at) || slot.end, uid: this.booked && this.booked.id, manageURL: this.booked && this.booked.manage_url }, { title: t(this.i18n, 'add_to_calendar'), download: t(this.i18n, 'download_ics'), disabled: CalnodeBookingUI.pending(this.booked) }),
+                this.booked && this.booked.manage_url ? el('a', { class: 'confirmation-manage', href: this.booked.manage_url, target: '_blank', rel: 'noopener noreferrer', text: t(this.i18n, 'reschedule') + ' / ' + t(this.i18n, 'cancel_booking') }) : null,
+            ]),
+        ]);
     }
 
     nav(delta) {

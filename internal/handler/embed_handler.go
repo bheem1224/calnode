@@ -21,7 +21,7 @@ var phoneLicense []byte
 //go:embed assets/phone-input.js
 var phoneControls []byte
 var phoneBundle = bytes.Join([][]byte{[]byte("/*! libphonenumber-js 1.13.16\n"), phoneLicense, []byte("\n*/\n(function(module,exports,define){\n"), phoneLibrary, []byte("\n}).call(globalThis,undefined,undefined,undefined);\n"), phoneControls}, nil)
-var widgetBundle = append(append(append([]byte{}, phoneBundle...), []byte("\n")...), embedJS...)
+var widgetBundle = append(append(append([]byte{}, []byte(bookingUIJS)...), []byte("\n")...), embedJS...)
 
 var publicPhoneBundle = append(append([]byte{}, phoneBundle...), []byte("\nCalnodePhoneInput.mount(document);\n")...)
 

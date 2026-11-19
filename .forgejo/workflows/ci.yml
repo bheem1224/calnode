@@ -93,6 +93,9 @@ jobs:
           test "$ready" = true
           CALNODE_AUTH_TEST_URL=http://localhost:39137 node frontend/scripts/verify-native-auth.mjs
 
+      - name: Booking feature browser matrix
+        run: CALNODE_TEST_BINARY="$RUNNER_TEMP/calnode-auth-test" node frontend/scripts/verify-booking-flows.mjs
+
       - name: Go vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
 

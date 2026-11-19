@@ -59,8 +59,11 @@ func TestDirectoryPages_headHTMLAndCSP(t *testing.T) {
 			manageReq := httptest.NewRequest(http.MethodGet, "/manage/invalid", nil)
 			manageReq.SetPathValue("token", "invalid")
 			h.ManagePage(manageRec, manageReq)
-			wantCSP := bookRec.Header().Get("Content-Security-Policy")
-			if bookRec.Code != http.StatusOK || manageRec.Code != http.StatusOK || wantCSP == "" || manageRec.Header().Get("Content-Security-Policy") != wantCSP {
+			wantCSP := manageRec.Header().Get("Content-Security-Policy")
+			// Only booking pages load the first-party phone control. All other
+			// directives, and the directory/manage baseline, remain identical.
+			bookPolicy := strings.Replace(bookRec.Header().Get("Content-Security-Policy"), "script-src 'unsafe-inline' 'self'", "script-src 'unsafe-inline'", 1)
+			if bookRec.Code != http.StatusOK || manageRec.Code != http.StatusOK || wantCSP == "" || bookPolicy != wantCSP {
 				t.Fatal("booking/manage CSP baseline missing or inconsistent")
 			}
 			if tc.strict && wantCSP != strictCSP {

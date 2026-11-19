@@ -434,8 +434,13 @@ func (h *Handler) runAssistantTool(ctx context.Context, slug, tz, lang, name, ar
 		if err != nil {
 			return "error: " + assistantBookError(err), nil
 		}
-		return fmt.Sprintf("booked successfully: id=%s start=%s", b.ID, b.StartAt.UTC().Format(time.RFC3339)),
-			&assistantBooking{ID: b.ID, StartAt: b.StartAt.UTC().Format(time.RFC3339), EndAt: b.EndAt.UTC().Format(time.RFC3339), Status: b.Status}
+		result := toBookingJSON(b)
+		message := "booked successfully"
+		if b.PendingApproval {
+			message = "booking request sent; awaiting host approval"
+		}
+		return fmt.Sprintf("%s: id=%s start=%s", message, b.ID, b.StartAt.UTC().Format(time.RFC3339)),
+			&assistantBooking{ID: b.ID, StartAt: b.StartAt.UTC().Format(time.RFC3339), EndAt: b.EndAt.UTC().Format(time.RFC3339), Status: result.Status}
 
 	default:
 		return "error: unknown tool", nil

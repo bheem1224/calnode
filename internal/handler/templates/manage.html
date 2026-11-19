@@ -618,7 +618,7 @@ body {
       const rescheduled = await r.json();
       $('success-new-time').textContent = fmtDate(pickedDate) + ' · ' + fmtTime(pickedSlot.start) + ' – ' + fmtTime(pickedSlot.end || new Date(Date.parse(pickedSlot.start) + {{.DurationMinutes}} * 60000).toISOString());
       $('success-timezone').textContent = TZ.replace(/_/g, ' ');
-      $('success-reschedule-view').querySelector('.state-page').appendChild(BookingLogic.calendarActions({ title: {{.EventTypeName}}, description: {{.EventDescription}}, location: {{.CalendarLocation}}, start: pickedSlot.start, end: pickedSlot.end || new Date(Date.parse(pickedSlot.start) + {{.DurationMinutes}} * 60000).toISOString(), uid: {{.BookingID}}, manageURL: rescheduled.manage_url || '' }, { title: t('add_to_calendar'), download: t('download_ics') }));
+      $('success-reschedule-view').querySelector('.state-page').appendChild(CalnodeBookingUI.calendarActions({ title: {{.EventTypeName}}, description: {{.EventDescription}}, location: {{.CalendarLocation}}, start: pickedSlot.start, end: pickedSlot.end || new Date(Date.parse(pickedSlot.start) + {{.DurationMinutes}} * 60000).toISOString(), uid: {{.BookingID}}, manageURL: rescheduled.manage_url || '' }, { title: t('add_to_calendar'), download: t('download_ics') }));
       showView('success-reschedule-view');
       if (window.__CALNODE_DL && typeof calnodePush === 'function') {
         calnodePush('calnode_booking_rescheduled', {

@@ -1,4 +1,5 @@
 <script lang="ts">
+ import { bookingLink, singleUseLink } from '$lib/booking-links';
   import { onMount } from "svelte";
   import { page } from "$app/state";
   import { goto, beforeNavigate } from "$app/navigation";
@@ -1124,7 +1125,7 @@
 
   let mintingOneTime = $state(false);
   async function copyPublicLink() {
-    const url = `${window.location.origin}/book/${form.slug || slug}`;
+    const url = bookingLink(form.slug || slug || "");
     try {
       await navigator.clipboard.writeText(url);
       toast.success("Booking link copied to clipboard");
@@ -1142,7 +1143,7 @@
       );
       const url = created.url?.startsWith("http")
         ? created.url
-        : `${window.location.origin}/t/${created.token}`;
+        : singleUseLink(created);
       await navigator.clipboard.writeText(url);
       toast.success("1-time link copied to clipboard");
     } catch (e: any) {

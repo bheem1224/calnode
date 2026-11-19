@@ -1,4 +1,5 @@
 <script lang="ts">
+ import { bookingLink, singleUseLink } from '$lib/booking-links';
   import * as Dialog from '$lib/components/ui/dialog';
   import { Input } from '$lib/components/ui/input';
   import { Button } from '$lib/components/ui/button';
@@ -27,7 +28,7 @@
   async function copy(item: EventType, once = false) {
     if (busy) return; busy = true;
     try {
-      const url = once ? `${window.location.origin}/t/${(await api.post<SingleUseLink>(`/v1/event-types/${item.id}/single-use-links`, {})).token}` : `${window.location.origin}/book/${item.slug}`;
+      const url = once ? singleUseLink(await api.post<SingleUseLink>(`/v1/event-types/${item.id}/single-use-links`, {})) : bookingLink(item.slug);
       await navigator.clipboard.writeText(url); toast.success($t('quickLink.copied')); open = false;
     } catch { toast.error($t('quickLink.copyError')); } finally { busy = false; }
   }

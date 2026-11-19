@@ -609,6 +609,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 
 	// Public event-type display info for the widget (name/duration/location/brand).
 	mux.HandleFunc("GET /v1/event-types/{slug}/public", cors(publicRL(h.PublicEventType)))
+	mux.HandleFunc("GET /v1/book/{slug}/checkout", publicRL(h.BookingCheckout))
 
 	// unthrottled is a CPU + API-quota abuse vector on an openly-public page.
 	slotsRL := RateLimit(slotsRPM, time.Minute)

@@ -203,7 +203,7 @@
 	async function sendTest() {
 		sendingTest = true;
 		try {
-			const res = await api.post<{ to: string }>(`/v1/event-types/${slug}/test-email`, { type: kind });
+			const res = await api.post<{ to: string }>(`/v1/event-types/${slug}/test-email`, { type: kind, draft: { mode, subject: draftSubject, body: mode === 'html' ? draftHtml : draftNote } });
 			toast.success(`Test email sent to ${res.to}`);
 		} catch (e: any) {
 			toast.error(e.message || 'Failed to send test email');

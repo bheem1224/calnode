@@ -114,3 +114,26 @@ and mobile widths, keyboard and mouse location selection, menu clipping, submitt
 No real calendar provider or email service is needed. Screenshots go to the system
 temporary directory unless `CALNODE_SCREENSHOT_DIR` is set. Unit tests additionally
 verify rescheduling preserves the choice and forged or unsafe locations are rejected.
+
+
+## Booking feature parity matrix
+
+Build the app binary after building the frontend. Set `CALNODE_TEST_BINARY` to
+that binary and run `node frontend/scripts/verify-booking-flows.mjs` from the
+repository root. The runner starts and stops its own in-memory instance and a
+loopback SMTP capture service; it never accepts a production URL. CI runs this
+after the native-authentication browser check using the same built binary.
+
+The matrix books through hosted pages and a genuinely cross-origin Shadow DOM
+widget in light/dark at desktop/mobile widths. It exercises all question types,
+hidden fields, form ordering, duration choices and locking, location selection,
+notes, guest lists, actual emailed verification codes, pending approval, calendar
+exports and redirects. Checkout UI rejects an unverified return; Go integration
+tests cover pending/paid/refunded checkout states, authorization and shared
+REST/MCP approval/rescheduling policy. Set `CALNODE_SCREENSHOT_DIR` to retain
+screenshots in a chosen directory; otherwise they go to a temporary directory.
+
+Public DOM controls live in `internal/handler/assets/booking-ui.js`: it is inlined
+into hosted/manage pages and prepended to the widget bundle. `BookingLogic` stays
+page-only; never reference it from `embed.js`. Form order and metadata come from
+Go's `buildBookFormItems`, not a separate set of widget defaults.

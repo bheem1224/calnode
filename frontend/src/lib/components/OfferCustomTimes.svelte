@@ -1,4 +1,5 @@
 <script lang="ts">
+ import { singleUseLink } from '$lib/booking-links';
   import { Calendar } from '$lib/components/ui/calendar';
   import * as Dialog from '$lib/components/ui/dialog';
   import { Button } from '$lib/components/ui/button';
@@ -28,7 +29,7 @@
   }
   async function submit() {
     if (!event || !slots.length || busy) return; busy = true;
-    try { const link = await api.post<SingleUseLink>(`/v1/event-types/${event.id}/single-use-links`, { custom_slots: slots }); await navigator.clipboard.writeText(`${window.location.origin}/t/${link.token}`); toast.success($t('customTimes.copied')); open = false; }
+    try { const link = await api.post<SingleUseLink>(`/v1/event-types/${event.id}/single-use-links`, { custom_slots: slots }); await navigator.clipboard.writeText(singleUseLink(link)); toast.success($t('customTimes.copied')); open = false; }
     catch { toast.error($t('customTimes.failed')); } finally { busy = false; }
   }
 </script>

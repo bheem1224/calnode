@@ -94,10 +94,13 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 
 	// Enforce guest controls at the shared write boundary, including token, AI and
 	// MCP callers. Rendering a hidden field is never an authorization check.
-	var formJSON string
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(booking_form_config,'') FROM event_types WHERE id=?`, p.EventTypeID).Scan(&formJSON); err != nil {
+	var formJSON, confirmMode string
+	var requiresConfirmation bool
+	var confirmNotice, before, after int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(booking_form_config,''), requires_confirmation, confirm_mode, confirm_notice_minutes, buffer_before_minutes, buffer_after_minutes FROM event_types WHERE id=?`, p.EventTypeID).Scan(&formJSON, &requiresConfirmation, &confirmMode, &confirmNotice, &before, &after); err != nil {
 		return nil, err
 	}
+	p.PendingApproval = p.PendingApproval || confirmationRequired(requiresConfirmation, confirmMode, confirmNotice, p.Organizer.Email, p.StartAt, time.Now().UTC())
 	if len(p.Guests) > 10 {
 		return nil, ErrInvalidGuests
 	}
@@ -114,10 +117,6 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 		}
 	}
 
-	var before, after int
-	if err := tx.QueryRowContext(ctx, `SELECT buffer_before_minutes,buffer_after_minutes FROM event_types WHERE id=?`, p.EventTypeID).Scan(&before, &after); err != nil {
-		return nil, err
-	}
 	checkStart := p.StartAt.UTC().Add(-time.Duration(after) * time.Minute).Format(time.RFC3339Nano)
 	checkEnd := p.EndAt.UTC().Add(time.Duration(before) * time.Minute).Format(time.RFC3339Nano)
 	// Select hosts. Round-robin picks one *free* candidate from the rotation pool

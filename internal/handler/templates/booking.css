@@ -1119,3 +1119,7 @@ html.dark .phone-country-options button:focus-visible,:host-context(.dark) .phon
 .location-option[aria-selected="true"]::after { content: '\2713'; flex-shrink: 0; }
 @keyframes booking-menu-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .location-options:not([hidden]) { animation: none; } .location-trigger, .tz-btn { transition: none; } }
+
+/* Author display rules must never override native hidden state. */
+[hidden] { display: none !important; }
+.field-choice-group { display:flex; flex-direction:column; gap:.4rem; }

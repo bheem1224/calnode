@@ -2,10 +2,14 @@ package handler
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/abuse"
 	"github.com/calnode/calnode/internal/stripe"
 )
 
@@ -187,4 +191,56 @@ func (h *Handler) refundBookingPayment(ctx context.Context, bookingID string) {
 		 WHERE id = ? AND payment_status = 'refunding'`, bookingID); err != nil {
 		h.logger.ErrorContext(ctx, "stripe: mark refunded", "error", err, "booking_id", bookingID)
 	}
+}
+
+// BookingCheckout returns confirmation only after the signed payment webhook has
+// committed it. The unguessable Stripe session ID is a read capability for this
+// one booking, not a way to trigger payment or confirmation side effects.
+func (h *Handler) BookingCheckout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	session := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	if !strings.HasPrefix(session, "cs_") || len(session) > 256 {
+		h.writeError(w, 400, "invalid checkout session")
+		return
+	}
+	var id, state string
+	err := h.db.QueryRowContext(r.Context(), `SELECT b.id,b.payment_status FROM bookings b JOIN event_types et ON et.id=b.event_type_id WHERE b.stripe_session_id=? AND et.slug=?`, session, r.PathValue("slug")).Scan(&id, &state)
+	if errors.Is(err, sql.ErrNoRows) {
+		h.writeError(w, 404, "checkout not found")
+		return
+	}
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "checkout: load booking", "error", err)
+		h.writeError(w, 500, "could not load checkout")
+		return
+	}
+	if state == "pending" {
+		h.writeJSON(w, 202, map[string]string{"status": "processing"})
+		return
+	}
+	if state != "paid" {
+		h.writeError(w, 409, "checkout is not paid")
+		return
+	}
+	b, err := h.bookingSvc.Get(r.Context(), id)
+	if err != nil {
+		h.writeError(w, 500, "could not load booking")
+		return
+	}
+	if b.Status == "cancelled" {
+		h.writeError(w, 409, "booking is cancelled")
+		return
+	}
+	// A checkout capability must not mint unlimited manage tokens on refresh.
+	if !h.takeBudget(w, r, abuse.Rule{Key: "checkout:details:" + hashAPIKey(session), Limit: 30, Window: time.Hour}) {
+		return
+	}
+	result := toBookingJSON(b)
+	token, err := h.bookingSvc.IssueManageToken(r.Context(), id)
+	if err != nil {
+		h.writeError(w, 500, "could not load manage link")
+		return
+	}
+	result.ManageURL = h.publicURL() + "/manage/" + token
+	h.writeJSON(w, 200, result)
 }

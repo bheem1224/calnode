@@ -54,6 +54,12 @@ behaviour or markup must usually be made in all three, or they drift:
   slot picking, and the **mobile step-flow** (calendar → slots → form, with Back) are
   implemented separately in each. If you change calendar *behaviour*, update all three.
 - Verify on **desktop and mobile** for each surface after touching the calendar.
+- **Shared DOM controls live in `internal/handler/assets/booking-ui.js`** as
+  `CalnodeBookingUI` (verification, answer validation, location picker, calendar actions).
+  They are bundled into the pages and widget once; do not duplicate these helpers.
+  The widget consumes `form_items` from the server's `buildBookFormItems`, including
+  field order/visibility and question types. Behavioral parity is checked by
+  `frontend/scripts/verify-booking-flows.mjs` in CI against a fresh instance + SMTP capture.
 - **Shared slot logic lives in `internal/handler/assets/booking-logic.js`** (tested with
   `node --test`): day grouping, time formatting, and the taken-slot merge. It is inlined
   into **book.html and manage.html only**, which are the two surfaces that load it.

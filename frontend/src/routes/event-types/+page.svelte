@@ -1,4 +1,5 @@
 <script lang="ts">
+ import { bookingLink, singleUseLink } from '$lib/booking-links';
 	import { onMount } from 'svelte';
 	import { api, type EventType, type Team, type SingleUseLink, type CreateSingleUseLinkPayload } from '$lib/api';
 	import { currentUser } from '$lib/stores';
@@ -176,7 +177,7 @@
 	}
 
 	function bookLink(slug: string) {
-		return `${window.location.origin}/book/${slug}`;
+		return bookingLink(slug);
 	}
 
 	// ── Single-use ephemeral links ─────────────────────────────────────────────
@@ -189,7 +190,7 @@
 
 	function resolveSingleUseUrl(link: SingleUseLink) {
 		if (link.url && link.url.startsWith('http')) return link.url;
-		return `${window.location.origin}/t/${link.token}`;
+		return singleUseLink(link);
 	}
 
 	async function copyText(text: string, msg = '1-time link copied to clipboard') {

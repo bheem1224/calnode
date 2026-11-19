@@ -270,9 +270,9 @@ body {
         {{if $.RequireEmailVerification}}
         <div class="field" id="email-verify-box">
           <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
-            <button type="button" id="send-code-btn" class="btn-secondary" style="width:auto;padding:0.45rem 0.75rem;font-size:0.82rem">Send verification code</button>
-            <input id="verify-code-input" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit code" style="width:120px;display:none">
-            <button type="button" id="check-code-btn" class="btn-secondary" style="width:auto;padding:0.45rem 0.75rem;font-size:0.82rem;display:none">Verify</button>
+            <button type="button" id="send-code-btn" class="btn-secondary" style="width:auto;padding:0.45rem 0.75rem;font-size:0.82rem">{{call $.T "send_verification_code"}}</button>
+            <input id="verify-code-input" type="text" inputmode="numeric" maxlength="6" placeholder="{{call $.T "verification_code"}}" autocomplete="one-time-code" style="width:120px" hidden>
+            <button type="button" id="check-code-btn" class="btn-secondary" style="width:auto;padding:0.45rem 0.75rem;font-size:0.82rem" hidden>{{call $.T "verify_email"}}</button>
             <span id="verify-status" class="hint" style="margin:0"></span>
           </div>
         </div>
@@ -292,32 +292,10 @@ body {
         </div>
         {{end}}
         {{else if eq .Kind "guests"}}
-        {{if not .Hidden}}
-        <div class="field">
-          <button type="button" id="guests-toggle-btn" class="guests-toggle">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
-            Add guests
-          </button>
-          <div id="guests-box" class="guests-box hidden">
-            <div class="guests-tabs" role="tablist">
-              <button type="button" id="guests-tab-single" class="guests-tab active" role="tab" aria-selected="true">One at a time</button>
-              <button type="button" id="guests-tab-list" class="guests-tab" role="tab" aria-selected="false">Add a list</button>
-            </div>
-            <div id="guests-single-pane">
-              <div id="guest-rows" class="guest-rows"></div>
-              <button type="button" id="add-guest-btn" class="guests-toggle" style="margin-top:0.35rem;">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
-                Add another
-              </button>
-            </div>
-            <div id="guests-list-pane" class="hidden">
-              <textarea id="guests-list-input" rows="2" placeholder="john@doe.com, alex@smith.com"></textarea>
-            </div>
-          </div>
-        </div>
-        {{end}}
+        {{if not .Hidden}}<div id="guests-control"></div>{{end}}
         {{else if eq .Kind "question"}}
         {{with .Question}}
+        {{$questionID := .ID}}
         <div class="field{{if .Hidden}} hidden{{end}}" data-qid="{{.ID}}" data-qtype="{{.QType}}" data-identifier="{{.Identifier}}" data-lock-if-prefilled="{{if .LockIfPrefilled}}true{{else}}false{{end}}" data-required="{{if .Required}}true{{else}}false{{end}}">
           {{if eq .QType "checkbox"}}
           <div class="field-checkbox">
@@ -340,7 +318,7 @@ body {
           <div class="field-choice-group" style="display:flex;flex-direction:column;gap:0.4rem;margin-top:0.25rem">
             {{range .Options}}
             <label class="field-checkbox" style="font-weight:400">
-              <input type="radio" name="ans-{{$.ID}}" value="{{.}}">
+              <input type="radio" name="ans-{{$questionID}}" value="{{.}}">
               <span>{{.}}</span>
             </label>
             {{end}}
@@ -350,7 +328,7 @@ body {
           <div class="field-choice-group" style="display:flex;flex-direction:column;gap:0.4rem;margin-top:0.25rem">
             {{range .Options}}
             <label class="field-checkbox" style="font-weight:400">
-              <input type="checkbox" name="ans-{{$.ID}}" value="{{.}}">
+              <input type="checkbox" name="ans-{{$questionID}}" value="{{.}}">
               <span>{{.}}</span>
             </label>
             {{end}}
@@ -426,8 +404,6 @@ body {
   let selectedDuration = {{.DurationMinutes}};
   if (PREVIEW?.duration && (PREVIEW.duration === selectedDuration || [...document.querySelectorAll('.dur-pill')].some(button => Number(button.dataset.duration) === PREVIEW.duration))) selectedDuration = PREVIEW.duration;
   let previewPickedStart = PREVIEW?.slot || '';
-  let verificationToken = '';
-  let verifiedEmail = '';
   const MAX_DAYS = {{.MaxFutureDays}};
   const PRICE_CENTS = {{.PriceCents}};
   const CURRENCY = "{{.Currency}}";
@@ -460,6 +436,7 @@ body {
   let slotsDegraded = false;      // an external calendar check failed: busy data is
                                   // incomplete, so offered times may be unbookable
 
+  const cardEl = document.querySelector('.card');
   const $ = id => document.getElementById(id);
   const pad = n => String(n).padStart(2, '0');
   if (PREVIEW) {
@@ -568,7 +545,7 @@ body {
     const sel = $('f-location-select');
     return sel && sel.value !== '' ? sel.options[sel.selectedIndex].textContent : {{.LocationLabel}};
   }
-  BookingLogic.enhanceLocationSelect($('f-location-select'));
+  CalnodeBookingUI.enhanceLocationSelect($('f-location-select'));
   $('f-location-select')?.addEventListener('change', () => {
     const summary = $('summary-location'); if (summary) summary.textContent = selectedLocationLabel();
     const error = $('form-error'); if (error?.textContent === t('required_fields_error')) error.textContent = '';
@@ -583,9 +560,12 @@ body {
     $('confirm-zone').textContent = TZ.replace(/_/g, ' ');
     $('confirm-location').textContent = booked?.location_value || selectedLocationLabel();
     $('confirm-attendee').textContent = [$('f-name')?.value, $('f-email')?.value].filter(Boolean).join(' · ');
+    const isPending=CalnodeBookingUI.pending(booked);
+    document.querySelector('#confirm-view h3').textContent=t(isPending?'booking_pending':'booking_confirmed');
+    document.querySelector('#confirm-view .sub').textContent=t(isPending?'booking_pending_sub':'confirmation_email_sent');
     const actions = $('confirm-actions');
     actions.replaceChildren();
-    if (start && end) actions.appendChild(BookingLogic.calendarActions({ title: EVENT_NAME, description: document.querySelector('.description')?.textContent || '', location: booked?.location_value || selectedLocationLabel(), start, end, uid: booked?.id, manageURL: booked?.manage_url }, { title: t('add_to_calendar'), download: t('download_ics'), disabled: !!PREVIEW }));
+    if (start && end) actions.appendChild(CalnodeBookingUI.calendarActions({ title: EVENT_NAME, description: document.querySelector('.description')?.textContent || '', location: booked?.location_value || selectedLocationLabel(), start, end, uid: booked?.id, manageURL: booked?.manage_url }, { title: t('add_to_calendar'), download: t('download_ics'), disabled: !!PREVIEW || isPending }));
     if (!PREVIEW && booked?.manage_url) {
       const link = document.createElement('a');
       link.className = 'confirmation-manage'; link.href = booked.manage_url; link.textContent = `${t('reschedule')} / ${t('cancel_booking')}`;
@@ -593,36 +573,9 @@ body {
     }
   }
 
-  // Returning from Stripe Checkout (success_url): the payment was captured and the booking
-  // is confirmed by webhook. Show a payment-received confirmation instead of the picker.
-  (function () {
-    var params = new URLSearchParams(window.location.search);
-    if (params.get('paid') !== '1') return;
-    var _ch3 = document.querySelector('#confirm-view h3');
-    var _csub = document.querySelector('#confirm-view .sub');
-    if (_ch3) _ch3.textContent = t('payment_received');
-    if (_csub) _csub.textContent = t('payment_confirmed_sub');
-    showView('confirm-view');
-    // Fire the conversion event for paid bookings too (the form-submit path redirected to
-    // Stripe before it could). transaction_id lets GA4/GTM dedupe on refresh.
-    if (window.__CALNODE_DL && typeof calnodePush === 'function') {
-      calnodePush('calnode_booking_confirmed', {
-        event_type_slug: SLUG,
-        event_type_name: EVENT_NAME,
-        status: 'confirmed',
-        is_paid: true,
-        value: PRICE_CENTS / 100,
-        currency: (CURRENCY || 'usd').toUpperCase(),
-        transaction_id: params.get('session_id') || '',
-      });
-    }
-    if (typeof ga4Convert === 'function') ga4Convert(true, PRICE_CENTS / 100, CURRENCY, params.get('session_id'));
-  })();
-
   // ── Mobile step-flow ────────────────────────────────────────────────────────
   // On narrow viewports (CSS-gated) we show one section at a time: calendar, then
   // the right pane (slots → form → confirm). On desktop the classes are inert.
-  const cardEl = document.querySelector('.card');
   function setStep(s) {
     if (!cardEl) return;
     cardEl.classList.toggle('m-cal', s === 'cal');
@@ -922,50 +875,7 @@ body {
   });
   $('cal-back-btn').addEventListener('click', () => setStep('cal'));
 
-  // ── Pre-fill from query string ────────────────────────────────────────────
-  (function () {
-    const qp = new URLSearchParams(window.location.search);
-    const fName = $('f-name');
-    const fEmail = $('f-email');
-    if (fName && qp.has('name')) fName.value = qp.get('name') || '';
-    if (fEmail && qp.has('email')) fEmail.value = qp.get('email') || '';
-
-    // Prefill intake questions from URL query parameters (?identifier=value).
-    document.querySelectorAll('[data-qid][data-identifier]').forEach(function (el) {
-      const key = el.dataset.identifier;
-      if (!key || !qp.has(key)) return;
-      const pre = qp.get(key) ?? '';
-      const qtype = el.dataset.qtype || 'text';
-      const lock = el.dataset.lockIfPrefilled === 'true';
-      if (qtype === 'radio_group') {
-        el.querySelectorAll('input[type="radio"]').forEach(function (r) {
-          r.checked = r.value === pre;
-          if (lock) r.disabled = true;
-        });
-        return;
-      }
-      if (qtype === 'checkbox_group' || qtype === 'multiselect') {
-        const wanted = new Set(pre.split(',').map(function (s) { return s.trim(); }).filter(Boolean));
-        el.querySelectorAll('input[type="checkbox"]').forEach(function (c) {
-          c.checked = wanted.has(c.value);
-          if (lock) c.disabled = true;
-        });
-        return;
-      }
-      const input = el.querySelector('input, select, textarea');
-      if (!input) return;
-      if (input.type === 'checkbox') {
-        input.checked = ['yes', 'true', '1', 'on', 'checked'].includes(pre.trim().toLowerCase());
-        if (lock) input.disabled = true;
-      } else {
-        input.value = pre;
-        if (lock) {
-          if (input.tagName === 'SELECT') input.disabled = true;
-          else input.readOnly = true;
-        }
-      }
-    });
-  })();
+  CalnodeBookingUI.prefill(document,new URLSearchParams(window.location.search));
 
   document.querySelectorAll('.dur-pill').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -985,81 +895,10 @@ body {
     });
   });
 
-  // ── Email verification (when enabled) ───────────────────────────────────
-  if (REQUIRE_EMAIL_VERIFY && !PREVIEW) {
-    const sendBtn = $('send-code-btn');
-    const codeInput = $('verify-code-input');
-    const checkBtn = $('check-code-btn');
-    const statusEl = $('verify-status');
-    const emailEl = $('f-email');
-
-    emailEl?.addEventListener('input', () => {
-      if (emailEl.value.trim().toLowerCase() !== verifiedEmail) {
-        verificationToken = '';
-        if (statusEl) statusEl.textContent = '';
-      }
-    });
-
-    sendBtn?.addEventListener('click', async () => {
-      const email = emailEl?.value.trim() || '';
-      if (!email) { $('form-error').textContent = t('required_fields_error'); return; }
-      sendBtn.disabled = true;
-      if (statusEl) statusEl.textContent = 'Sending...';
-      try {
-        const sendURL = SINGLE_USE_TOKEN
-          ? `/v1/t/${encodeURIComponent(SINGLE_USE_TOKEN)}/verify-email/send`
-          : `/v1/book/${encodeURIComponent(SLUG)}/verify-email/send`;
-        const res = await fetch(sendURL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email }),
-        });
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          if (statusEl) statusEl.textContent = d.error || 'Failed to send code';
-        } else {
-          if (codeInput) codeInput.style.display = 'inline-block';
-          if (checkBtn) checkBtn.style.display = 'inline-block';
-          if (statusEl) statusEl.textContent = 'Code sent — check your inbox';
-        }
-      } catch {
-        if (statusEl) statusEl.textContent = 'Failed to send code';
-      } finally {
-        sendBtn.disabled = false;
-      }
-    });
-
-    checkBtn?.addEventListener('click', async () => {
-      const email = emailEl?.value.trim() || '';
-      const code = codeInput?.value.trim() || '';
-      if (!email || !code) return;
-      checkBtn.disabled = true;
-      try {
-        const checkURL = SINGLE_USE_TOKEN
-          ? `/v1/t/${encodeURIComponent(SINGLE_USE_TOKEN)}/verify-email/check`
-          : `/v1/book/${encodeURIComponent(SLUG)}/verify-email/check`;
-        const res = await fetch(checkURL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, code }),
-        });
-        const d = await res.json().catch(() => ({}));
-        if (!res.ok || !d.verification_token) {
-          if (statusEl) statusEl.textContent = d.error || 'Invalid code';
-        } else {
-          verificationToken = d.verification_token;
-          verifiedEmail = email.toLowerCase();
-          if (statusEl) statusEl.textContent = 'Email verified ✓';
-          if (codeInput) codeInput.style.display = 'none';
-          checkBtn.style.display = 'none';
-        }
-      } catch {
-        if (statusEl) statusEl.textContent = 'Verification failed';
-      } finally {
-        checkBtn.disabled = false;
-      }
-    });
-  }
+  // The widget uses this same controller and token-invalidation rule.
+  const verification = REQUIRE_EMAIL_VERIFY && !PREVIEW
+    ? CalnodeBookingUI.mountEmailVerification(document, { slug: SLUG, token: SINGLE_USE_TOKEN, labels: I18N })
+    : {token:'',email:''};
 
   // ── Booking form ──────────────────────────────────────────────────────────
   $('booking-form').addEventListener('submit', async e => {
@@ -1085,39 +924,10 @@ body {
     }
 
 
-    // Collect intake question answers and validate required fields.
-    const answers = [];
-    const qEls = document.querySelectorAll('[data-qid]');
-    for (let i = 0; i < qEls.length; i++) {
-      const el = qEls[i];
-      const qtype = el.dataset.qtype || 'text';
-      let value = '';
-      let missing = false;
-      if (qtype === 'radio_group') {
-        const checked = el.querySelector('input[type="radio"]:checked');
-        value = checked ? checked.value.trim() : '';
-        missing = !value;
-      } else if (qtype === 'checkbox_group' || qtype === 'multiselect') {
-        const checked = Array.from(el.querySelectorAll('input[type="checkbox"]:checked')).map(function (c) { return c.value.trim(); });
-        value = checked.join(', ');
-        missing = checked.length === 0;
-      } else {
-        const input = el.querySelector('input, select, textarea');
-        if (!input) continue;
-        if (input.type === 'checkbox') {
-          value = input.checked ? 'yes' : 'no';
-          missing = !input.checked;
-        } else {
-          value = input.value.trim();
-          missing = !value;
-        }
-      }
-      if (el.dataset.required === 'true' && missing) {
-        errEl.textContent = t('required_fields_error');
-        return;
-      }
-      answers.push({ question_id: el.dataset.qid, value });
-    }
+    let answers;
+    let guestEmails;
+    try { answers = CalnodeBookingUI.collectAnswers(form,t('required_fields_error')); guestEmails=guests?guests.values():[]; }
+    catch(error) { errEl.textContent=error.message; return; }
 
     btn.disabled = true; btn.textContent = t('confirming'); errEl.textContent = '';
 
@@ -1136,12 +946,12 @@ body {
           phone: phoneAsLocation ? (form.elements.phone?.value.trim() || "") : "",
           contact_phone: phoneAsLocation ? "" : (form.elements.phone?.value.trim() || ""),
           notes: form.elements.notes?.value.trim() || "",
-          guests: collectGuests(),
+          guests: guestEmails,
           timezone: TZ,
           language: LOCALE,
           hp_extra: form.hp_extra.value,
           single_use_token: SINGLE_USE_TOKEN || undefined,
-          verification_token: verificationToken || undefined,
+          verification_token: verification.token || undefined,
           duration_minutes: selectedDuration || undefined,
           selected_location: (() => {
             const sel = $('f-location-select');
@@ -1184,13 +994,9 @@ body {
       }
 
       renderConfirmation(booked);
-      if (booked && (booked.status === 'pending' || booked.pending_approval)) {
-        const heading = document.querySelector('#confirm-view h3');
-        if (heading) heading.textContent = 'Booking request sent — awaiting host confirmation';
-      }
       showView('confirm-view');
 
-      if (window.__CALNODE_DL && typeof calnodePush === 'function') {
+      if (!CalnodeBookingUI.pending(booked) && window.__CALNODE_DL && typeof calnodePush === 'function') {
         var dlAnswers = {};
         (answers || []).forEach(function (a) {
           var label = (window.__CALNODE_DL.questions || {})[a.question_id] || a.question_id;
@@ -1215,7 +1021,7 @@ body {
           currency: (CURRENCY || 'usd').toUpperCase(),
         });
       }
-      if (typeof ga4Convert === 'function') ga4Convert(false, PRICE_CENTS / 100, CURRENCY, booked && booked.id);
+      if (!CalnodeBookingUI.pending(booked) && typeof ga4Convert === 'function') ga4Convert(false, PRICE_CENTS / 100, CURRENCY, booked && booked.id);
       if (REDIRECT_URL && /^https?:\/\//i.test(REDIRECT_URL)) {
         window.location.href = REDIRECT_URL;
         return;
@@ -1235,64 +1041,9 @@ body {
     }
   });
 
-  // ── Add guests (one-at-a-time & comma-separated list) ─────────────────────
-  let guestsMode = 'single';
-  function addGuestRow(val) {
-    const rows = $('guest-rows');
-    if (!rows) return;
-    const row = document.createElement('div');
-    row.className = 'guest-row';
-    const inp = document.createElement('input');
-    inp.type = 'email';
-    inp.placeholder = 'Email';
-    inp.value = val || '';
-    const rm = document.createElement('button');
-    rm.type = 'button';
-    rm.className = 'guest-remove';
-    rm.textContent = '×';
-    rm.setAttribute('aria-label', 'Remove guest');
-    rm.addEventListener('click', () => {
-      row.remove();
-      if (rows.children.length === 0) {
-        const box = $('guests-box');
-        if (box) box.classList.add('hidden');
-      }
-    });
-    row.appendChild(inp);
-    row.appendChild(rm);
-    rows.appendChild(row);
-  }
-  function collectGuests() {
-    const box = $('guests-box');
-    if (!box || box.classList.contains('hidden')) return [];
-    if (guestsMode === 'list') {
-      const raw = $('guests-list-input')?.value || '';
-      return raw.split(/[\s,;]+/).map(s => s.trim()).filter(s => s.includes('@'));
-    }
-    return Array.from(document.querySelectorAll('#guest-rows input')).map(i => i.value.trim()).filter(s => s.includes('@'));
-  }
-  $('guests-toggle-btn')?.addEventListener('click', () => {
-    const box = $('guests-box');
-    if (!box) return;
-    const willShow = box.classList.contains('hidden');
-    box.classList.toggle('hidden');
-    if (willShow && $('guest-rows')?.children.length === 0) addGuestRow('');
-  });
-  $('add-guest-btn')?.addEventListener('click', () => addGuestRow(''));
-  $('guests-tab-single')?.addEventListener('click', () => {
-    guestsMode = 'single';
-    $('guests-tab-single')?.classList.add('active');
-    $('guests-tab-list')?.classList.remove('active');
-    $('guests-single-pane')?.classList.remove('hidden');
-    $('guests-list-pane')?.classList.add('hidden');
-  });
-  $('guests-tab-list')?.addEventListener('click', () => {
-    guestsMode = 'list';
-    $('guests-tab-list')?.classList.add('active');
-    $('guests-tab-single')?.classList.remove('active');
-    $('guests-list-pane')?.classList.remove('hidden');
-    $('guests-single-pane')?.classList.add('hidden');
-  });
+  const guestField=$('guests-control');
+  const guests=guestField?CalnodeBookingUI.guestControl(I18N):null;
+  if(guests)guestField.replaceWith(guests.element);
 
   // ── Timezone selector (searchable combobox) ─────────────────────────────
   const allZones = Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : [TZ];
@@ -1432,8 +1183,25 @@ body {
     new ResizeObserver(() => requestAnimationFrame(resize)).observe(cardEl);
     window.parent.postMessage({ type: 'calnode-preview-ready' }, window.location.origin);
   }
+  async function checkoutReturn() {
+    showView('confirm-view'); setStep('right');
+    const heading=document.querySelector('#confirm-view h3'), sub=document.querySelector('#confirm-view .sub');
+    heading.textContent=t('payment_processing');sub.textContent=t('payment_processing_sub');
+    const session=new URLSearchParams(location.search).get('session_id')||'';
+    for(let attempt=0;attempt<15;attempt++) {
+      try {
+        const response=await fetch('/v1/book/'+encodeURIComponent(SLUG)+'/checkout?session_id='+encodeURIComponent(session));
+        if(response.status===202){await new Promise(resolve=>setTimeout(resolve,1000));continue;}
+        if(!response.ok)throw new Error();
+        const booked=await response.json();renderConfirmation(booked);return;
+      } catch { break; }
+    }
+    heading.textContent=t('payment_processing');sub.textContent=t('payment_not_ready');
+  }
   populateTzSelect();
-  loadMonthAvailability(navYear, navMonth);
+  if(!PREVIEW && new URLSearchParams(location.search).get('paid')==='1') void checkoutReturn();
+  else loadMonthAvailability(navYear, navMonth);
+
 
 }());
 </script>

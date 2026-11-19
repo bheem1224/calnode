@@ -28,6 +28,32 @@ func validEmailTemplateKind(k string) bool {
 	return k == "confirmation" || k == "cancellation" || k == "reschedule" || k == "reminder"
 }
 
+type emailDraft struct {
+	Mode    string `json:"mode"`
+	Subject string `json:"subject"`
+	Body    string `json:"body"`
+}
+
+func (draft emailDraft) apply(d *mailer.BookingData) error {
+	d.SubjectOverride = strings.TrimSpace(draft.Subject)
+	d.CustomHTML, d.CustomNote = "", ""
+	switch draft.Mode {
+	case "", "note":
+		d.CustomNote = draft.Body
+	case "html":
+		if strings.TrimSpace(draft.Body) != "" {
+			cleaned, err := mailer.SanitizeAndValidateEmailHTML(draft.Body)
+			if err != nil {
+				return err
+			}
+			d.CustomHTML = cleaned
+		}
+	default:
+		return errors.New("mode must be 'note' or 'html'")
+	}
+	return nil
+}
+
 // PreviewEmailTemplate handles POST /v1/event-types/{slug}/email-preview.
 // Renders the email (default or custom note/HTML) using sample booking data without
 // sending any email, returning { subject, html, default_html }.
@@ -115,17 +141,9 @@ func (h *Handler) PreviewEmailTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _, defaultHTML, _ := mailer.RenderBody(req.Type, dDefault)
 
-	if req.Mode == "html" {
-		if strings.TrimSpace(req.Body) != "" {
-			cleaned, err := mailer.SanitizeAndValidateEmailHTML(req.Body)
-			if err != nil {
-				h.writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			d.CustomHTML = cleaned
-		}
-	} else {
-		d.CustomNote = req.Body
+	if err := (emailDraft{Mode: req.Mode, Subject: req.Subject, Body: req.Body}).apply(&d); err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	subject, _, renderedHTML, _ := mailer.RenderBody(req.Type, d)

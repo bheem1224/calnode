@@ -115,6 +115,7 @@ func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{
 		"permissions":           user.Permissions,
+		"public_base_url":       h.publicURL(),
 		"booking_accent":        accent,
 		"handle":                handleOut.String,
 		"id":                    user.ID,
@@ -373,6 +374,7 @@ func (h *Handler) PatchMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := map[string]any{
+		"public_base_url":       h.publicURL(),
 		"booking_accent":        accent,
 		"handle":                handle.String,
 		"id":                    user.ID,

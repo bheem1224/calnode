@@ -18,10 +18,11 @@ import (
 func (h *Handler) SendTestEmail(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 	slug := r.PathValue("slug")
-	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
 
 	var req struct {
-		Type string `json:"type"` // confirmation | cancellation | reschedule | reminder
+		Draft *emailDraft `json:"draft,omitempty"`
+		Type  string      `json:"type"` // confirmation | cancellation | reschedule | reminder
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -111,6 +112,12 @@ func (h *Handler) SendTestEmail(w http.ResponseWriter, r *http.Request) {
 		CustomNote:        customNote,
 		CustomHTML:        customHTML,
 		SubjectOverride:   customSubject,
+	}
+	if req.Draft != nil {
+		if err := req.Draft.apply(&d); err != nil {
+			h.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	h.applyBranding(r.Context(), &d)
 
