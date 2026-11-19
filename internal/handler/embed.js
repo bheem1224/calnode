@@ -203,6 +203,19 @@
     });
   }
 
+  var phoneInputReady;
+  function ensurePhoneInput() {
+    if (globalThis.CalnodePhoneInput) return Promise.resolve();
+    if (!phoneInputReady) phoneInputReady = new Promise(function (resolve, reject) {
+      var script = document.createElement('script');
+      script.src = BASE + '/phone-input.js';
+      script.onload = function () { resolve(); };
+      script.onerror = function () { script.remove(); phoneInputReady = null; reject(new Error('Could not load phone controls')); };
+      document.head.appendChild(script);
+    });
+    return phoneInputReady;
+  }
+
   class CalnodeBooking extends HTMLElement {
     connectedCallback() {
       if (this._mounted) return;
@@ -246,6 +259,7 @@
         var r = await Promise.all([
           api(publicPath),
           api('/v1/event-types/' + encodeURIComponent(this.slug) + '/questions'),
+          ensurePhoneInput(),
         ]);
         this.info = r[0];
         this.style.setProperty('--booking-accent', this.info.booking_accent || '#111827');
@@ -343,7 +357,7 @@
       ]);
       var meta = el('ul', { class: 'meta' }, [
         el('li', { html: SVG_CLOCK + ' ' + esc(this.info.duration_label || (this.info.duration_minutes + ' min')) }),
-        this.info.location_label ? el('li', { html: SVG_PIN + ' ' + esc(this.info.location_label) }) : null,
+        this.info.location_label ? el('li', {}, [el('span', { html: SVG_PIN }), el('span', { id: 'summary-location', text: this.selectedLocationLabel() })]) : null,
         this.info.price_cents > 0 ? el('li', { html: SVG_CARD + ' ' + money(this.info.price_cents, this.info.currency) }) : null,
       ]);
       var kids = [head, meta];
@@ -619,6 +633,12 @@
       }).format(new Date(dayKeyStr + 'T00:00:00'));
     }
 
+    selectedLocationLabel() {
+      var choices = this.info.location_options || [];
+      var selected = choices[this.locationChoice];
+      return selected ? selected.label : (this.info.location_label || '');
+    }
+
     formView(slot) {
       var self = this;
       var back = el('button', { class: 'back-btn', html: SVG_BACK + ' ' + t(this.i18n, 'back') });
@@ -626,12 +646,27 @@
       var form = el('form', { novalidate: 'novalidate' });
       var hp = el('input', { type: 'text', name: 'hp_extra', tabindex: '-1', autocomplete: 'off' });
       form.appendChild(el('div', { 'aria-hidden': 'true', style: 'position:absolute;left:-5000px;height:0;width:0;overflow:hidden;' }, [hp]));
+
+      var locationChoices = this.info.location_options || [];
+      var locationSelect = null;
+      if (locationChoices.length > 1) {
+        locationSelect = el('select', { id: 'f-location-select', name: 'selected_location', required: 'required' }, [el('option', { value: '', text: t(this.i18n, 'choose_option') })]);
+        locationChoices.forEach(function (option, index) { locationSelect.appendChild(el('option', { value: String(index), text: option.label })); });
+        locationSelect.value = this.locationChoice == null ? '' : String(this.locationChoice);
+        locationSelect.addEventListener('change', function () {
+          self.locationChoice = locationSelect.value === '' ? null : Number(locationSelect.value);
+          var summary = self.root.querySelector('#summary-location');
+          if (summary) summary.textContent = self.selectedLocationLabel();
+          if (errBox && errBox.textContent === t(self.i18n, 'required_fields_error')) errBox.textContent = '';
+        });
+        form.appendChild(el('div', { class: 'field location-choice' }, [el('label', { for: 'f-location-select', text: t(this.i18n, 'location_label') }), locationSelect]));
+      }
       var name = el('input', { type: 'text', required: 'required', autocomplete: 'name', placeholder: t(this.i18n, 'name_placeholder') });
       var email = el('input', { type: 'email', required: 'required', autocomplete: 'email', placeholder: t(this.i18n, 'email_placeholder') });
       form.appendChild(el('div', { class: 'field' }, [el('label', { text: t(this.i18n, 'name_label') }), name]));
       form.appendChild(el('div', { class: 'field' }, [el('label', { text: t(this.i18n, 'email_label') }), email]));
       var phone = el('input', { type: 'tel', maxlength: '40', autocomplete: 'tel', id: 'phone-call-number' });
-      if (this.info.allow_phone_call) form.appendChild(el('div', { class: 'field' }, [el('label', { for: 'phone-call-number', text: t(this.i18n, 'phone_call_number') }), phone]));
+      if (this.info.allow_phone_call || this.info.location_type === 'attendee_phone' || locationChoices.some(function (option) { return option.type === 'attendee_phone'; })) form.appendChild(el('div', { class: 'field' }, [el('label', { for: 'phone-call-number', text: t(this.i18n, 'phone_call_number') }), phone]));
       var qInputs = [];
       this.questions.forEach(function (q) {
         var inp, field;
@@ -661,6 +696,10 @@
       form.addEventListener('submit', function (e) {
         e.preventDefault();
         errBox.textContent = '';
+        if (locationSelect && locationSelect.value === '') { errBox.textContent = t(self.i18n, 'required_fields_error'); locationSelect.focus(); return; }
+        var selectedLocation = locationSelect && locationSelect.value !== '' ? locationChoices[Number(locationSelect.value)] : null;
+        var phoneAsLocation = self.info.allow_phone_call || (selectedLocation ? selectedLocation.type : self.info.location_type) === 'attendee_phone';
+        if ((selectedLocation ? selectedLocation.type : self.info.location_type) === 'attendee_phone' && !phone.value.trim()) { errBox.textContent = t(self.i18n, 'required_fields_error');phone.focus();return; }
         cta.disabled = true; cta.textContent = t(self.i18n, 'confirming');
         var answers = [];
         qInputs.forEach(function (x) {
@@ -675,7 +714,7 @@
         });
         fetch(BASE + '/v1/bookings', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ event_type_slug: self.slug, start_at: slot.start, name: name.value.trim(), email: email.value.trim().toLowerCase(), phone: phone.value.trim(), timezone: TZ, language: self.locale, hp_extra: hp.value, answers: answers }),
+          body: JSON.stringify({ event_type_slug: self.slug, start_at: slot.start, name: name.value.trim(), email: email.value.trim().toLowerCase(), phone: phoneAsLocation ? phone.value.trim() : "", contact_phone: phoneAsLocation ? "" : phone.value.trim(), timezone: TZ, language: self.locale, hp_extra: hp.value, selected_location: locationSelect && locationSelect.value !== '' ? { type: locationChoices[Number(locationSelect.value)].type, id: locationChoices[Number(locationSelect.value)].id } : undefined, answers: answers }),
         }).then(function (r) {
           return r.json().then(function (data) { return { ok: r.ok, status: r.status, data: data }; });
         }).then(function (res) {
@@ -714,9 +753,9 @@
             el('p', { text: hostsLabel((this.booked && this.booked.hosts) || this.info.hosts || [], this.i18n) }),
             el('p', { class: 'when', text: shortDay(start, this.locale) + ' · ' + timeLabel(start, this.locale, format) + (end ? ' – ' + timeLabel(end, this.locale, format) : '') }),
             el('p', { text: TZ.replace(/_/g, ' ') }),
-            el('p', { text: (this.booked && this.booked.location_value) || this.info.location_label || '' }),
+            el('p', { text: (this.booked && this.booked.location_value) || this.selectedLocationLabel() || '' }),
           ]),
-          calendarActions({ title: this.info.name, description: this.info.description, location: (this.booked && this.booked.location_value) || this.info.location_label, start: (this.booked && this.booked.start_at) || slot.start, end: (this.booked && this.booked.end_at) || slot.end, uid: this.booked && this.booked.id, manageURL: this.booked && this.booked.manage_url }, { title: t(this.i18n, 'add_to_calendar'), download: t(this.i18n, 'download_ics') }),
+          calendarActions({ title: this.info.name, description: this.info.description, location: (this.booked && this.booked.location_value) || this.selectedLocationLabel(), start: (this.booked && this.booked.start_at) || slot.start, end: (this.booked && this.booked.end_at) || slot.end, uid: this.booked && this.booked.id, manageURL: this.booked && this.booked.manage_url }, { title: t(this.i18n, 'add_to_calendar'), download: t(this.i18n, 'download_ics') }),
           this.booked && this.booked.manage_url ? el('a', { class: 'confirmation-manage', href: this.booked.manage_url, target: '_blank', rel: 'noopener noreferrer', text: t(this.i18n, 'reschedule') + ' / ' + t(this.i18n, 'cancel_booking') }) : null,
         ]),
       ]);

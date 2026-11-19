@@ -101,3 +101,16 @@ Signed-token OIDC integration tests in `internal/handler/identity_providers_test
 use a local HTTPS issuer, real signatures, discovery and JWKS. Test real provider
 consent, tenant/group policies and calendar refresh against staging accounts before
 production rollout; local fakes cannot validate an external app registration.
+
+
+## Public booking location choices
+
+Start a fresh disposable localhost instance with `DATABASE_URL=sqlite://:memory:`
+and run `CALNODE_LOCATION_TEST_URL=http://localhost:39221 node scripts/verify-booking-locations.mjs`.
+The script refuses claimed instances, creates fake manual Meet/Teams links and
+availability, and verifies actual bookings through hosted, single-use and embed
+flows, plus the chosen provider on the manage page. It tests light/dark at desktop
+and mobile widths, required selection, submitted choices and horizontal overflow.
+No real calendar provider or email service is needed. Screenshots go to the system
+temporary directory unless `CALNODE_SCREENSHOT_DIR` is set. Unit tests additionally
+verify rescheduling preserves the choice and forged or unsafe locations are rejected.

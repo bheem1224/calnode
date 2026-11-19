@@ -15,6 +15,7 @@
   "name_placeholder": "Je volledige naam",
   "email_label": "E-mail",
   "email_placeholder": "jij@voorbeeld.nl",
+  "location_label": "Locatie",
   "choose_option": "Kies een optie",
   "confirm_booking": "Boeking bevestigen",
   "confirming": "Bevestigen…",

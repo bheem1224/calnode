@@ -36,9 +36,10 @@ var bookTmpl = template.Must(template.Must(template.New("book").Funcs(template.F
 }).Parse(sharedPartialsSrc)).Parse(bookTmplSrc))
 
 type bookLocationOption struct {
-	Type  string
-	Value string
-	Label string
+	Type  string `json:"type"`
+	Value string `json:"-"`
+	ID    int    `json:"id"`
+	Label string `json:"label"`
 }
 
 type bookQuestion struct {
@@ -177,6 +178,8 @@ type bookPageData struct {
 	RequireEmailVerification bool
 	AllowMultipleDurations   bool
 	DurationOptions          []int
+	LocationType             string
+	LocationPhoneChoice      bool
 	LocationOptions          []bookLocationOption
 	OOONote                  string
 	OOORedirectName          string
@@ -429,7 +432,7 @@ func locationLabel(locType, locValue string, loc *i18n.Locale) string {
 		return "Microsoft Teams"
 	case "livekit":
 		return loc.T("location_video_meeting")
-	case "phone":
+	case "phone", "attendee_phone":
 		return loc.T("location_phone")
 	case "in_person":
 		if locValue != "" {
@@ -468,16 +471,17 @@ func (h *Handler) PublicEventType(w http.ResponseWriter, r *http.Request) {
 		msgGreeting                                sql.NullString
 		allowPhoneCall                             bool
 		accentColor                                string
+		locOptionsRaw                              string
 	)
 	err := h.db.QueryRowContext(r.Context(), `
 		SELECT et.id, et.name, COALESCE(et.description, ''),
 		       et.duration_minutes, et.location_type, COALESCE(et.location_value, ''),
 		       et.max_future_days, et.min_notice_minutes, et.routing_mode, u.name, COALESCE(u.avatar_url, ''),
-		       et.price_cents, et.currency, et.msg_greeting, et.allow_phone_call, u.booking_accent
+		       et.price_cents, et.currency, et.msg_greeting, et.allow_phone_call, u.booking_accent, COALESCE(et.location_options,'[]')
 		FROM event_types et
 		JOIN users u ON u.id = et.user_id
 		WHERE et.slug = ? AND et.is_active = 1 AND et.is_public = 1`,
-		slug).Scan(&etID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor)
+		slug).Scan(&etID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor, &locOptionsRaw)
 	if errors.Is(err, sql.ErrNoRows) {
 		h.writeError(w, http.StatusNotFound, "event type not found")
 		return
@@ -527,6 +531,8 @@ func (h *Handler) PublicEventType(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	var additionalLocations []LocationOption
+	_ = json.Unmarshal([]byte(locOptionsRaw), &additionalLocations)
 	h.writeJSON(w, http.StatusOK, map[string]any{
 		"slug":             slug,
 		"name":             name,
@@ -543,6 +549,7 @@ func (h *Handler) PublicEventType(w http.ResponseWriter, r *http.Request) {
 		"booking_accent":            accentColor,
 		"booking_accent_foreground": accentForeground(accentColor),
 		"location_label":            locationLabel(locType, locValue, loc),
+		"location_options":          publicLocationOptions(locType, locValue, additionalLocations, loc),
 		"max_future_days":           maxDays,
 		// min_notice_label is the translated minimum-notice duration ("4 hours"), empty
 		// when the event type sets none. The widget needs it here because the /slots call
@@ -745,17 +752,15 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 			durOptions = append([]int{durMins}, durOptions...)
 		}
 	}
-	var locOptions []bookLocationOption
-	if locOptsRaw.Valid && locOptsRaw.String != "" {
-		var rawOpts []LocationOption
-		if json.Unmarshal([]byte(locOptsRaw.String), &rawOpts) == nil {
-			for _, o := range rawOpts {
-				lbl := locationLabel(o.Type, o.Value, loc)
-				if lbl == "" {
-					lbl = o.Type
-				}
-				locOptions = append(locOptions, bookLocationOption{Type: o.Type, Value: o.Value, Label: lbl})
-			}
+	var additionalLocations []LocationOption
+	if locOptsRaw.Valid {
+		_ = json.Unmarshal([]byte(locOptsRaw.String), &additionalLocations)
+	}
+	locOptions := publicLocationOptions(locType, locValue, additionalLocations, loc)
+	locationPhoneChoice := false
+	for _, option := range locOptions {
+		if option.Type == "attendee_phone" {
+			locationPhoneChoice = true
 		}
 	}
 
@@ -809,7 +814,7 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		Currency:            currency,
 		MaxFutureDays:       maxDays,
 		Questions:           questions,
-		FormItems:           buildBookFormItems(bookingFormConfig, questions, allowPhoneCall && onlineMeetingLocation(locType)),
+		FormItems:           buildBookFormItems(bookingFormConfig, questions, (allowPhoneCall && onlineMeetingLocation(locType)) || locationPhoneChoice),
 		BookingLogicJS:      template.JS(bookingLogicJS), // #nosec G203 -- our own bundled JS source constant, not user input
 		AssistantEnabled:    assistantEnabled,
 		AssistantDisclosure: loc.T("assistant_disclosure"),
@@ -840,6 +845,8 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		AllowMultipleDurations:   allowMultiDur,
 		DurationOptions:          durOptions,
 		LocationOptions:          locOptions,
+		LocationPhoneChoice:      locationPhoneChoice,
+		LocationType:             locType,
 	}
 	if preview := prefill.Preview; preview != nil {
 		data.Preview, data.PreviewJSON, data.PreviewNotice = true, preview.configJSON(slug), preview.Request.Notice

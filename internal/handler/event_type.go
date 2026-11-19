@@ -1116,6 +1116,10 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		set("duration_options", string(b))
 	}
 	if req.LocationOptions != nil {
+		if len(req.LocationOptions) > 20 {
+			h.writeError(w, 400, "at most 20 additional locations are allowed")
+			return
+		}
 		clean := make([]LocationOption, 0, len(req.LocationOptions))
 		for _, opt := range req.LocationOptions {
 			opt.Type = strings.TrimSpace(opt.Type)
@@ -1128,6 +1132,7 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 			}
 			clean = append(clean, opt)
 		}
+		req.LocationOptions = clean
 		b, _ := json.Marshal(clean)
 		set("location_options", string(b))
 	}
@@ -1307,9 +1312,10 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 	// location below).
 	var etID, ownerID, curLocType, curLocVal, curInviteDelivery, curRoutingMode string
 	var curTeamID sql.NullString
+	var curLocOptions string
 	err := h.db.QueryRowContext(r.Context(),
-		`SELECT id, user_id, location_type, COALESCE(location_value, ''), invite_delivery, routing_mode, team_id FROM event_types WHERE slug = ?`, slug).
-		Scan(&etID, &ownerID, &curLocType, &curLocVal, &curInviteDelivery, &curRoutingMode, &curTeamID)
+		`SELECT id, user_id, location_type, COALESCE(location_value, ''), invite_delivery, routing_mode, team_id, COALESCE(location_options,'[]') FROM event_types WHERE slug = ?`, slug).
+		Scan(&etID, &ownerID, &curLocType, &curLocVal, &curInviteDelivery, &curRoutingMode, &curTeamID, &curLocOptions)
 	if err == sql.ErrNoRows {
 		h.writeError(w, http.StatusNotFound, "event type not found")
 		return
@@ -1407,6 +1413,24 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		if err := h.validateLocation(r.Context(), ownerID, effLocType, &effLocVal); err != nil {
 			h.writeError(w, http.StatusBadRequest, err.Error())
 			return
+		}
+	}
+
+	if req.LocationOptions != nil {
+		var prior []LocationOption
+		_ = json.Unmarshal([]byte(curLocOptions), &prior)
+		existing := map[LocationOption]bool{}
+		for _, option := range eventLocations(curLocType, curLocVal, prior) {
+			existing[option] = true
+		}
+		for _, option := range req.LocationOptions {
+			if existing[option] {
+				continue
+			}
+			if err := h.validateLocation(r.Context(), ownerID, option.Type, &option.Value); err != nil {
+				h.writeError(w, 400, err.Error())
+				return
+			}
 		}
 	}
 

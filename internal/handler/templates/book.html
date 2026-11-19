@@ -241,11 +241,12 @@ body {
           <label>Extra<input id="f-hp-extra" name="hp_extra" type="text" tabindex="-1" autocomplete="off"></label>
         </div>
         {{if gt (len .LocationOptions) 1}}
-        <div class="field">
-          <label for="f-location-select">Location</label>
-          <select id="f-location-select" name="selected_location">
+        <div class="field location-choice">
+          <label for="f-location-select">{{call .T "location_label"}}</label>
+          <select id="f-location-select" name="selected_location" required>
+            <option value="">{{call .T "choose_option"}}</option>
             {{range $idx, $opt := .LocationOptions}}
-            <option value="{{$opt.Type}}|{{$opt.Value}}" data-type="{{$opt.Type}}" data-value="{{$opt.Value}}">{{$opt.Label}}</option>
+            <option value="{{$idx}}" data-type="{{$opt.Type}}" data-id="{{$opt.ID}}">{{$opt.Label}}</option>
             {{end}}
           </select>
         </div>
@@ -278,7 +279,7 @@ body {
         {{else if eq .Kind "phone"}}
         {{if not .Hidden}}
         <div class="field">
-          <label for="f-phone">{{if $.PhoneChoice}}{{call $.T "phone_call_number"}}{{else}}Phone number{{if not .Required}} <span style="font-weight:400;opacity:0.65">(optional)</span>{{else}} <span class="required-star">*</span>{{end}}{{end}}</label>
+          <label for="f-phone">{{if or $.PhoneChoice $.LocationPhoneChoice}}{{call $.T "phone_call_number"}}{{else}}Phone number{{if not .Required}} <span style="font-weight:400;opacity:0.65">(optional)</span>{{else}} <span class="required-star">*</span>{{end}}{{end}}</label>
           <input id="f-phone" name="phone" type="tel" maxlength="40" autocomplete="tel" placeholder="+1 (555) 000-0000"{{if .Required}} required{{end}}>
         </div>
         {{end}}
@@ -557,6 +558,20 @@ body {
     document.querySelectorAll('.dur-pill').forEach(button => { button.disabled = locked; });
   }
 
+  function selectedLocationType() {
+    const sel = $('f-location-select');
+    return sel && sel.value !== '' ? sel.options[sel.selectedIndex].dataset.type : {{.LocationType}};
+  }
+
+  function selectedLocationLabel() {
+    const sel = $('f-location-select');
+    return sel && sel.value !== '' ? sel.options[sel.selectedIndex].textContent : {{.LocationLabel}};
+  }
+  $('f-location-select')?.addEventListener('change', () => {
+    const summary = $('summary-location'); if (summary) summary.textContent = selectedLocationLabel();
+    const error = $('form-error'); if (error?.textContent === t('required_fields_error')) error.textContent = '';
+  });
+
   function renderConfirmation(booked = null) {
     $('confirm-event').textContent = EVENT_NAME;
     $('confirm-host').textContent = document.querySelector('.host-name')?.textContent || '';
@@ -564,11 +579,11 @@ body {
     const end = booked?.end_at || pickedSlot?.end;
     $('confirm-time').textContent = start ? `${BookingLogic.formatDay(start, TZ, 'long', LOCALE)} · ${fmtTime(start)}${end ? ' – ' + fmtTime(end) : ''}` : '';
     $('confirm-zone').textContent = TZ.replace(/_/g, ' ');
-    $('confirm-location').textContent = booked?.location_value || {{.LocationLabel}};
+    $('confirm-location').textContent = booked?.location_value || selectedLocationLabel();
     $('confirm-attendee').textContent = [$('f-name')?.value, $('f-email')?.value].filter(Boolean).join(' · ');
     const actions = $('confirm-actions');
     actions.replaceChildren();
-    if (start && end) actions.appendChild(BookingLogic.calendarActions({ title: EVENT_NAME, description: document.querySelector('.description')?.textContent || '', location: booked?.location_value || {{.LocationLabel}}, start, end, uid: booked?.id, manageURL: booked?.manage_url }, { title: t('add_to_calendar'), download: t('download_ics'), disabled: !!PREVIEW }));
+    if (start && end) actions.appendChild(BookingLogic.calendarActions({ title: EVENT_NAME, description: document.querySelector('.description')?.textContent || '', location: booked?.location_value || selectedLocationLabel(), start, end, uid: booked?.id, manageURL: booked?.manage_url }, { title: t('add_to_calendar'), download: t('download_ics'), disabled: !!PREVIEW }));
     if (!PREVIEW && booked?.manage_url) {
       const link = document.createElement('a');
       link.className = 'confirmation-manage'; link.href = booked.manage_url; link.textContent = `${t('reschedule')} / ${t('cancel_booking')}`;
@@ -1058,6 +1073,16 @@ body {
       return;
     }
 
+    const locationSelect = $('f-location-select');
+    if (locationSelect && locationSelect.value === '') {
+      errEl.textContent = t('required_fields_error');locationSelect.focus();return;
+    }
+    const phoneAsLocation = selectedLocationType() === 'attendee_phone' || {{.PhoneChoice}};
+    if (selectedLocationType() === 'attendee_phone' && !form.elements.phone?.value.trim()) {
+      errEl.textContent = t('required_fields_error');$('f-phone')?.focus();return;
+    }
+
+
     // Collect intake question answers and validate required fields.
     const answers = [];
     const qEls = document.querySelectorAll('[data-qid]');
@@ -1106,8 +1131,8 @@ body {
           start_at: pickedSlot.start,
           name: form.name.value.trim(),
           email: form.email.value.trim(),
-          phone: {{if .PhoneChoice}}(form.elements.phone?.value.trim() || ""){{else}}""{{end}},
-          contact_phone: {{if .PhoneChoice}}""{{else}}(form.elements.phone?.value.trim() || ""){{end}},
+          phone: phoneAsLocation ? (form.elements.phone?.value.trim() || "") : "",
+          contact_phone: phoneAsLocation ? "" : (form.elements.phone?.value.trim() || ""),
           notes: form.elements.notes?.value.trim() || "",
           guests: collectGuests(),
           timezone: TZ,
@@ -1120,7 +1145,7 @@ body {
             const sel = $('f-location-select');
             if (!sel) return undefined;
             const opt = sel.options[sel.selectedIndex];
-            return opt ? { type: opt.dataset.type || '', value: opt.dataset.value || '' } : undefined;
+            return opt ? { type: opt.dataset.type || '', id: Number(opt.dataset.id) } : undefined;
           })(),
           answers,
         }),

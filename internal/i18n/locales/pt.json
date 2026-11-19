@@ -15,6 +15,7 @@
   "name_placeholder": "O seu nome completo",
   "email_label": "E-mail",
   "email_placeholder": "voce@exemplo.pt",
+  "location_label": "Local",
   "choose_option": "Escolha uma opção",
   "confirm_booking": "Confirmar marcação",
   "confirming": "A confirmar…",

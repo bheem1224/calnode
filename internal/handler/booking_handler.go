@@ -861,11 +861,11 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		// Deliberately NOT named "company": browsers map that to the organization
 		// autofill entry (ignoring autocomplete="off") and fill this invisible field
 		// for real humans, who are then rejected as bots (#33).
-		Honeypot          string          `json:"hp_extra"`
-		SingleUseToken    string          `json:"single_use_token"`
-		VerificationToken string          `json:"verification_token"`
-		DurationMinutes   *int            `json:"duration_minutes"`
-		SelectedLocation  *LocationOption `json:"selected_location"`
+		Honeypot          string             `json:"hp_extra"`
+		SingleUseToken    string             `json:"single_use_token"`
+		VerificationToken string             `json:"verification_token"`
+		DurationMinutes   *int               `json:"duration_minutes"`
+		SelectedLocation  *locationSelection `json:"selected_location"`
 		Answers           []struct {
 			QuestionID string `json:"question_id"`
 			Value      string `json:"value"`
@@ -1035,27 +1035,19 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 	if et.LocationValue != nil {
 		locValue = *et.LocationValue
 	}
-	if req.SelectedLocation != nil && len(et.LocationOptions) > 0 {
-		selType := strings.TrimSpace(req.SelectedLocation.Type)
-		selVal := strings.TrimSpace(req.SelectedLocation.Value)
-		matched := false
-		for _, opt := range et.LocationOptions {
-			if opt.Type == selType && (opt.Value == "" || opt.Value == selVal || selVal == "") {
-				et.LocationType = opt.Type
-				locValue = opt.Value
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			h.writeError(w, http.StatusBadRequest, "selected_location is not configured for this event type")
-			return
-		}
+	et.LocationType, locValue, err = selectEventLocation(et.LocationType, locValue, et.LocationOptions, req.SelectedLocation)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	// Resolve candidate hosts by routing mode: rotation hosts for round-robin,
 	// required hosts otherwise. Archived hosts are excluded by resolveEventTypeHosts.
 	req.Phone = strings.TrimSpace(req.Phone)
+	if et.LocationType == "attendee_phone" && req.Phone == "" {
+		h.writeError(w, 400, "a telephone number is required for this location")
+		return
+	}
 	if req.Phone != "" {
 		allowPhone := et.AllowPhoneCall || et.LocationType == "phone" || et.LocationType == "attendee_phone"
 		if !allowPhone || len(req.Phone) > 40 || !validPhone(req.Phone) {

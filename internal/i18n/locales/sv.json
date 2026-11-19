@@ -15,6 +15,7 @@
   "name_placeholder": "Ditt fullständiga namn",
   "email_label": "E-post",
   "email_placeholder": "du@exempel.se",
+  "location_label": "Plats",
   "choose_option": "Välj ett alternativ",
   "confirm_booking": "Bekräfta bokning",
   "confirming": "Bekräftar…",

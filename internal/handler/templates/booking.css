@@ -1085,3 +1085,7 @@ html.dark .phone-country-options button:focus-visible,:host-context(.dark) .phon
 .phone-country,.phone-country-options button{transition:background-color 180ms cubic-bezier(.2,0,0,1),transform 180ms cubic-bezier(.2,0,0,1)}
 .phone-country:active,.phone-country-options button:active{transform:scale(.985)}
 @media(prefers-reduced-motion:reduce){.phone-country,.phone-country-options button{transition:none}}
+
+/* Location choices share the booking form controls on hosted and embedded pages. */
+.location-choice { min-width: 0; }
+.location-choice select { width: 100%; min-width: 0; max-width: 100%; text-overflow: ellipsis; }

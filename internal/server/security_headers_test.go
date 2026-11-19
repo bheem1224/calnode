@@ -8,7 +8,7 @@ import (
 )
 
 func TestSensitiveRouteLogRedaction(t *testing.T) {
-	for _, path := range []string{"/manage/secret", "/room/secret", "/v1/invites/secret", "/admin/invite/secret", "/t/secret", "/v1/single-use-links/secret", "/v1/public/group/alice+bob/bookings"} {
+	for _, path := range []string{"/manage/secret", "/room/secret", "/v1/invites/secret", "/admin/invite/secret", "/t/secret", "/v1/single-use-links/secret", "/v1/t/secret/slots", "/v1/t/secret/bookings", "/v1/t/secret/verify-email/send", "/v1/public/group/alice+bob/bookings"} {
 		got := redactTokenPaths(path)
 		if !strings.Contains(got, "[redacted]") || strings.Contains(got, "secret") || strings.Contains(got, "alice") {
 			t.Errorf("sensitive path retained: %s", got)
