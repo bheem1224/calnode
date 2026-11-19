@@ -14,6 +14,13 @@ small Alpine runtime) and published to GHCR:
 
 Or build it yourself with `docker build -t calnode .`.
 
+For this fork's current `main`, the Forgejo workflow publishes to its own
+registry and to `ghcr.io/bheem1224/calnode`, each with `latest` and commit-SHA
+tags. The official
+`ghcr.io/calnode/calnode` image follows the upstream release, so use the fork
+image when deploying changes from this repository. See
+[GHCR publishing](docs/registry-publishing.md).
+
 This guide covers a standalone binary, a generic Docker deploy and a step-by-step **Railway** deploy
 (the current reference host).
 
@@ -208,7 +215,7 @@ Microsoft Entra and generic OIDC setup, multiple-group enrollment and migration 
 ## 6. Backups (Litestream)
 
 [Litestream](https://litestream.io) streams the SQLite DB continuously to
-**S3-compatible** object storage (≈1-second RPO) and **restores it automatically on
+Azure Blob, GCS, or S3-compatible object storage (≈1-second RPO) and **restores it automatically on
 boot** if the volume comes up empty (lost/replaced). It's built into the image and
 supervises the app (`entrypoint.sh` runs `litestream replicate -exec /calnode`).
 
@@ -216,10 +223,27 @@ supervises the app (`entrypoint.sh` runs `litestream replicate -exec /calnode`).
 just runs the app directly. A single volume with no replica is the biggest
 data-loss risk, so enable this before real bookings exist.
 
-### Universal config (one set of vars, any provider)
+### Azure Blob Storage directly
+
+The bundled Litestream v0.3.13 supports Azure Blob Storage without an S3 proxy.
+For a private `calnode-db-backups` container, set
+`LITESTREAM_REPLICA_URL=abs://<storage-account>@calnode-db-backups/calnode` and
+`LITESTREAM_AZURE_ACCOUNT_KEY=<storage-account-key>`. Leave the S3 endpoint,
+region, access key ID, and secret access key unset. The existing `litestream.yml`
+and container entrypoint work with this URL. Restore-test it as described below.
+
+An Azure storage **account** key grants access to other containers in the same
+account. If CRM backups share that account, use a separate storage account for
+strong credential isolation, or a proxy whose Azure-side identity is restricted
+to the Calnode container. A renamed Docker network alone does not restrict an
+Azure account key. Native Azure backup does not supply the S3-compatible storage
+currently required by LiveKit meeting recordings; leave recording disabled or
+configure a separately verified S3-compatible route for that feature.
+
+### S3-compatible config
 
 Because R2, B2, MinIO, Spaces, Wasabi, and AWS all speak the S3 API, the same five
-variables cover every provider — only the endpoint/region change:
+variables cover these providers — only the endpoint/region change:
 
 | Variable | Purpose |
 |---|---|

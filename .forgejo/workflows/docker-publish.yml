@@ -1,4 +1,4 @@
-name: Build and Publish Docker Image
+name: Build and Publish Docker Image to Forgejo and GHCR
 
 on:
   push:
@@ -24,7 +24,11 @@ jobs:
           context: .
           platforms: linux/amd64
           push: false
-          tags: forgejo.jwala.net/${{ github.repository }}:latest
+          tags: |
+            forgejo.jwala.net/${{ github.repository }}:latest
+            forgejo.jwala.net/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/bheem1224/calnode:latest
+            ghcr.io/bheem1224/calnode:${{ github.sha }}
           build-args: |
             COMMIT=${{ github.sha }}
 
@@ -35,23 +39,36 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.REGISTRY_TOKEN }}
 
+      # This workflow runs on Forgejo, so its github.token is a Forgejo token.
+      # GHCR requires a separate GitHub classic PAT with write:packages.
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.GHCR_USERNAME }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
       # Buildx reuses the preceding build's local layer cache. Publishing here
       # retains Buildx's provenance output rather than dropping attestations.
-      - name: Publish Docker image to Forgejo
+      - name: Publish Docker image to Forgejo and GHCR
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64
           push: true
-          tags: forgejo.jwala.net/${{ github.repository }}:latest
+          tags: |
+            forgejo.jwala.net/${{ github.repository }}:latest
+            forgejo.jwala.net/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/bheem1224/calnode:latest
+            ghcr.io/bheem1224/calnode:${{ github.sha }}
           build-args: |
             COMMIT=${{ github.sha }}
 
       - name: Registry failure guidance
         if: failure()
         run: |
-          echo 'If Build Docker image passed, compilation succeeded. Check the failed publishing/login step.'
-          echo 'An HTML 403 on PUT /v2/.../blobs/uploads/... requires registry/reverse-proxy investigation.'
-          echo 'Correlate the failed request with Cloudflare Security Events and proxy/Forgejo logs.'
-          echo 'Verify REGISTRY_TOKEN package-write access, token account/username, and image-owner permissions.'
+          echo 'If Build Docker image passed, compilation succeeded. Check the registry login/publish step for the failing host.'
+          echo 'REGISTRY_TOKEN must allow the Forgejo actor to write packages in the Forgejo repository namespace.'
+          echo 'Forgejo Actions secrets GHCR_USERNAME and GHCR_TOKEN must name a GitHub account with package write access.'
+          echo 'GHCR_TOKEN must be a GitHub classic PAT with write:packages; Forgejo github.token cannot push to GHCR.'
           echo 'See docs/registry-publishing.md. This job remains failed until publishing succeeds.'

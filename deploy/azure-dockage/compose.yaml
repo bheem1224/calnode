@@ -1,0 +1,29 @@
+services:
+  calnode:
+    image: ${CALNODE_IMAGE:?Set CALNODE_IMAGE in .env}
+    env_file:
+      - .env
+    environment:
+      PORT: "3000"
+      DATABASE_URL: sqlite:///data/calnode.db
+      BASE_URL: ${BASE_URL:?Set the public HTTPS BASE_URL in .env}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in .env}
+      CALNODE_ENCRYPTION_KEY: ${CALNODE_ENCRYPTION_KEY:?Generate CALNODE_ENCRYPTION_KEY in .env}
+      CALNODE_RECOVERY_SECRET: ${CALNODE_RECOVERY_SECRET:?Generate CALNODE_RECOVERY_SECRET in .env}
+      LITESTREAM_REPLICA_URL: ${LITESTREAM_REPLICA_URL:?Configure a backup replica in .env}
+    ports:
+      - "${CALNODE_BIND_ADDRESS:-127.0.0.1}:3000:3000"
+    volumes:
+      - calnode_data:/data
+    restart: unless-stopped
+    stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+
+volumes:
+  calnode_data:
+    name: calnode-production-data
