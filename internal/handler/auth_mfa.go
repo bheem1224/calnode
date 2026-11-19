@@ -74,7 +74,7 @@ func (h *Handler) clearPendingAuth(w http.ResponseWriter) {
 func (h *Handler) nativeSessionGate(ctx context.Context, w http.ResponseWriter, id, method string) (bool, error) {
 	verified, _ := ctx.Value(ctxMFAVerified).(bool)
 	setup, _ := ctx.Value(ctxAuthSetup).(bool)
-	if verified || setup || method == "microsoft" || method == "google" || method == "passkey" {
+	if verified || setup || isSSOMethod(method) || method == "passkey" {
 		return false, nil
 	}
 	if !h.passwordAllowed(ctx, id) {
@@ -249,7 +249,7 @@ func (h *Handler) freshAuthFactor(w http.ResponseWriter, r *http.Request, u Auth
 		h.writeError(w, 403, "verify a passkey, authenticator code, or recovery code first")
 		return false
 	}
-	if fresh(verified) || ((method == "microsoft" || method == "google") && fresh(created)) {
+	if fresh(verified) || (isSSOMethod(method) && fresh(created)) {
 		return true
 	}
 	h.writeError(w, 403, "verify your identity before changing authentication methods")
@@ -491,7 +491,7 @@ func (h *Handler) ResetUserMFA(w http.ResponseWriter, r *http.Request) {
 	if !h.hasMFA(r.Context(), u.ID) {
 		var method string
 		_ = h.db.QueryRowContext(r.Context(), `SELECT auth_method FROM sessions WHERE id=?`, u.SessionID).Scan(&method)
-		if method != "microsoft" && method != "google" {
+		if !isSSOMethod(method) {
 			h.writeError(w, 403, "enroll and verify your own MFA before authorizing recovery")
 			return
 		}
@@ -616,7 +616,10 @@ func (h *Handler) sessionSecurityValid(ctx context.Context, sessionID, userID, m
 	if method == "server_recovery" && (!owner || time.Since(at) > time.Hour) {
 		return false
 	}
-	if setup || method == "microsoft" || method == "google" {
+	if isSSOMethod(method) {
+		return !setup && h.providerSessionAllowed(ctx, method, userID)
+	}
+	if setup {
 		return true
 	}
 	return mfa != "" || (!h.hasMFA(ctx, userID) && !h.mfaRequired(ctx, userID))

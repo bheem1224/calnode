@@ -112,6 +112,10 @@ func (h *Handler) GetMicrosoftSettings(w http.ResponseWriter, r *http.Request) {
 
 // PutMicrosoftSettings handles PUT and PATCH /v1/settings/microsoft (admin only).
 func (h *Handler) PutMicrosoftSettings(w http.ResponseWriter, r *http.Request) {
+	if h.identityProvidersEnabled(r.Context()) {
+		h.writeError(w, 409, "manage OAuth applications in Settings → Identity & integrations")
+		return
+	}
 	if _, ok := h.requireAdmin(w, r); !ok {
 		return
 	}

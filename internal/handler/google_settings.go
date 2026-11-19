@@ -75,6 +75,10 @@ func (h *Handler) GetGoogleSettings(w http.ResponseWriter, r *http.Request) {
 // so changes take effect immediately without a server restart.
 // If client_secret is omitted or empty the existing stored secret is kept.
 func (h *Handler) PatchGoogleSettings(w http.ResponseWriter, r *http.Request) {
+	if h.identityProvidersEnabled(r.Context()) {
+		h.writeError(w, 409, "manage OAuth applications in Settings → Identity & integrations")
+		return
+	}
 	if _, ok := h.requireAdmin(w, r); !ok {
 		return
 	}

@@ -22,11 +22,11 @@
 	// been given credentials for. Google is self-serve (a settings page); Microsoft is
 	// currently env-var-only, so it points at the docs instead of a form.
 	const UNCONFIGURED_SETUP = $derived<Record<string, { text: string; href: string; external?: boolean }>>({
-		google: { text: $t('calendar.setup.google'), href: '/admin/settings/google' },
+		google: { text: $t('calendar.setup.google'), href: '/admin/settings/identity' },
 		microsoft: {
 			text: $t('calendar.setup.microsoft'),
-			href: 'https://github.com/Calnode/calnode/blob/main/.env.example',
-			external: true
+			href: '/admin/settings/identity',
+			external: false
 		}
 	});
 
@@ -87,7 +87,7 @@
 	// Both endpoints key on provider + account_email instead.
 	let pendingDisconnect = $state<CalendarConnection | null>(null);
 
-	const providers = $derived(status?.providers ?? []);
+	const providers = $derived(status?.integration_providers ? (status?.providers ?? []).filter(p=>p==='caldav') : status?.providers ?? []);
 	const connections = $derived(status?.connections ?? []);
 
 	// Zoom is a separate, per-host meeting-link connection (not a calendar).
@@ -330,7 +330,7 @@
 				text={$t('calendar.noProvider.body')}
 				links={{
 					google: {
-						href: '/admin/settings/google',
+						href: '/admin/settings/identity',
 						text: $t('calendar.noProvider.googleLink'),
 						class: 'font-medium underline'
 					}
@@ -539,7 +539,8 @@
 					</div>
 				{/if}
 			{/each}
-			{#each status?.unconfigured_providers ?? [] as p}
+			{#each status?.integration_providers ?? [] as app}<div class="flex items-center justify-between gap-3 rounded-lg border bg-card p-4"><div class="flex min-w-0 items-center gap-3">{@render providerIcon(app.kind)}<p class="truncate font-medium">{app.name}</p></div><Button type="button" variant="outline" onclick={()=>window.location.assign(app.url)}>{$t('calendar.connectButton')}</Button></div>{/each}
+   {#each status?.unconfigured_providers ?? [] as p}
 				<div class="flex items-center justify-between rounded-lg border border-dashed bg-muted/20 p-4">
 					<div class="flex items-center gap-3">
 						{@render providerIcon(p)}

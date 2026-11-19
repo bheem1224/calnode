@@ -85,3 +85,19 @@ Use `http://localhost:39137` consistently for `BASE_URL`, browser navigation and
 addresses as passkey relying-party domains even though loopback HTTP is otherwise
 a secure context. Registration errors now fail the script with the visible error
 or server response instead of only timing out waiting for a passkey label.
+
+## Identity provider end-to-end check
+
+Start another **fresh, disposable localhost instance** with the current built
+frontend and `DATABASE_URL=sqlite://:memory:`. Run
+`CALNODE_IDENTITY_TEST_URL=http://localhost:39140 node scripts/verify-identity-providers.mjs`
+(set the environment variable separately in PowerShell). The script refuses an
+already-claimed instance and creates its own test Owner and fake app credentials.
+It checks the real provider dialog, recent verification, multiple-group ANY/ALL
+controls, callback URLs, calendar-only isolation, old settings redirects and the
+generic Member SSO policy. It never contacts Google or Microsoft.
+
+Signed-token OIDC integration tests in `internal/handler/identity_providers_test.go`
+use a local HTTPS issuer, real signatures, discovery and JWKS. Test real provider
+consent, tenant/group policies and calendar refresh against staging accounts before
+production rollout; local fakes cannot validate an external app registration.

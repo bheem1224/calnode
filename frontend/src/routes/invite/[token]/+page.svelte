@@ -9,6 +9,7 @@
 
 	let token = $derived(page.params.token);
 	let inviteEmail = $state('');
+ let identityProviders=$state<{id:string;name:string;url:string}[]|undefined>(undefined);
  let passwordAllowed=$state(true),microsoftAvailable=$state(false);
 	let valid = $state<boolean | null>(null);
 
@@ -23,7 +24,7 @@
 		if (res.ok) {
 			const data = await res.json();
 			inviteEmail = data.email;
- passwordAllowed=data.password_allowed!==false;microsoftAvailable=!!data.microsoft_available;
+ identityProviders=data.identity_providers;passwordAllowed=data.password_allowed!==false;microsoftAvailable=!!data.microsoft_available;
 			valid = true;
 		} else {
 			valid = false;
@@ -81,7 +82,8 @@
 				<div class="mb-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>
 			{/if}
 
-			{#if microsoftAvailable}
+			{#each identityProviders??[] as provider}<Button type="button" variant={passwordAllowed?'outline':'default'} class="mb-3 w-full" onclick={()=>window.location.assign(provider.url+'?invite='+encodeURIComponent(token||''))}>{$t('identity.continueWith',{name:provider.name})}</Button>{/each}
+   {#if microsoftAvailable && !identityProviders}
     <p class="mb-3 text-xs leading-relaxed text-muted-foreground">{$t('securitySettings.inviteSSOHint')}</p>
     <Button type="button" variant={passwordAllowed?'outline':'default'} class="mb-5 w-full" onclick={()=>{window.location.href='/v1/auth/microsoft/login?invite='+encodeURIComponent(token || '');}}>{$t('securitySettings.inviteSSO')}</Button>
    {/if}
@@ -104,7 +106,7 @@
 					{submitting ? $t('auth.invite.submitting') : $t('auth.invite.submit')}
 				</Button>
 			</form>
-   {:else if !microsoftAvailable}<p role="alert" class="text-sm text-destructive">{$t('securitySettings.inviteUnavailable')}</p>{/if}
+   {:else if !microsoftAvailable && !identityProviders?.length}<p role="alert" class="text-sm text-destructive">{$t('securitySettings.inviteUnavailable')}</p>{/if}
 		{/if}
 	</div>
 </div>

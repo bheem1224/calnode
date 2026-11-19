@@ -28,6 +28,7 @@ import (
 
 	"github.com/calnode/calnode/internal/calendar"
 	"github.com/calnode/calnode/internal/connstore"
+	"github.com/calnode/calnode/internal/identityprovider"
 	"github.com/calnode/calnode/internal/oauthstore"
 	"github.com/calnode/calnode/internal/secret"
 	"github.com/calnode/calnode/internal/uid"
@@ -40,11 +41,13 @@ var _ calendar.Provider = (*Client)(nil)
 
 // Client manages Microsoft Graph OAuth tokens and API access.
 type Client struct {
-	config  *oauth2.Config
-	key     [32]byte
-	db      *sql.DB
-	logger  *slog.Logger
-	apiBase string // base URL for Graph API; overridable in tests
+	config       *oauth2.Config
+	providerID   string
+	pkceVerifier string
+	key          [32]byte
+	db           *sql.DB
+	logger       *slog.Logger
+	apiBase      string // base URL for Graph API; overridable in tests
 }
 
 // New creates a Client. tenant defaults to "common" (any Microsoft account).
@@ -88,13 +91,25 @@ func (c *Client) Name() string { return providerName }
 // Calnode must not also attach an .ics (it would duplicate).
 func (c *Client) InvitesGuests() bool { return true }
 
+// WithProvider returns a separate OAuth app client for a new connection.
+func (c *Client) WithProvider(id string) *Client { clone := *c; clone.providerID = id; return &clone }
+
+func (c *Client) WithPKCE(verifier string) *Client {
+	clone := *c
+	clone.pkceVerifier = verifier
+	return &clone
+}
+
 // AuthURL returns the Microsoft consent page URL with the given state value.
 // prompt=select_account forces the account chooser so a cached single-sign-on
 // session can't silently reconnect the wrong account (e.g. a mailbox-less admin
 // account instead of the user's real Exchange Online mailbox).
 func (c *Client) AuthURL(state string) string {
-	return c.config.AuthCodeURL(state, oauth2.AccessTypeOffline,
-		oauth2.SetAuthURLParam("prompt", "select_account"))
+	options := []oauth2.AuthCodeOption{oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "select_account")}
+	if c.pkceVerifier != "" {
+		options = append(options, oauth2.S256ChallengeOption(c.pkceVerifier))
+	}
+	return c.config.AuthCodeURL(state, options...)
 }
 
 // EncryptState encrypts userID into an opaque, URL-safe OAuth state value.
@@ -118,7 +133,11 @@ var ErrNoAccountIdentity = errors.New("microsoft: id_token identifies no account
 // calendarID is unused for Graph (events go to /me/events) but kept for the
 // calendar.Provider interface; stored as a placeholder.
 func (c *Client) Exchange(ctx context.Context, userID, code, calendarID string) error {
-	tok, err := c.config.Exchange(ctx, code)
+	options := []oauth2.AuthCodeOption{}
+	if c.pkceVerifier != "" {
+		options = append(options, oauth2.VerifierOption(c.pkceVerifier))
+	}
+	tok, err := c.config.Exchange(ctx, code, options...)
 	if err != nil {
 		return fmt.Errorf("microsoft: token exchange: %w", err)
 	}
@@ -233,6 +252,14 @@ func (c *Client) HasDestination(ctx context.Context, userID string) (bool, error
 // buildClient turns one connection row's encrypted tokens into an authorized *http.Client
 // whose refreshes persist back to that same account's row (keyed by accountEmail).
 func (c *Client) buildClient(ctx context.Context, userID, accessEnc, refreshEnc, calID, expiryStr, accountEmail string) (*http.Client, error) {
+	cfg, providerID, resolveErr := identityprovider.CalendarConfig(ctx, c.db, c.key, "microsoft", userID, accountEmail, accessEnc, c.config)
+	if resolveErr != nil {
+		return nil, resolveErr
+	}
+	bound := *c
+	bound.config = cfg
+	bound.providerID = providerID
+
 	access, err := c.decrypt(accessEnc)
 	if err != nil {
 		return nil, fmt.Errorf("microsoft: decrypt access token: %w", err)
@@ -254,10 +281,10 @@ func (c *Client) buildClient(ctx context.Context, userID, accessEnc, refreshEnc,
 	}
 	tok := &oauth2.Token{AccessToken: string(access), RefreshToken: refresh, Expiry: expiry}
 	saving := &oauthstore.SavingTokenSource{
-		Inner: oauth2.ReuseTokenSource(nil, c.config.TokenSource(ctx, tok)),
+		Inner: oauth2.ReuseTokenSource(nil, bound.config.TokenSource(ctx, tok)),
 		// kind="" → preserve the account_kind + flags already stored (refresh has no id_token).
 		Save: func(ctx context.Context, t *oauth2.Token) error {
-			return c.saveToken(ctx, userID, calID, accountEmail, "", t)
+			return bound.saveTokenBound(ctx, userID, calID, accountEmail, "", t, true)
 		},
 		Logger: c.logger,
 		LogMsg: "microsoft: failed to persist refreshed token",
@@ -377,6 +404,9 @@ func (c *Client) freeBusyConnections(ctx context.Context, userID string) ([]msFB
 // connection: check_conflicts=1, destination only if the user has none yet. On a refresh (row
 // exists): preserves check_conflicts/is_destination, and account_kind when kind=="".
 func (c *Client) saveToken(ctx context.Context, userID, calID, accountEmail, kind string, tok *oauth2.Token) error {
+	return c.saveTokenBound(ctx, userID, calID, accountEmail, kind, tok, false)
+}
+func (c *Client) saveTokenBound(ctx context.Context, userID, calID, accountEmail, kind string, tok *oauth2.Token, refresh bool) error {
 	accessEnc, err := c.encrypt([]byte(tok.AccessToken))
 	if err != nil {
 		return err
@@ -401,6 +431,12 @@ func (c *Client) saveToken(ctx context.Context, userID, calID, accountEmail, kin
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	if refresh {
+		if err := identityprovider.CheckRefreshBinding(ctx, tx, userID, "microsoft", accountEmail, c.providerID); err != nil {
+			return err
+		}
+	}
+
 	checkConflicts, isDest, existing, err := connstore.ResolveFlags(ctx, tx, userID, providerName, accountEmail)
 	if err != nil {
 		return fmt.Errorf("microsoft: save token: %w", err)
@@ -422,9 +458,9 @@ func (c *Client) saveToken(ctx context.Context, userID, calID, accountEmail, kin
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO calendar_connections
 		    (id, user_id, provider, account_email, access_token_enc, refresh_token_enc, calendar_id,
-		     check_conflicts, is_destination, expiry_at, created_at, account_kind)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		uid.New(), userID, providerName, accountEmail, accessEnc, refreshEnc, calID, checkConflicts, isDest, expiryStr, now, kind); err != nil {
+		     check_conflicts, is_destination, expiry_at, created_at, account_kind,oauth_provider_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?)`,
+		uid.New(), userID, providerName, accountEmail, accessEnc, refreshEnc, calID, checkConflicts, isDest, expiryStr, now, kind, c.providerID); err != nil {
 		return fmt.Errorf("microsoft: save token insert: %w", err)
 	}
 	return tx.Commit()

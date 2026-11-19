@@ -20,6 +20,10 @@ const stateSep = "\x1f"
 // Redirects the browser to the chosen provider's OAuth consent page.
 // Optional ?provider=<name> selects a provider; defaults to the primary.
 func (h *Handler) ConnectCalendar(w http.ResponseWriter, r *http.Request) {
+	if h.identityProvidersEnabled(r.Context()) {
+		h.connectProviderCalendar(w, r)
+		return
+	}
 	if h.demoMode {
 		h.writeError(w, http.StatusServiceUnavailable, "not available in the demo")
 		return
@@ -55,6 +59,10 @@ func (h *Handler) ConnectCalendar(w http.ResponseWriter, r *http.Request) {
 // Phase 1 resolves to the primary provider (Google). When a second provider is added,
 // the provider will be encoded in the state and resolved here.
 func (h *Handler) CalendarCallback(w http.ResponseWriter, r *http.Request) {
+	if h.identityProvidersEnabled(r.Context()) {
+		h.callbackProviderCalendar(w, r)
+		return
+	}
 	svc := h.getCal()
 	if svc == nil || !svc.Any() {
 		h.writeError(w, http.StatusNotImplemented, "Calendar integration not configured")
@@ -225,6 +233,21 @@ func (h *Handler) CalendarStatus(w http.ResponseWriter, r *http.Request) {
 		"connections":            conns,
 		"unconfigured_providers": unconfiguredProviders(svc),
 	}
+	if h.identityProvidersEnabled(r.Context()) {
+		ps, e := h.listIdentityProviders(r.Context())
+		if e != nil {
+			h.writeError(w, 503, "calendar provider settings unavailable")
+			return
+		}
+		available := []publicProvider{}
+		for _, p := range ps {
+			if p.Integrations() {
+				available = append(available, publicProvider{p.ID, p.Name, p.Kind, "/v1/calendar/connect?provider_id=" + p.ID})
+			}
+		}
+		resp["integration_providers"] = available
+	}
+
 	if destProvider != "" {
 		resp["provider"] = destProvider
 	}

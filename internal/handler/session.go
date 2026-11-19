@@ -51,9 +51,13 @@ func (h *Handler) createSessionMethod(ctx context.Context, w http.ResponseWriter
 	if identity, ok := ctx.Value(ctxKeySigninIdentity).(signinIdentity); ok && identity.PolicyRevision != nil {
 		revision = *identity.PolicyRevision
 	}
+	providerID, providerRevision := "", 0
+	if intent, ok := ctx.Value(ctxProviderIntent).(providerIntent); ok {
+		revision, providerID, providerRevision = intent.PolicyRevision, intent.ProviderID, intent.Revision
+	}
 	result, err := h.db.ExecContext(ctx,
-		`INSERT INTO sessions (id,user_id,expires_at,auth_method,mfa_verified_at,recovery_only) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM users WHERE id=? AND archived_at IS NULL) AND (? IS NULL OR (SELECT signin_policy_json FROM server_settings WHERE id=1)=?)`,
-		sessID, userID, expiresAt, method, mfa, setup, userID, revision, revision)
+		`INSERT INTO sessions (id,user_id,expires_at,auth_method,mfa_verified_at,recovery_only) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM users WHERE id=? AND archived_at IS NULL) AND (? IS NULL OR (SELECT signin_policy_json FROM server_settings WHERE id=1)=?) AND (?='' OR EXISTS(SELECT 1 FROM identity_providers WHERE id=? AND revision=? AND enabled=1 AND purpose IN('sso','both')))`,
+		sessID, userID, expiresAt, method, mfa, setup, userID, revision, revision, providerID, providerID, providerRevision)
 	if err != nil {
 		return err
 	}

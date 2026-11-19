@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -302,8 +303,11 @@ func BuildHandler(ctx context.Context, cfg *config.Config, db *sql.DB, logger *s
 
 	if calSvc.Any() {
 		h.SetCalendar(calSvc)
-		h.StartCalendarReconciler(ctx)
 	}
+	if err := h.InitializeIdentityProviders(ctx); err != nil {
+		panic(fmt.Errorf("initialize identity providers: %w", err))
+	}
+	h.StartCalendarReconciler(ctx)
 
 	// Optional LLM layer (PRD §8.11) — off unless configured + enabled in Settings.
 	if llmCfg, err := handler.LoadLLMSettingsFromDB(db, encKey); err != nil {
@@ -401,6 +405,8 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("DELETE /v1/users/me/security/factors/{id}", loginRL(h.RequireAuth(h.DeleteAuthFactor)))
 	mux.HandleFunc("POST /v1/users/{id}/mfa/reset", loginRL(h.RequireAuth(h.ResetUserMFA)))
 	mux.HandleFunc("POST /v1/auth/login/email", loginRL(h.LoginEmail))
+	mux.HandleFunc("GET /v1/auth/providers/{id}/login", loginRL(h.LoginIdentityProvider))
+	mux.HandleFunc("GET /v1/auth/providers/{id}/callback", loginRL(h.CallbackIdentityProvider))
 	mux.HandleFunc("POST /v1/auth/magic-link/request", loginRL(h.RequestMagicLink))
 	mux.HandleFunc("GET /v1/auth/magic-link/verify", loginRL(h.VerifyMagicLink))
 	mux.HandleFunc("POST /v1/auth/password/forgot", loginRL(h.RequestPasswordReset))
@@ -503,6 +509,10 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("POST /v1/settings/email/rsvp-webhook", settingsRL(h.RequireAuth(h.SetupRSVPWebhook)))
 	mux.HandleFunc("POST /v1/dynamic-links", h.RequireAuth(h.CreateDynamicLink))
 	mux.HandleFunc("GET /v1/settings/security/operations", h.RequireAuth(h.GetSecurityOperations))
+	mux.HandleFunc("GET /v1/settings/identity-providers", h.RequireAuth(h.ListIdentityProviders))
+	mux.HandleFunc("POST /v1/settings/identity-providers", loginRL(h.RequireAuth(h.SaveIdentityProvider)))
+	mux.HandleFunc("PUT /v1/settings/identity-providers/{id}", loginRL(h.RequireAuth(h.SaveIdentityProvider)))
+	mux.HandleFunc("GET /v1/users/me/identities", h.RequireAuth(h.ListMyIdentities))
 	mux.HandleFunc("POST /v1/settings/security/jobs/{id}/retry", settingsRL(h.RequireAuth(h.RetrySecurityJob)))
 	mux.HandleFunc("GET /v1/settings/security", h.RequireAuth(h.GetSigninPolicy))
 	mux.HandleFunc("PUT /v1/settings/security", settingsRL(h.RequireAuth(h.PutSigninPolicy)))

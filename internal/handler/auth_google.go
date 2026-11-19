@@ -38,6 +38,11 @@ func (h *Handler) SetGoogleAuth(clientID, clientSecret, redirectURL string, secu
 // LoginGoogle redirects the user to Google's OAuth consent screen.
 // GET /v1/auth/login
 func (h *Handler) LoginGoogle(w http.ResponseWriter, r *http.Request) {
+	if h.identityProvidersEnabled(r.Context()) {
+		r.SetPathValue("id", "legacy-google")
+		h.LoginIdentityProvider(w, r)
+		return
+	}
 	ga := h.getGoogleAuth()
 	if ga == nil {
 		http.Error(w, "Google OAuth not configured — set GOOGLE_CLIENT_ID", http.StatusServiceUnavailable)
@@ -59,6 +64,11 @@ func (h *Handler) LoginGoogle(w http.ResponseWriter, r *http.Request) {
 // CallbackGoogle handles the OAuth redirect from Google.
 // GET /v1/auth/callback
 func (h *Handler) CallbackGoogle(w http.ResponseWriter, r *http.Request) {
+	if h.identityProvidersEnabled(r.Context()) {
+		r.SetPathValue("id", "legacy-google")
+		h.CallbackIdentityProvider(w, r)
+		return
+	}
 	ga := h.getGoogleAuth()
 	if ga == nil {
 		http.Error(w, "Google OAuth not configured", http.StatusServiceUnavailable)

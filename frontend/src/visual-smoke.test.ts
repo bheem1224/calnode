@@ -184,12 +184,12 @@ describe('security settings', () => {
   vi.spyOn(api,'get').mockImplementation(async(path)=>path.endsWith('/operations')?{failed_jobs:[],calendar_errors:[],failed_confirmations:0,pending_jobs:0}:({policy:{google_enabled:false,microsoft_enabled:true,members_sso_only:true,admin_password_enabled:true,auto_provision:true,approved_domains:'company.com',required_group_id:'11111111-1111-4111-8111-111111111111',require_admin_mfa:false,require_member_mfa:false,session_hours:12,dynamic_link_days:7},google_configured:true,microsoft_configured:true}));
   try {
    const {container}=await render(SecuritySettings);
-   await expect.poll(()=>container.querySelectorAll('[role="switch"]').length).toBe(7);
+   await expect.poll(()=>container.querySelectorAll('[role="switch"]').length).toBe(4);
    const content=container.firstElementChild as HTMLElement;
    expect(content.getBoundingClientRect().width).toBeLessThanOrEqual(672);
    expect(content.scrollWidth).toBeLessThanOrEqual(content.clientWidth);
-   const group=container.querySelector<HTMLInputElement>('#security-group')!;
-   expect(group.value).toContain('11111111');
+   expect(container.querySelector('#security-group')).toBeNull();
+   expect(container.textContent).toContain('Require SSO sign-in for Members');
    expect(container.querySelector('label[for="members-sso"]')).not.toBeNull();
    const save=[...container.querySelectorAll('button')].find(b=>b.textContent?.includes('Review & save'))!;
    save.click();

@@ -1,5 +1,6 @@
 <script lang="ts">
  import { onMount } from 'svelte';
+ import LinkedIdentities from '$lib/components/LinkedIdentities.svelte';
  import { api } from '$lib/api';
  import { t } from '$lib/i18n';
  import { Button } from '$lib/components/ui/button';
@@ -23,6 +24,7 @@
  <header><h2 class="text-xl font-semibold tracking-tight">{$t('nativeAuth.title')}</h2><p class="mt-1 text-sm text-muted-foreground">{$t('nativeAuth.description')}</p></header>
  {#if error}<p role="alert" class="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>{/if}
  {#if status}
+  {#if !status.setup_required}<LinkedIdentities />{/if}
   {#if status.setup_required}<div class="rounded-lg border bg-muted/40 p-4 text-sm">{$t('nativeAuth.setupRequired')}</div>{/if}
   {#if !status.native_allowed}<p class="text-sm text-muted-foreground">{$t('nativeAuth.ssoManaged')}</p>
   {:else}

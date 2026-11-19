@@ -110,6 +110,24 @@ func (h *Handler) AuthorizeMCP(w http.ResponseWriter, r *http.Request) {
 
 	userID, email, ok := h.sessionUser(r)
 	if !ok {
+		if h.identityProvidersEnabled(r.Context()) {
+			providers, err := h.publicIdentityProviders(r.Context(), false)
+			if err != nil {
+				h.writeError(w, 503, "sign-in providers unavailable")
+				return
+			}
+			if len(providers) > 0 {
+				h.setOAuthReturn(w, r.URL.RequestURI())
+				dest := "/admin/login"
+				if len(providers) == 1 {
+					dest = providers[0].URL
+				}
+				http.Redirect(w, r, dest, http.StatusFound)
+				return
+			}
+			http.Error(w, "Please sign in to the Calnode admin in this browser, then start the connection again.", http.StatusUnauthorized)
+			return
+		}
 		// Not signed in — bounce through the existing SSO login and return here.
 		if h.getGoogleAuth() != nil || h.getMicrosoftAuth() != nil {
 			h.setOAuthReturn(w, r.URL.RequestURI())

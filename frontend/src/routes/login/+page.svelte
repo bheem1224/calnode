@@ -11,6 +11,7 @@
 		claimed: boolean;
 		email_login: boolean;
 		providers: string[];
+        identity_providers?:{id:string;name:string;kind:string;url:string}[];
 		smtp_configured: boolean;
 		demo_mode: boolean;
 	};
@@ -110,12 +111,12 @@
 		}
 	}
 
-	const showGoogle = $derived(status?.providers?.includes('google') ?? false);
-	const showMicrosoft = $derived(status?.providers?.includes('microsoft') ?? false);
+	const showGoogle = $derived(!status?.identity_providers && (status?.providers?.includes('google') ?? false));
+	const showMicrosoft = $derived(!status?.identity_providers && (status?.providers?.includes('microsoft') ?? false));
 	const showEmail = $derived(status?.email_login ?? false);
 	const showForgot = $derived(status?.smtp_configured ?? false);
 	const showMagic = $derived(status?.smtp_configured ?? false);
-	const showDivider = $derived((showGoogle || showMicrosoft) && showEmail);
+	const showDivider = $derived((showGoogle || showMicrosoft || !!status?.identity_providers?.length) && showEmail);
 </script>
 
 <svelte:head><title>{$t('auth.login.headTitle')}</title></svelte:head>
@@ -144,7 +145,10 @@
 				{status?.demo_mode ? $t('auth.login.enteringDemo') : $t('auth.login.loading')}
 			</div>
 		{:else}
-			{#if showMicrosoft}
+			{#each status.identity_providers ?? [] as provider}
+    <Button type="button" variant="outline" class="mb-3 h-11 w-full" onclick={()=>window.location.assign(provider.url)}>{$t('identity.continueWith',{name:provider.name})}</Button>
+   {/each}
+   {#if showMicrosoft}
 				<Button class="h-11 w-full font-medium shadow-xs" onclick={() => window.location.href = '/v1/auth/microsoft/login'}>
 					<svg width="16" height="16" viewBox="0 0 23 23" aria-hidden="true" class="mr-2">
 						<path fill="#F25022" d="M1 1h10v10H1z"/>

@@ -49,6 +49,15 @@ func (h *Handler) AuthStatus(w http.ResponseWriter, r *http.Request) {
 		"smtp_configured": h.isEmailEnabled(),
 		"demo_mode":       h.demoMode,
 	}
+	if h.identityProvidersEnabled(r.Context()) {
+		list, e := h.publicIdentityProviders(r.Context(), false)
+		if e != nil {
+			h.writeError(w, 503, "sign-in providers unavailable")
+			return
+		}
+		resp["identity_providers"] = list
+	}
+
 	if h.demoMode {
 		resp["next_reset_at"] = h.getDemoNextResetAt().UTC().Format(time.RFC3339)
 	}

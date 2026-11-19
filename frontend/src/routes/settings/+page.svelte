@@ -47,20 +47,7 @@
 			href: `${base}/settings/email`,
 			adminOnly: true,
 		},
-		{
-			section: 'Instance Settings',
-			title: 'Google OAuth',
-			description: 'Connect Google Workspace OAuth for Calendar and Google Meet.',
-			href: `${base}/settings/google`,
-			adminOnly: true,
-		},
-		{
-			section: 'Instance Settings',
-			title: 'Microsoft OAuth',
-			description: 'Configure Microsoft Entra ID SSO, Outlook Calendar, and Teams.',
-			href: `${base}/settings/microsoft`,
-			adminOnly: true,
-		},
+		{ section: 'Instance Settings', title: $t('identity.title'), description: $t('identity.subtitle'), href: `${base}/settings/identity`, adminOnly: true },
 		{
 			section: 'Instance Settings',
 			title: 'Zoom',
@@ -115,7 +102,7 @@
 	const visibleCards = $derived.by(() => {
 		const q = query.trim().toLowerCase();
 		return cards.filter((c) => {
-			if (c.adminOnly && !$currentUser?.permissions?.[c.href.endsWith('/security')?'settings.security':c.href.endsWith('/members')?'members.read':c.href.endsWith('/branding')?'branding.read':'settings.read']) return false;
+			if (c.adminOnly && !$currentUser?.permissions?.[(c.href.endsWith('/security')||c.href.endsWith('/identity'))?'settings.security':c.href.endsWith('/members')?'members.read':c.href.endsWith('/branding')?'branding.read':'settings.read']) return false;
 			if (!q) return true;
 			return (
 				c.title.toLowerCase().includes(q) ||

@@ -48,7 +48,7 @@ func (h *Handler) Reauthenticate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	valid := h.passwordAllowed(r.Context(), u.ID) && hash != "" && bcrypt.CompareHashAndPassword([]byte(hash), []byte(in.Password)) == nil
-	if method == "microsoft" || method == "google" {
+	if isSSOMethod(method) {
 		started, err := time.Parse(time.RFC3339Nano, created)
 		valid = valid || (err == nil && time.Since(started) >= 0 && time.Since(started) < 5*time.Minute)
 	}

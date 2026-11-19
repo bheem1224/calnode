@@ -57,7 +57,7 @@ backup method. The email, calendar and other integration settings below still ap
 > Google OAuth credentials are stored in the database. Environment variables are read only
 > when nothing is stored: on first boot they *seed* the database, and from then on the
 > stored values take precedence. Changing an env var after that has no effect until you
-> clear the matching setting in Settings → Email / Settings → Google. Calnode logs a
+> clear the matching setting in Settings → Email / Settings → Identity & integrations. Calnode logs a
 > warning at startup naming every variable it is ignoring, so this is visible rather than
 > silent.
 
@@ -73,7 +73,7 @@ backup method. The email, calendar and other integration settings below still ap
 | `EMAIL_SMTP_CONNECT_HOST` / `EMAIL_SMTP_CONNECT_PORT` | no | SMTP host / port | TCP relay address, loaded at startup. Applies to environment and database SMTP settings; TLS and authentication still use the SMTP host. |
 | `EMAIL_SMTP_TLS` / `_STARTTLS` | no | `false` | `STARTTLS` for 587, implicit `TLS` for 465. |
 | `EMAIL_FROM_ADDRESS` / `EMAIL_FROM_NAME` | no | `bookings@localhost` / `Calnode` | The From identity. |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | no | — | Google sign-in + calendar. Seeds Settings → Google OAuth on first boot; once stored there, the database value wins (see the precedence note above). |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | no | — | Google sign-in + calendar. Seeds Settings → Identity & integrations on first boot; once stored there, the database value wins (see the precedence note above). |
 | `LITESTREAM_REPLICA_URL` | recommended | — | Enables continuous SQLite backup (see §6). |
 | `COOKIE_SECURE` | no | https→true | Override cookie Secure flag; defaults from `BASE_URL` scheme. |
 | `TRUSTED_PROXY_CIDRS` | no | — | Comma-separated CIDRs (a bare address = one host) whose `X-Forwarded-For` is believed when keying per-IP rate limits, e.g. `10.0.0.0/8`. Include a fronting CDN's own ranges so the walk steps over its edge and lands on the visitor. Unset ⇒ the header is ignored and the limit keys on the TCP peer, so behind a CDN every visitor shares one bucket. **Only list networks you control**: anything in the list can name any client IP it likes. Single-value vendor headers (`CF-Connecting-IP`, `X-Real-IP`) are never read, from any peer. |
@@ -197,18 +197,11 @@ they were invited with.
 
 ## 5. Google OAuth (sign-in + calendar)
 
-In Google Cloud Console → Credentials → your OAuth client, add **Authorized
-redirect URIs** (derived from `BASE_URL`):
+Open **Settings → Identity & integrations → Add provider → Google**. Choose SSO, calendar/conferencing, or both. Save and register the exact redirect URLs shown by the provider editor. Newly created SSO apps use `/v1/auth/providers/{id}/callback`; imported Google apps keep `/v1/auth/callback`. Calendar apps use `/v1/calendar/callback`.
 
-```
-https://<your-domain>/v1/auth/callback
-https://<your-domain>/v1/calendar/callback
-```
+Existing effective environment/database credentials are imported once. Thereafter manage providers centrally; adding multiple applications per vendor is supported. Use a Workspace **Internal** app where eligible, or publish an **External** app to production to avoid Testing-mode refresh-token expiry. Publishing and Google's verification requirements depend on scopes and audience.
 
-Set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (env or Settings → Google OAuth — the
-page shows the exact redirect URIs for the running instance). Calendar is a
-sensitive scope, so submit the app for verification before wide public use
-(unverified = warning screen + 100-user cap).
+Microsoft Entra and generic OIDC setup, multiple-group enrollment and migration details are in [Identity and sign-in](docs/security-signin.md).
 
 ---
 

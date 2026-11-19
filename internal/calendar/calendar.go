@@ -220,17 +220,18 @@ func (s *Service) Disconnect(ctx context.Context, userID string) error {
 
 // Connection is one connected calendar account for the multi-calendar UI/API.
 type Connection struct {
-	ID             string `json:"id"`
-	Provider       string `json:"provider"`
-	AccountEmail   string `json:"account_email"`
-	IsDestination  bool   `json:"is_destination"`
-	CheckConflicts bool   `json:"check_conflicts"`
+	OAuthProviderID string `json:"oauth_provider_id"`
+	ID              string `json:"id"`
+	Provider        string `json:"provider"`
+	AccountEmail    string `json:"account_email"`
+	IsDestination   bool   `json:"is_destination"`
+	CheckConflicts  bool   `json:"check_conflicts"`
 }
 
 // Connections lists the user's connected calendars (all providers), destination first.
 func (s *Service) Connections(ctx context.Context, userID string) ([]Connection, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, provider, COALESCE(account_email,''), is_destination, check_conflicts
+		SELECT id, provider, COALESCE(account_email,''), is_destination, check_conflicts,oauth_provider_id
 		FROM calendar_connections WHERE user_id = ?
 		ORDER BY is_destination DESC, created_at ASC`, userID)
 	if err != nil {
@@ -241,7 +242,7 @@ func (s *Service) Connections(ctx context.Context, userID string) ([]Connection,
 	for rows.Next() {
 		var c Connection
 		var dest, check int
-		if err := rows.Scan(&c.ID, &c.Provider, &c.AccountEmail, &dest, &check); err != nil {
+		if err := rows.Scan(&c.ID, &c.Provider, &c.AccountEmail, &dest, &check, &c.OAuthProviderID); err != nil {
 			return nil, err
 		}
 		c.IsDestination = dest != 0

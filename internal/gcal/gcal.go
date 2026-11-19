@@ -20,6 +20,7 @@ import (
 
 	"github.com/calnode/calnode/internal/calendar"
 	"github.com/calnode/calnode/internal/connstore"
+	"github.com/calnode/calnode/internal/identityprovider"
 	"github.com/calnode/calnode/internal/oauthstore"
 	"github.com/calnode/calnode/internal/secret"
 	"github.com/calnode/calnode/internal/uid"
@@ -37,11 +38,13 @@ func (c *Client) InvitesGuests() bool { return true }
 
 // Client manages Google Calendar OAuth tokens and API access.
 type Client struct {
-	config  *oauth2.Config
-	key     [32]byte
-	db      *sql.DB
-	logger  *slog.Logger
-	apiBase string // base URL for Calendar API; overridable in tests
+	config       *oauth2.Config
+	providerID   string
+	pkceVerifier string
+	key          [32]byte
+	db           *sql.DB
+	logger       *slog.Logger
+	apiBase      string // base URL for Calendar API; overridable in tests
 }
 
 // New creates a Client. encKeyHex is the 64-char hex AES-256 encryption key.
@@ -67,12 +70,22 @@ func New(db *sql.DB, clientID, clientSecret, redirectURL, encKeyHex string) (*Cl
 	}, nil
 }
 
+// WithProvider returns a separate OAuth app client for a new connection.
+func (c *Client) WithProvider(id string) *Client { clone := *c; clone.providerID = id; return &clone }
+
+func (c *Client) WithPKCE(verifier string) *Client {
+	clone := *c
+	clone.pkceVerifier = verifier
+	return &clone
+}
+
 // AuthURL returns the Google OAuth consent page URL with the given state value.
 func (c *Client) AuthURL(state string) string {
-	return c.config.AuthCodeURL(state,
-		oauth2.AccessTypeOffline,
-		oauth2.ApprovalForce, // always return a refresh token
-	)
+	options := []oauth2.AuthCodeOption{oauth2.AccessTypeOffline, oauth2.ApprovalForce}
+	if c.pkceVerifier != "" {
+		options = append(options, oauth2.S256ChallengeOption(c.pkceVerifier))
+	}
+	return c.config.AuthCodeURL(state, options...)
 }
 
 // EncryptState encrypts userID into an opaque, URL-safe string for use as the
@@ -91,7 +104,11 @@ func (c *Client) DecryptState(state string) (string, error) {
 // connected account's email so a user can connect several Google accounts (each a distinct
 // row); re-connecting the same account updates its row rather than duplicating it.
 func (c *Client) Exchange(ctx context.Context, userID, code, calendarID string) error {
-	tok, err := c.config.Exchange(ctx, code)
+	options := []oauth2.AuthCodeOption{}
+	if c.pkceVerifier != "" {
+		options = append(options, oauth2.VerifierOption(c.pkceVerifier))
+	}
+	tok, err := c.config.Exchange(ctx, code, options...)
 	if err != nil {
 		return fmt.Errorf("gcal: token exchange: %w", err)
 	}
@@ -148,6 +165,14 @@ func (c *Client) Disconnect(ctx context.Context, userID string) error {
 // buildClient turns one connection row's encrypted tokens into an authorized *http.Client
 // whose refreshes persist back to that same account's row (keyed by accountEmail).
 func (c *Client) buildClient(ctx context.Context, userID, accessEnc, refreshEnc, calID, expiryStr, accountEmail string) (*http.Client, error) {
+	cfg, providerID, resolveErr := identityprovider.CalendarConfig(ctx, c.db, c.key, "google", userID, accountEmail, accessEnc, c.config)
+	if resolveErr != nil {
+		return nil, resolveErr
+	}
+	bound := *c
+	bound.config = cfg
+	bound.providerID = providerID
+
 	access, err := c.decrypt(accessEnc)
 	if err != nil {
 		return nil, fmt.Errorf("gcal: decrypt access token: %w", err)
@@ -170,9 +195,9 @@ func (c *Client) buildClient(ctx context.Context, userID, accessEnc, refreshEnc,
 	}
 	tok := &oauth2.Token{AccessToken: string(access), RefreshToken: refresh, Expiry: expiry}
 	saving := &oauthstore.SavingTokenSource{
-		Inner: oauth2.ReuseTokenSource(nil, c.config.TokenSource(ctx, tok)),
+		Inner: oauth2.ReuseTokenSource(nil, bound.config.TokenSource(ctx, tok)),
 		Save: func(ctx context.Context, t *oauth2.Token) error {
-			return c.saveToken(ctx, userID, calID, accountEmail, t)
+			return bound.saveTokenBound(ctx, userID, calID, accountEmail, t, true)
 		},
 		Logger: c.logger,
 		LogMsg: "gcal: failed to persist refreshed token",
@@ -293,6 +318,9 @@ func (c *Client) HasDestination(ctx context.Context, userID string) (bool, error
 // the destination only if the user has none yet. On a refresh (row already exists): the
 // existing check_conflicts/is_destination flags are preserved.
 func (c *Client) saveToken(ctx context.Context, userID, calID, accountEmail string, tok *oauth2.Token) error {
+	return c.saveTokenBound(ctx, userID, calID, accountEmail, tok, false)
+}
+func (c *Client) saveTokenBound(ctx context.Context, userID, calID, accountEmail string, tok *oauth2.Token, refresh bool) error {
 	accessEnc, err := c.encrypt([]byte(tok.AccessToken))
 	if err != nil {
 		return err
@@ -317,6 +345,12 @@ func (c *Client) saveToken(ctx context.Context, userID, calID, accountEmail stri
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	if refresh {
+		if err := identityprovider.CheckRefreshBinding(ctx, tx, userID, "google", accountEmail, c.providerID); err != nil {
+			return err
+		}
+	}
+
 	checkConflicts, isDest, _, err := connstore.ResolveFlags(ctx, tx, userID, "google", accountEmail)
 	if err != nil {
 		return fmt.Errorf("gcal: save token: %w", err)
@@ -330,9 +364,9 @@ func (c *Client) saveToken(ctx context.Context, userID, calID, accountEmail stri
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO calendar_connections
 		    (id, user_id, provider, account_email, access_token_enc, refresh_token_enc, calendar_id,
-		     check_conflicts, is_destination, expiry_at, created_at)
-		VALUES (?, ?, 'google', ?, ?, ?, ?, ?, ?, ?, ?)`,
-		uid.New(), userID, accountEmail, accessEnc, refreshEnc, calID, checkConflicts, isDest, expiryStr, now); err != nil {
+		     check_conflicts, is_destination, expiry_at, created_at,oauth_provider_id)
+		VALUES (?, ?, 'google', ?, ?, ?, ?, ?, ?, ?, ?,?)`,
+		uid.New(), userID, accountEmail, accessEnc, refreshEnc, calID, checkConflicts, isDest, expiryStr, now, c.providerID); err != nil {
 		return fmt.Errorf("gcal: save token insert: %w", err)
 	}
 	return tx.Commit()

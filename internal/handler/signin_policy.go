@@ -52,6 +52,12 @@ func (h *Handler) signinPolicy(ctx context.Context) (SigninPolicy, error) {
 }
 
 func (h *Handler) signinEnabled(ctx context.Context, provider string) bool {
+	if h.identityProvidersEnabled(ctx) {
+		var enabled bool
+		var purpose string
+		err := h.db.QueryRowContext(ctx, `SELECT enabled,purpose FROM identity_providers WHERE legacy_key=?`, provider).Scan(&enabled, &purpose)
+		return err == nil && enabled && (purpose == "sso" || purpose == "both")
+	}
 	p, err := h.signinPolicy(ctx)
 	if err != nil {
 		return false
@@ -78,6 +84,9 @@ func (h *Handler) passwordAllowed(ctx context.Context, id string) bool {
 }
 
 func policyAllowsSession(p SigninPolicy, method string, admin bool) bool {
+	if strings.HasPrefix(method, "sso:") {
+		return true
+	}
 	switch method {
 	case "server_recovery":
 		return admin
@@ -151,34 +160,51 @@ func (h *Handler) PutSigninPolicy(w http.ResponseWriter, r *http.Request) {
 		}
 		p.RequiredGroupID = id.String()
 	}
+	registry := h.identityProvidersEnabled(r.Context())
 	ms := h.getMicrosoftAuth()
-	if p.MembersSSOOnly && (!p.MicrosoftEnabled || ms == nil) {
-		h.writeError(w, 400, "configure and enable Microsoft sign-in before requiring it for Members")
-		return
+	if !registry {
+		if p.MembersSSOOnly && (!p.MicrosoftEnabled || ms == nil) {
+			h.writeError(w, 400, "configure and enable Microsoft sign-in before requiring it for Members")
+			return
+		}
+		if p.AutoProvision && (!p.MicrosoftEnabled || ms == nil || len(domains) == 0 || p.RequiredGroupID == "") {
+			h.writeError(w, 400, "automatic enrollment requires Microsoft sign-in, approved domains, and a security group")
+			return
+		}
+		if p.RequiredGroupID != "" && (ms == nil || isMultiTenantMicrosoftAuthority(ms.Endpoint.AuthURL)) {
+			h.writeError(w, 400, "configure a specific Microsoft tenant before using a security group")
+			return
+		}
 	}
-	if p.AutoProvision && (!p.MicrosoftEnabled || ms == nil || len(domains) == 0 || p.RequiredGroupID == "") {
-		h.writeError(w, 400, "automatic enrollment requires Microsoft sign-in, approved domains, and a security group")
-		return
-	}
-	if p.RequiredGroupID != "" && (ms == nil || isMultiTenantMicrosoftAuthority(ms.Endpoint.AuthURL)) {
-		h.writeError(w, 400, "configure a specific Microsoft tenant before using a security group")
-		return
+	if registry && p.MembersSSOOnly {
+		var count int
+		if h.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM identity_providers WHERE enabled=1 AND allow_members=1 AND purpose IN('sso','both')`).Scan(&count) != nil || count == 0 {
+			h.writeError(w, 400, "configure a sign-in provider for Members before requiring SSO")
+			return
+		}
 	}
 	var method string
 	if h.db.QueryRowContext(r.Context(), `SELECT auth_method FROM sessions WHERE id=?`, u.SessionID).Scan(&method) != nil || !policyAllowsSession(p, method, u.InstanceAdmin || u.InstanceOwner) {
 		h.writeError(w, 400, "sign in using a method that will remain enabled before saving")
 		return
 	}
-	if !p.AdminPasswordEnabled && (!p.MicrosoftEnabled || ms == nil) && (!p.GoogleEnabled || h.getGoogleAuth() == nil) {
+	if !registry && !p.AdminPasswordEnabled && (!p.MicrosoftEnabled || ms == nil) && (!p.GoogleEnabled || h.getGoogleAuth() == nil) {
 		h.writeError(w, 400, "keep at least one administrator sign-in method enabled")
 		return
+	}
+	if registry && !p.AdminPasswordEnabled {
+		var count int
+		if h.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM identity_providers WHERE enabled=1 AND purpose IN('sso','both')`).Scan(&count) != nil || count == 0 {
+			h.writeError(w, 400, "keep an administrator sign-in method enabled")
+			return
+		}
 	}
 	var automaticUsers int
 	if err := h.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM users WHERE enrollment_source='microsoft_group' AND archived_at IS NULL`).Scan(&automaticUsers); err != nil {
 		h.writeError(w, 503, "could not verify existing enrollment")
 		return
 	}
-	if automaticUsers > 0 && p.MicrosoftEnabled && (len(domains) == 0 || p.RequiredGroupID == "") {
+	if !registry && automaticUsers > 0 && p.MicrosoftEnabled && (len(domains) == 0 || p.RequiredGroupID == "") {
 		h.writeError(w, 400, "keep approved domains and a security group for existing automatically enrolled accounts")
 		return
 	}
@@ -199,10 +225,14 @@ func (h *Handler) PutSigninPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if _, err = tx.ExecContext(r.Context(), `UPDATE server_settings SET signin_policy_json=?,updated_at=datetime('now') WHERE id=1`, string(raw)); err == nil {
+	if _, err = tx.ExecContext(r.Context(), `UPDATE server_settings SET signin_policy_json=?,updated_at=datetime('now') WHERE id=1`, string(raw)); err == nil && !registry {
 		// Unknown legacy sessions must authenticate again when enforcing SSO. Retain this verified administrator session.
 		_, err = tx.ExecContext(r.Context(), `DELETE FROM sessions WHERE id<>? AND (auth_method='legacy' OR (?=1 AND auth_method<>'microsoft' AND user_id IN (SELECT id FROM users WHERE is_admin=0 AND is_owner=0)) OR (?=0 AND auth_method='google') OR (?=0 AND auth_method='microsoft') OR (?=0 AND auth_method IN ('password','magic_link')) OR (?=1 AND user_id IN (SELECT id FROM users WHERE enrollment_source='microsoft_group')))`, u.SessionID, p.MembersSSOOnly, p.GoogleEnabled, p.MicrosoftEnabled, p.AdminPasswordEnabled, groupChanged)
 	}
+	if err == nil && registry {
+		_, err = tx.ExecContext(r.Context(), `DELETE FROM sessions WHERE id<>? AND (auth_method='legacy' OR (?=1 AND auth_method IN('password','magic_link','passkey') AND user_id IN(SELECT id FROM users WHERE is_admin=0 AND is_owner=0)) OR (?=0 AND auth_method IN('password','magic_link','passkey') AND user_id IN(SELECT id FROM users WHERE is_admin=1 OR is_owner=1)))`, u.SessionID, p.MembersSSOOnly, p.AdminPasswordEnabled)
+	}
+
 	if err != nil || tx.Commit() != nil {
 		h.writeError(w, 500, "could not save sign-in policy")
 		return

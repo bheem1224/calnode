@@ -45,6 +45,11 @@ func (h *Handler) SetMicrosoftAuth(clientID, clientSecret, tenant, redirectURL s
 // LoginMicrosoft redirects to Microsoft's OAuth consent screen.
 // GET /v1/auth/microsoft/login
 func (h *Handler) LoginMicrosoft(w http.ResponseWriter, r *http.Request) {
+	if h.identityProvidersEnabled(r.Context()) {
+		r.SetPathValue("id", "legacy-microsoft")
+		h.LoginIdentityProvider(w, r)
+		return
+	}
 	ma := h.getMicrosoftAuth()
 	if ma == nil {
 		http.Error(w, "Microsoft OAuth not configured", http.StatusServiceUnavailable)
@@ -80,6 +85,11 @@ func (h *Handler) LoginMicrosoft(w http.ResponseWriter, r *http.Request) {
 // CallbackMicrosoft handles the OAuth redirect from Microsoft.
 // GET /v1/auth/microsoft/callback
 func (h *Handler) CallbackMicrosoft(w http.ResponseWriter, r *http.Request) {
+	if h.identityProvidersEnabled(r.Context()) {
+		r.SetPathValue("id", "legacy-microsoft")
+		h.CallbackIdentityProvider(w, r)
+		return
+	}
 	ma := h.getMicrosoftAuth()
 	if ma == nil {
 		http.Error(w, "Microsoft OAuth not configured", http.StatusServiceUnavailable)

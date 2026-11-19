@@ -16,8 +16,7 @@
 		{ section: 'Instance Settings', href: `${base}/settings/security`, label: $t('securitySettings.title'), adminOnly: true },
 		{ section: 'Instance Settings', href: `${base}/settings/branding`, label: $t('settings.nav.branding'), adminOnly: true },
 		{ section: 'Instance Settings', href: `${base}/settings/email`, label: 'Email & RSVP', adminOnly: true },
-		{ section: 'Instance Settings', href: `${base}/settings/google`, label: $t('settings.nav.google'), adminOnly: true },
-		{ section: 'Instance Settings', href: `${base}/settings/microsoft`, label: 'Microsoft OAuth', adminOnly: true },
+		{ section: 'Instance Settings', href: `${base}/settings/identity`, label: $t('identity.title'), adminOnly: true },
 		{ section: 'Instance Settings', href: `${base}/settings/zoom`, label: $t('settings.nav.zoom'), adminOnly: true },
 		{ section: 'Instance Settings', href: `${base}/settings/video`, label: $t('settings.nav.video'), adminOnly: true },
 		{ section: 'Instance Settings', href: `${base}/settings/payments`, label: $t('settings.nav.payments'), adminOnly: true },
@@ -27,7 +26,7 @@
 		{ section: 'Instance Settings', href: `${base}/settings/members`, label: 'Members & Roles', adminOnly: true },
 	]);
 
-	const visibleNavItems = $derived(navItems.filter((item) => !item.adminOnly || !!$currentUser?.permissions?.[item.href.endsWith('/security')?'settings.security':item.href.endsWith('/members')?'members.read':item.href.endsWith('/branding')?'branding.read':'settings.read']));
+	const visibleNavItems = $derived(navItems.filter((item) => !item.adminOnly || !!$currentUser?.permissions?.[(item.href.endsWith('/security')||item.href.endsWith('/identity'))?'settings.security':item.href.endsWith('/members')?'members.read':item.href.endsWith('/branding')?'branding.read':'settings.read']));
 
 	function isActive(href: string, exact?: boolean): boolean {
 		const path = page.url.pathname.replace(/\/+$/, '');

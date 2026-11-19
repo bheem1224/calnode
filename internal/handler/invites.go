@@ -272,7 +272,16 @@ func (h *Handler) GetInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	local := (!p.MembersSSOOnly && role != "admin") || (role == "admin" && p.AdminPasswordEnabled)
-	h.writeJSON(w, http.StatusOK, map[string]any{"id": id, "email": email, "password_allowed": local, "microsoft_available": p.MicrosoftEnabled && h.getMicrosoftAuth() != nil})
+	response := map[string]any{"id": id, "email": email, "password_allowed": local, "microsoft_available": p.MicrosoftEnabled && h.getMicrosoftAuth() != nil}
+	if h.identityProvidersEnabled(r.Context()) {
+		list, e := h.publicIdentityProviders(r.Context(), role != "admin")
+		if e != nil {
+			h.writeError(w, 503, "sign-in providers unavailable")
+			return
+		}
+		response["identity_providers"] = list
+	}
+	h.writeJSON(w, http.StatusOK, response)
 }
 
 // ClaimInvite handles POST /v1/invites/{token}/claim — public. Creates the user

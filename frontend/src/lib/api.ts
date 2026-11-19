@@ -264,6 +264,7 @@ export type WebhookDelivery = {
 };
 
 export type CalendarConnection = {
+ oauth_provider_id?:string;
 	id: string;
 	provider: string;
 	account_email: string;
@@ -281,6 +282,7 @@ export type CalendarPick = {
 };
 
 export type CalendarStatus = {
+ integration_providers?:{id:string;name:string;kind:string;url:string}[];
 	connected: boolean;
 	configured?: boolean;
 	calendar_id?: string;
