@@ -94,7 +94,7 @@ func TestAuthStatus_demoMode(t *testing.T) {
 func TestClaim_firstUser(t *testing.T) {
 	h := newEmptyHandler(t)
 
-	body := `{"name":"Alice","email":"alice@example.com","password":"strongpass1","timezone":"UTC"}`
+	body := `{"name":"Alice","email":"alice@example.com","password":"meadow-harbor-quiet-comet","timezone":"UTC"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/claim", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -122,7 +122,7 @@ func TestClaim_alreadyClaimed(t *testing.T) {
 	// setupWorkspaceWithDB pre-seeds one user.
 	h, _, _, _ := setupWorkspaceWithDB(t)
 
-	body := `{"name":"Bob","email":"bob@example.com","password":"strongpass1","timezone":"UTC"}`
+	body := `{"name":"Bob","email":"bob@example.com","password":"meadow-harbor-quiet-comet","timezone":"UTC"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/claim", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()

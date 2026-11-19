@@ -16,6 +16,7 @@ import (
 type SigninPolicy struct {
 	RequireAdminMFA      bool   `json:"require_admin_mfa"`
 	RequireMemberMFA     bool   `json:"require_member_mfa"`
+	PasswordMinLength    int    `json:"password_min_length"`
 	SessionHours         int    `json:"session_hours"`
 	DynamicLinkDays      int    `json:"dynamic_link_days"`
 	revision             string // Original database value, used to reject login/policy-update races.
@@ -29,7 +30,7 @@ type SigninPolicy struct {
 }
 
 func (h *Handler) signinPolicy(ctx context.Context) (SigninPolicy, error) {
-	p := SigninPolicy{SessionHours: 12, DynamicLinkDays: 7, GoogleEnabled: true, MicrosoftEnabled: true, AdminPasswordEnabled: true}
+	p := SigninPolicy{PasswordMinLength: 16, SessionHours: 12, DynamicLinkDays: 7, GoogleEnabled: true, MicrosoftEnabled: true, AdminPasswordEnabled: true}
 	var raw string
 	err := h.db.QueryRowContext(ctx, `SELECT signin_policy_json FROM server_settings WHERE id=1`).Scan(&raw)
 	if err != nil {
@@ -41,6 +42,9 @@ func (h *Handler) signinPolicy(ctx context.Context) (SigninPolicy, error) {
 		return p, nil
 	}
 	err = json.Unmarshal([]byte(raw), &p)
+	if p.PasswordMinLength == 0 {
+		p.PasswordMinLength = 16
+	}
 	if p.SessionHours <= 0 {
 		p.SessionHours = 12
 	}
@@ -126,6 +130,13 @@ func (h *Handler) PutSigninPolicy(w http.ResponseWriter, r *http.Request) {
 	var p SigninPolicy
 	if json.NewDecoder(r.Body).Decode(&p) != nil {
 		h.writeError(w, 400, "invalid JSON")
+		return
+	}
+	if p.PasswordMinLength == 0 {
+		p.PasswordMinLength = 16
+	}
+	if p.PasswordMinLength < 15 || p.PasswordMinLength > 128 {
+		h.writeError(w, 400, "minimum password length must be between 15 and 128 characters")
 		return
 	}
 	if p.SessionHours == 0 {

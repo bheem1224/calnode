@@ -2,8 +2,8 @@
 // not a calendar: each host connects their OWN Zoom account via OAuth (so the meeting is
 // hosted by the assigned host and concurrent bookings across a team don't collide), and a
 // Zoom-located booking gets a real meeting minted under that host's account. Tokens live in
-// calendar_connections with provider='zoom' (check_conflicts=0, is_destination=0 — it is
-// not a calendar), encrypted with the server key.
+// zoom_connections, encrypted with the server key. Zoom connections are independent
+// of calendar conflict checking and write destinations.
 package zoom
 
 import (

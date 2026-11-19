@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+ import MeetingDefaults from '$lib/components/MeetingDefaults.svelte';
 	import { page } from '$app/state';
 	import { api, type CalendarStatus, type ZoomStatus, type CalendarPick, type CalendarConnection } from '$lib/api';
 	import { Button } from '$lib/components/ui/button';
@@ -320,6 +321,7 @@
 	<p class="mb-4 rounded-md bg-green-50 px-3 py-2 text-sm text-green-700 dark:bg-green-950/50 dark:text-green-300">{$t('calendar.connectedSuccess')}</p>
 {/if}
 
+<div class="mb-6 max-w-3xl"><MeetingDefaults /></div>
 {#if loading}
 	<p class="py-8 text-sm text-muted-foreground">{$t('common.loading')}</p>
 {:else if status?.configured === false}
@@ -370,6 +372,7 @@
 
 		{#if connections.length > 0}
 			<!-- Connected calendars: all checked for conflicts; exactly one is the write destination. -->
+
 			<div class="divide-y rounded-lg border bg-card">
 				{#each connections as c (c.id)}
 					<div class="p-4">

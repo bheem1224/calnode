@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
+	"github.com/calnode/calnode/internal/authsecurity"
 
 	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/mailer"
@@ -318,7 +318,7 @@ func (h *Handler) ClaimInvite(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "name and password are required")
 		return
 	}
-	if msg := validatePassword(req.Password); !sso && msg != "" {
+	if msg := h.validatePassword(r.Context(), req.Password); !sso && msg != "" {
 		h.writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -375,13 +375,13 @@ func (h *Handler) ClaimInvite(w http.ResponseWriter, r *http.Request) {
 	if role == "admin" {
 		isAdmin = 1
 	}
-	var hash []byte
+	var hash string
 	emailLogin := 0
 	method := "microsoft"
 	if !sso {
 		emailLogin = 1
 		method = "password"
-		hash, err = bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		hash, err = authsecurity.HashPassword(req.Password)
 	}
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "claim invite: bcrypt", "error", err)

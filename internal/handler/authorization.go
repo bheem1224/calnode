@@ -18,10 +18,10 @@ import (
 // handlers fail closed; the server contract test keeps the inventory complete.
 var handlerPermissions = func() map[string]string {
 	groups := map[string]string{
-		"profile.read":          "GetMe ListDirectoryUsers GetAuthSecurity ListMyIdentities",
-		"dynamic_links.create":  "CreateDynamicLink",
+		"profile.read":          "GetMe ListDirectoryUsers GetMeetingDefaults GetAuthSecurity ListMyIdentities",
+		"dynamic_links.create":  "CreateDynamicLink DynamicLinkOptions",
 		"members.reset_mfa":     "ResetUserMFA",
-		"profile.update":        "BeginTOTP ConfirmTOTP DeleteAuthFactor GenerateRecoveryCodes BeginPasskeyRegistration FinishPasskeyRegistration PatchMe UploadAvatar DeleteAvatar ChangePassword RevokeAllSessions StopImpersonation",
+		"profile.update":        "PutMeetingDefaults BeginTOTP ConfirmTOTP DeleteAuthFactor GenerateRecoveryCodes BeginPasskeyRegistration FinishPasskeyRegistration PatchMe UploadAvatar DeleteAvatar ChangePassword RevokeAllSessions StopImpersonation",
 		"members.password":      "AdminSetPassword",
 		"members.invite_member": "CreateInvite ListInvites RevokeInvite ResendInvite",
 		"members.read":          "ListUsers ListUserUpcomingBookings",

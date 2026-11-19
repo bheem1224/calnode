@@ -168,6 +168,16 @@ try {
                 await page.screenshot({ path: join(screenshots, `form-${surface}-${width}-${theme}.png`), fullPage: true, animations: 'disabled' });
                 const done = await submit();
                 lastCompleted = done.body;
+                const recipient=done.sent.email;
+                let invitation;
+                for(let retry=0;retry<100;retry++){
+                    invitation=messages.find(m=>m.recipients.some(r=>r.includes(recipient.toLowerCase()))&&/text\/calendar/i.test(m.raw));
+                    if(invitation)break;
+                    await pause(50);
+                }
+                assert.ok(invitation,'Booking invitation was not delivered to SMTP capture');
+                assert.match(invitation.raw,/method=["']?REQUEST/i,'Invitation lacks RSVP method');
+
                 assert.equal(done.sent.duration_minutes, 15);
                 assert.equal(done.body.location_type, 'teams');
                 assert.equal(done.body.notes, 'Notes from the configured form');

@@ -20,6 +20,7 @@ import (
 	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/booking"
 	"github.com/calnode/calnode/internal/calendar"
+	"github.com/calnode/calnode/internal/connstore"
 	"github.com/calnode/calnode/internal/db"
 	"github.com/calnode/calnode/internal/i18n"
 	"github.com/calnode/calnode/internal/mailer"
@@ -182,7 +183,7 @@ func (h *Handler) validateLocation(ctx context.Context, ownerID, locType string,
 			ok, err := cal.CanAutoGenerate(ctx, ownerID, locType)
 			if err != nil {
 				h.logger.ErrorContext(ctx, "validate location: capability lookup", "error", err, "owner", ownerID)
-				return nil // don't block on a transient lookup error; booking-time fallback covers it
+				return fmt.Errorf("calendar capability could not be checked; please try again")
 			}
 			if ok {
 				return nil
@@ -243,6 +244,13 @@ func (h *Handler) validateLocation(ctx context.Context, ownerID, locType string,
 // in_person is the fallback because it is the one type that requires no value and so is
 // always valid. It is a placeholder for the operator to change, not a guess at intent.
 func (h *Handler) smartDefaultLocation(ctx context.Context, ownerID string) string {
+	var preferred string
+	if h.db.QueryRowContext(ctx, `SELECT default_conferencing_type FROM users WHERE id=?`, ownerID).Scan(&preferred) == nil && preferred != "" {
+		if h.validateLocation(ctx, ownerID, preferred, nil) == nil {
+			return preferred
+		}
+	}
+
 	if cal := h.getCal(); cal != nil {
 		if connected, provider, err := cal.Connected(ctx, ownerID); err == nil && connected {
 			switch provider {
@@ -1341,18 +1349,30 @@ func (h *Handler) hostBookingData(ctx context.Context, base mailer.BookingData, 
 // LiveKit resolve here and mutate b/bData in place; a Meet/Teams link is instead captured
 // later from the calendar event Google/Microsoft actually creates (see
 // createHostEvents), since only the calendar API call itself produces it.
-func (h *Handler) mintMeetingLink(ctx context.Context, b *booking.Booking, in bookingConfirmationInput, bData *mailer.BookingData, hosts []assignedHost) (meetURL string, autoGenMeet bool, livekitHostURL string) {
+
+func (h *Handler) calendarMeetingAutoGenerate(ctx context.Context, eventID, hostID, locationType string) bool {
 	gc := h.getCal()
+	if gc == nil || !onlineMeetingLocation(locationType) {
+		return false
+	}
+	_, provider, err := gc.Connected(ctx, hostID)
+	if err != nil {
+		return false
+	}
+	var override string
+	if h.db.QueryRowContext(ctx, `SELECT COALESCE(destination_calendar_id,'') FROM event_types WHERE id=?`, eventID).Scan(&override) == nil && override != "" {
+		if chosen, _, _, err := connstore.CalendarTarget(ctx, h.db, hostID, override); err == nil {
+			provider = chosen
+		}
+	}
+	return providerMintsPlatform(locationType, provider)
+}
+
+func (h *Handler) mintMeetingLink(ctx context.Context, b *booking.Booking, in bookingConfirmationInput, bData *mailer.BookingData, hosts []assignedHost) (meetURL string, autoGenMeet bool, livekitHostURL string) {
 	if in.LocationType == "phone" {
 		meetURL = b.LocationValue
 	}
-	if gc != nil && onlineMeetingLocation(in.LocationType) {
-		if _, primaryProvider, perr := gc.Connected(ctx, primaryHost(hosts).UserID); perr == nil {
-			autoGenMeet = providerMintsPlatform(in.LocationType, primaryProvider)
-		} else {
-			h.logger.Error("booking confirmation: primary host provider lookup", "error", perr, "booking_id", b.ID)
-		}
-	}
+	autoGenMeet = h.calendarMeetingAutoGenerate(ctx, b.EventTypeID, primaryHost(hosts).UserID, in.LocationType)
 	// Seed the propagated location with the organizer's manual link when we won't
 	// auto-generate, so the calendar events and emails still carry a join link.
 	if onlineMeetingLocation(in.LocationType) && !autoGenMeet {
@@ -1364,6 +1384,12 @@ func (h *Handler) mintMeetingLink(ctx context.Context, b *booking.Booking, in bo
 	// the calendar events, the booking record, the webhook, and the emails.
 	if in.LocationType == "zoom" {
 		meetURL = b.LocationValue
+		var existingMeeting string
+		_ = h.db.QueryRowContext(ctx, `SELECT COALESCE(zoom_meeting_id,'') FROM bookings WHERE id=?`, b.ID).Scan(&existingMeeting)
+		if existingMeeting != "" && meetURL != "" {
+			return meetURL, false, ""
+		} // Delivery retries reuse the already-created conference.
+
 		if zc := h.getZoom(); zc != nil {
 			primaryHostID := primaryHost(hosts).UserID
 			if connected, cerr := zc.Connected(ctx, primaryHostID); cerr != nil {
@@ -1531,10 +1557,20 @@ func (h *Handler) createHostEvents(ctx context.Context, b *booking.Booking, in b
 		}
 	}
 	create := func(host assignedHost, location string) (link string) {
+		if host.ExternalEventID != "" {
+			return ""
+		}
 		inviteeEmail := calendarInvitee(b.InviteDelivery, in.OrganizerEmail)
+		if !host.IsPrimary {
+			inviteeEmail = ""
+		} // The organizer sends one client invitation; co-host copies only block their calendars.
 		var inviteGuests []string
 		if inviteeEmail != "" {
 			inviteGuests = b.Guests
+		}
+		hostDest := ""
+		if host.IsPrimary {
+			hostDest = destCalID
 		}
 		eventID, link, calID, provider, err := gc.CreateEvent(ctx, host.UserID, calendar.CreateEventParams{
 			// The attendee is added as a calendar invitee below, so this text reaches
@@ -1550,7 +1586,7 @@ func (h *Handler) createHostEvents(ctx context.Context, b *booking.Booking, in b
 			Guests:                inviteGuests,
 			AddMeet:               autoGenMeet && host.IsPrimary,
 			Private:               hideCalDetails != 0,
-			DestinationCalendarID: destCalID,
+			DestinationCalendarID: hostDest,
 		})
 		if err != nil {
 			h.logger.Error("create gcal event", "error", err, "booking_id", b.ID, "host", host.UserID)

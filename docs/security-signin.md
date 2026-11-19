@@ -143,3 +143,44 @@ failure reporting paths; it never reports an undelivered message as successful.
 These controls complement edge rate limits and origin isolation; they do not replace
 Cloudflare or reverse-proxy DDoS protection. Keep secure cookies enabled when TLS
 terminates at a proxy.
+
+
+## Password policy
+
+Security & sign-in exposes a minimum length (15–128 Unicode characters, default
+16). New passwords are normalized to Unicode NFC and checked against an embedded
+10,000-entry common-password blocklist, additional predictable full values and
+account/service context. There are no mandatory character mixtures or periodic
+password expiry. No password is transmitted to a breach-checking service.
+
+All password creation/change/reset endpoints apply the same policy. Existing
+passwords remain usable when the policy changes. Newly set passwords use randomly
+salted Argon2id (19 MiB, two iterations, one lane); existing bcrypt hashes continue
+to verify. Expensive password work is limited to four concurrent operations. This
+implements password-policy guidance; it is not a claim of NIST/FIPS certification.
+See `internal/authsecurity/passwords/README.md` for the blocklist source/license.
+
+## One-time meeting defaults
+
+Calendar → Meeting defaults chooses the user's default conferencing provider from
+currently usable integrations. The existing calendar destination remains the one
+booking target; conflict checking reads only calendars enabled for conflicts.
+Native Meet/Teams generation requires a compatible booking calendar; Zoom is an
+independent connected meeting provider. Changing preferences affects new event
+creation and newly minted dynamic links, not saved event types.
+
+Dynamic links use the first selected host as organizer unless overridden. Advanced
+settings override title, offered/default durations, location and the organizer's
+writable Google/Microsoft calendar for that link only. Other hosts retain their own
+calendar destinations. CalDAV uses its existing default destination. Delegated
+builders see generic provider labels rather than other hosts' private calendar
+names/account addresses. Links retain expiry, atomic single use, and current
+creator-role/host-scope checks. New explicit calendar overrides retain provider,
+account and calendar identity internally across token refresh and selection changes.
+
+
+Calendar repair uses the same host-event creator as initial delivery, retaining
+privacy flags, custom titles, guest lists and the selected destination. Repair
+excludes bookings awaiting approval/payment or being refunded. Only the primary
+organizer's provider event invites the client; secondary-host copies block their
+calendars without issuing duplicate client invitations.

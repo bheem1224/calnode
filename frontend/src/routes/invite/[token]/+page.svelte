@@ -1,4 +1,5 @@
 <script lang="ts">
+ import PasswordPolicyHint from '$lib/components/PasswordPolicyHint.svelte';
  import { redirectAuthStep,signInWithPasskey } from '$lib/native-auth';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
@@ -99,8 +100,8 @@
 				</div>
 				<div class="space-y-1.5">
 					<Label for="password">{$t('auth.invite.password')}</Label>
-					<Input id="password" type="password" autocomplete="new-password" bind:value={password} required minlength={8} />
-					<p class="text-xs text-muted-foreground">{$t('auth.invite.passwordHint')}</p>
+					<Input id="password" type="password" autocomplete="new-password" bind:value={password} required minlength={15} />
+					<PasswordPolicyHint />
 				</div>
 				<Button type="submit" class="h-11 w-full" disabled={submitting}>
 					{submitting ? $t('auth.invite.submitting') : $t('auth.invite.submit')}

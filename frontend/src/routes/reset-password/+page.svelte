@@ -1,4 +1,5 @@
 <script lang="ts">
+ import PasswordPolicyHint from '$lib/components/PasswordPolicyHint.svelte';
  import { redirectAuthStep,signInWithPasskey } from '$lib/native-auth';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
@@ -22,7 +23,7 @@
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
-		if (password.length < 8) {
+		if (Array.from(password).length < 15) {
 			error = tr('auth.reset.tooShort');
 			return;
 		}
@@ -72,7 +73,8 @@
 		{:else}
 			<form onsubmit={submit} class="space-y-4">
 				<div class="space-y-1.5">
-					<Label for="password">{$t('auth.reset.password')}</Label>
+					<PasswordPolicyHint />
+ <Label for="password">{$t('auth.reset.password')}</Label>
 					<Input
 						id="password"
 						type="password"

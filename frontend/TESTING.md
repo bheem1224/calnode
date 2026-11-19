@@ -137,3 +137,13 @@ Public DOM controls live in `internal/handler/assets/booking-ui.js`: it is inlin
 into hosted/manage pages and prepended to the widget bundle. `BookingLogic` stays
 page-only; never reference it from `embed.js`. Form order and metadata come from
 Go's `buildBookFormItems`, not a separate set of widget defaults.
+
+
+The native-auth browser script also saves/reloads the password policy through the
+actual security form, checks rejection of a weak password, saves meeting defaults,
+and opens the real dynamic-link dialog to verify first-selected organizer, advanced
+settings and token navigation. Optional `CALNODE_SCREENSHOT_DIR` retains light/dark
+screenshots. The booking matrix additionally asserts delivery of real RSVP-bearing
+invitation messages to its local SMTP capture. Provider contract tests inspect actual
+HTTP requests for Google/Microsoft create/update/cancel, conferencing and explicit
+calendar/account routing; they do not prove delivery to an external mailbox.

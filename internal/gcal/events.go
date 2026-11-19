@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/calnode/calnode/internal/calendar"
+	"github.com/calnode/calnode/internal/connstore"
 	"github.com/calnode/calnode/internal/uid"
 )
 
@@ -79,11 +80,11 @@ func (r calEventResp) meetLink() string {
 // p.AddMeet is set, the generated Google Meet URL. Returns ("", "", nil) if the
 // user has no is_destination connection.
 func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.CreateEventParams) (string, string, string, error) {
-	hc, calID, err := c.DestinationClient(ctx, userID)
+	hc, calID, err := c.clientForCalendar(ctx, userID, p.DestinationCalendarID)
 	if err != nil || hc == nil {
 		return "", "", "", err
 	}
-	if p.DestinationCalendarID != "" {
+	if p.DestinationCalendarID != "" && !connstore.IsCalendarReference(p.DestinationCalendarID) {
 		calID = p.DestinationCalendarID
 	}
 
@@ -149,6 +150,9 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 	if err := json.NewDecoder(resp.Body).Decode(&evResp); err != nil {
 		return "", "", "", fmt.Errorf("gcal: create event decode: %w", err)
 	}
+	if connstore.IsCalendarReference(p.DestinationCalendarID) {
+		calID = p.DestinationCalendarID
+	}
 	return evResp.ID, evResp.meetLink(), calID, nil
 }
 
@@ -159,7 +163,7 @@ func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID st
 	if eventID == "" {
 		return nil
 	}
-	hc, calID, err := c.DestinationClient(ctx, userID)
+	hc, calID, err := c.clientForCalendar(ctx, userID, calendarID)
 	if err != nil || hc == nil {
 		return err
 	}
@@ -170,7 +174,7 @@ func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID st
 	// the host moves their destination to a different account entirely, hc is that other
 	// account's client and the old event is out of reach - correcting that needs the
 	// account recorded too, which is a bigger change than the bug currently justifies.
-	if calendarID != "" {
+	if calendarID != "" && !connstore.IsCalendarReference(calendarID) {
 		calID = calendarID
 	}
 
@@ -210,7 +214,7 @@ func (c *Client) CancelEvent(ctx context.Context, userID, calendarID, eventID st
 	if eventID == "" {
 		return nil
 	}
-	hc, calID, err := c.DestinationClient(ctx, userID)
+	hc, calID, err := c.clientForCalendar(ctx, userID, calendarID)
 	if err != nil || hc == nil {
 		return err
 	}
@@ -221,7 +225,7 @@ func (c *Client) CancelEvent(ctx context.Context, userID, calendarID, eventID st
 	// the host moves their destination to a different account entirely, hc is that other
 	// account's client and the old event is out of reach - correcting that needs the
 	// account recorded too, which is a bigger change than the bug currently justifies.
-	if calendarID != "" {
+	if calendarID != "" && !connstore.IsCalendarReference(calendarID) {
 		calID = calendarID
 	}
 

@@ -509,6 +509,10 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("POST /v1/settings/email/test", settingsRL(h.RequireAuth(h.TestEmailConnection)))
 	mux.HandleFunc("POST /v1/settings/email/rsvp-webhook", settingsRL(h.RequireAuth(h.SetupRSVPWebhook)))
 	mux.HandleFunc("POST /v1/dynamic-links", h.RequireAuth(h.CreateDynamicLink))
+	mux.HandleFunc("GET /v1/dynamic-links/options", h.RequireAuth(h.DynamicLinkOptions))
+	mux.HandleFunc("GET /v1/users/me/meeting-defaults", h.RequireAuth(h.GetMeetingDefaults))
+	mux.HandleFunc("PUT /v1/users/me/meeting-defaults", h.RequireAuth(h.PutMeetingDefaults))
+
 	mux.HandleFunc("GET /v1/settings/security/operations", h.RequireAuth(h.GetSecurityOperations))
 	mux.HandleFunc("GET /v1/settings/identity-providers", h.RequireAuth(h.ListIdentityProviders))
 	mux.HandleFunc("POST /v1/settings/identity-providers", loginRL(h.RequireAuth(h.SaveIdentityProvider)))

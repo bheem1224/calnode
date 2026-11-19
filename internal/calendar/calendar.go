@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/calnode/calnode/internal/abuse"
+	"github.com/calnode/calnode/internal/connstore"
 	"github.com/calnode/calnode/internal/slots"
 )
 
@@ -421,12 +422,13 @@ func (s *Service) FreeBusy(ctx context.Context, userID string, from, to time.Tim
 func (s *Service) CreateEvent(ctx context.Context, userID string, p CreateEventParams) (string, string, string, string, error) {
 	var pr Provider
 	if p.DestinationCalendarID != "" {
-		var provName string
-		if err := s.db.QueryRowContext(ctx,
-			`SELECT provider FROM connection_calendars WHERE user_id = ? AND calendar_id = ? LIMIT 1`,
-			userID, p.DestinationCalendarID).Scan(&provName); err == nil && provName != "" {
-			pr = s.providers[provName]
+		provider, _, _, err := connstore.CalendarTarget(ctx, s.db, userID, p.DestinationCalendarID)
+		if err == nil {
+			pr = s.providers[provider]
+		} else if connstore.IsCalendarReference(p.DestinationCalendarID) {
+			return "", "", "", "", err
 		}
+
 	}
 	if pr == nil {
 		pr = s.providerForDestination(ctx, userID)

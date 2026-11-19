@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/authsecurity"
 	"github.com/calnode/calnode/internal/mailer"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // resetLinkTTL is longer than the magic-link TTL: a reset email sits in an
@@ -103,7 +103,7 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	// Validate the password before touching the token so a weak-password attempt
 	// doesn't burn the single-use link.
-	if msg := validatePassword(req.NewPassword); msg != "" {
+	if msg := h.validatePassword(r.Context(), req.NewPassword); msg != "" {
 		h.writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -146,7 +146,7 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	newHash, err := authsecurity.HashPassword(req.NewPassword)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "password reset: bcrypt", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")

@@ -2453,5 +2453,37 @@
 			"oidc": "Créez un client OpenID Connect confidentiel utilisant le flux de code. Activez PKCE S256 et les portées openid, profile et email. L’inscription automatique nécessite une adresse vérifiée ; les groupes sont lus dans le jeton d’identité signé."
 		},
 		"addValue": "Ajouter"
+	},
+	"passwordPolicy": {
+		"title": "Politique de mot de passe",
+		"description": "Les phrases de passe longues sont acceptées. Les mots de passe courants ou compromis sont bloqués localement ; chiffres et symboles sont facultatifs.",
+		"minimum": "Longueur minimale du mot de passe",
+		"application": "Par défaut : 16 caractères. S’applique aux créations et modifications ; les mots de passe existants restent valides. Minimum : 15. Maximum : 128 caractères.",
+		"guidance": "Utilisez au moins {count} caractères. Choisissez une phrase de passe unique ou un gestionnaire. Les mots de passe courants sont bloqués."
+	},
+	"meetingDefaults": {
+		"title": "Préférences de réunion",
+		"hint": "Les nouveaux événements et liens uniques utilisent ces préférences. Les réservations vont dans le calendrier de destination ci-dessous ; seuls les calendriers activés pour les conflits affectent la disponibilité.",
+		"conferencing": "Visioconférence par défaut",
+		"automatic": "Choisir automatiquement",
+		"saved": "Préférences enregistrées"
+	},
+	"dynamicAdvanced": {
+		"title": "Paramètres avancés",
+		"organizer": "Organisateur de la réunion",
+		"name": "Titre de la réunion",
+		"duration": "Durée par défaut (minutes)",
+		"durations": "Durées proposées (séparées par des virgules)",
+		"location": "Lieu",
+		"value": "Lien de réunion, adresse ou téléphone",
+		"calendar": "Calendrier de réservation",
+		"defaultCalendar": "Calendrier par défaut de l’organisateur",
+		"hint": "Pour cette réunion unique uniquement. Les préférences personnelles restent inchangées. Les noms privés des calendriers des autres hôtes sont masqués.",
+		"loading": "Chargement des préférences…",
+		"inPerson": "En personne",
+		"video": "Lien vidéo",
+		"phone": "Appel téléphonique",
+		"attendeePhone": "Téléphone du participant",
+		"loadError": "Impossible de charger les préférences. Réessayez avant de créer le lien."
 	}
 }

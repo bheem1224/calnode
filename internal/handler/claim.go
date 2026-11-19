@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
+	"github.com/calnode/calnode/internal/authsecurity"
 
 	"github.com/calnode/calnode/internal/uid"
 )
@@ -43,11 +43,13 @@ func (h *Handler) AuthStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"claimed":         userCount > 0,
-		"email_login":     emailLoginCount > 0,
-		"providers":       providers,
-		"smtp_configured": h.isEmailEnabled(),
-		"demo_mode":       h.demoMode,
+		"claimed":             userCount > 0,
+		"password_min_length": p.PasswordMinLength,
+		"password_max_length": 128,
+		"email_login":         emailLoginCount > 0,
+		"providers":           providers,
+		"smtp_configured":     h.isEmailEnabled(),
+		"demo_mode":           h.demoMode,
 	}
 	if h.identityProvidersEnabled(r.Context()) {
 		list, e := h.publicIdentityProviders(r.Context(), false)
@@ -89,7 +91,7 @@ func (h *Handler) Claim(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "invalid email address")
 		return
 	}
-	if msg := validatePassword(req.Password); msg != "" {
+	if msg := h.validatePassword(r.Context(), req.Password, req.Name, req.Email, strings.Split(req.Email, "@")[0]); msg != "" {
 		h.writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -101,7 +103,7 @@ func (h *Handler) Claim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hash, err := authsecurity.HashPassword(req.Password)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "claim: bcrypt", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")

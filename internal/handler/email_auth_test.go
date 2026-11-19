@@ -134,7 +134,7 @@ func TestChangePassword_success(t *testing.T) {
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin,email_login,password_hash) VALUES ('u1','alice@example.com','Alice','UTC',1,1,?)`, string(hash))
 	database.Exec(`INSERT INTO api_keys (id,user_id,name,key_hash,created_at) VALUES ('k1','u1','test',?,'2024-01-01')`, sha256HexForTest("testkey"))
 
-	body := `{"current_password":"oldpassword","new_password":"newpassword123"}`
+	body := `{"current_password":"oldpassword","new_password":"granite-meadow-comet-harbor"}`
 	req := sessionRequest(t, database, "u1", http.MethodPost, "/v1/users/me/password", body)
 	rec := httptest.NewRecorder()
 	h.RequireAuth(h.ChangePassword)(rec, req)
@@ -163,7 +163,7 @@ func TestChangePassword_revokesOtherSessions(t *testing.T) {
 	database.Exec(`INSERT INTO sessions (id,user_id,expires_at) VALUES ('current-sess','u1','2099-01-01T00:00:00Z')`)
 	database.Exec(`INSERT INTO sessions (id,user_id,expires_at) VALUES ('other-sess','u1','2099-01-01T00:00:00Z')`)
 
-	body := `{"current_password":"oldpassword","new_password":"newpassword123"}`
+	body := `{"current_password":"oldpassword","new_password":"granite-meadow-comet-harbor"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/users/me/password", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: "calnode_session", Value: "current-sess"})
@@ -192,7 +192,7 @@ func TestChangePassword_wrongCurrent(t *testing.T) {
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin,email_login,password_hash) VALUES ('u1','alice@example.com','Alice','UTC',1,1,?)`, string(hash))
 	database.Exec(`INSERT INTO api_keys (id,user_id,name,key_hash,created_at) VALUES ('k1','u1','test',?,'2024-01-01')`, sha256HexForTest("testkey"))
 
-	body := `{"current_password":"wrongcurrent","new_password":"newpassword123"}`
+	body := `{"current_password":"wrongcurrent","new_password":"granite-meadow-comet-harbor"}`
 	req := sessionRequest(t, database, "u1", http.MethodPost, "/v1/users/me/password", body)
 	rec := httptest.NewRecorder()
 	h.RequireAuth(h.ChangePassword)(rec, req)

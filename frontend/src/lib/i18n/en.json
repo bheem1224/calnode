@@ -2453,5 +2453,37 @@
 			"oidc": "Create a confidential OpenID Connect client using authorization code flow. Enable PKCE S256 and include openid, profile and email. Automatic enrollment needs a verified email claim; group restrictions read an array of group values in the signed ID token."
 		},
 		"addValue": "Add"
+	},
+	"passwordPolicy": {
+		"title": "Password policy",
+		"description": "Long passphrases are welcome. Common or compromised passwords are blocked locally; numbers and symbols are optional.",
+		"minimum": "Minimum password length",
+		"application": "Default: 16 characters. Applies when passwords are created or changed; existing passwords keep working. Minimum allowed: 15. Maximum supported: 128 characters.",
+		"guidance": "Use at least {count} characters. Choose a unique passphrase or use a password manager. Common passwords are blocked."
+	},
+	"meetingDefaults": {
+		"title": "Meeting defaults",
+		"hint": "New event types and one-time links start with these preferences. Bookings go to your selected booking calendar below; only calendars enabled for conflict checking affect availability.",
+		"conferencing": "Default conferencing",
+		"automatic": "Choose automatically",
+		"saved": "Meeting defaults saved"
+	},
+	"dynamicAdvanced": {
+		"title": "Advanced settings",
+		"organizer": "Meeting organizer",
+		"name": "Meeting title",
+		"duration": "Default duration (minutes)",
+		"durations": "Offered durations (comma separated)",
+		"location": "Location",
+		"value": "Meeting link, address or phone",
+		"calendar": "Booking calendar",
+		"defaultCalendar": "Organizer’s default calendar",
+		"hint": "Applies only to this one-time meeting. Personal preferences remain unchanged. Other hosts’ private calendar names are hidden.",
+		"loading": "Loading organizer’s defaults…",
+		"inPerson": "In person",
+		"video": "Video link",
+		"phone": "Phone call",
+		"attendeePhone": "Attendee’s phone number",
+		"loadError": "Could not load meeting defaults. Try again before creating the link."
 	}
 }

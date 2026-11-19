@@ -1,4 +1,5 @@
 <script lang="ts">
+ import PasswordPolicyHint from '$lib/components/PasswordPolicyHint.svelte';
 	import { onMount } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -76,8 +77,8 @@
 			</div>
 			<div class="space-y-1.5">
 				<Label for="password">{$t('auth.claim.password')}</Label>
-				<Input id="password" type="password" autocomplete="new-password" bind:value={password} required minlength={8} />
-				<p class="text-xs text-muted-foreground">{$t('auth.claim.passwordHint')}</p>
+				<Input id="password" type="password" autocomplete="new-password" bind:value={password} required minlength={15} />
+				<PasswordPolicyHint />
 			</div>
 			<Button type="submit" class="h-11 w-full" disabled={submitting}>
 				{submitting ? $t('auth.claim.submitting') : $t('auth.claim.submit')}

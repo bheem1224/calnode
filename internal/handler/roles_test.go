@@ -186,7 +186,7 @@ func TestAdminSetPassword_adminCannotResetOwner(t *testing.T) {
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin,is_owner) VALUES ('u2','a@example.com','Admin','UTC',1,0)`)
 	database.Exec(`INSERT INTO api_keys (id,user_id,name,key_hash,created_at) VALUES ('k2','u2','t',?,'2024-01-01')`, sha256HexForTest(adminKey))
 
-	req := authReq(http.MethodPost, "/v1/users/"+ownerID+"/password", `{"password":"newpassword123"}`, adminKey)
+	req := authReq(http.MethodPost, "/v1/users/"+ownerID+"/password", `{"password":"granite-meadow-comet-harbor"}`, adminKey)
 	req.SetPathValue("id", ownerID)
 	rec := httptest.NewRecorder()
 	h.RequireAuth(h.AdminSetPassword)(rec, req)
@@ -202,7 +202,7 @@ func TestAdminSetPassword_adminCanResetAdmin(t *testing.T) {
 	database.Exec(`INSERT INTO api_keys (id,user_id,name,key_hash,created_at) VALUES ('k2','u2','t',?,'2024-01-01')`, sha256HexForTest(adminKey))
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('u3','a3@example.com','Admin3','UTC',1)`)
 
-	req := authReq(http.MethodPost, "/v1/users/u3/password", `{"password":"newpassword123"}`, "")
+	req := authReq(http.MethodPost, "/v1/users/u3/password", `{"password":"granite-meadow-comet-harbor"}`, "")
 	req.AddCookie(verifiedPasswordResetSession(t, database, "u2"))
 	req.SetPathValue("id", "u3")
 	rec := httptest.NewRecorder()
@@ -220,7 +220,7 @@ func TestAdminSetPassword_ownerCanResetAdmin_adminCanResetMember(t *testing.T) {
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('u3','m@example.com','Member','UTC',0)`)
 
 	// Owner resets the admin's password → allowed.
-	req := authReq(http.MethodPost, "/v1/users/u2/password", `{"password":"newpassword123"}`, "")
+	req := authReq(http.MethodPost, "/v1/users/u2/password", `{"password":"granite-meadow-comet-harbor"}`, "")
 	req.AddCookie(verifiedPasswordResetSession(t, database, ownerID))
 	req.SetPathValue("id", "u2")
 	rec := httptest.NewRecorder()
@@ -230,7 +230,7 @@ func TestAdminSetPassword_ownerCanResetAdmin_adminCanResetMember(t *testing.T) {
 	}
 
 	// Admin resets a plain member's password → allowed.
-	req = authReq(http.MethodPost, "/v1/users/u3/password", `{"password":"newpassword123"}`, "")
+	req = authReq(http.MethodPost, "/v1/users/u3/password", `{"password":"granite-meadow-comet-harbor"}`, "")
 	req.AddCookie(verifiedPasswordResetSession(t, database, "u2"))
 	req.SetPathValue("id", "u3")
 	rec = httptest.NewRecorder()
@@ -248,7 +248,7 @@ func TestAdminSetPassword_revokesTargetSessions(t *testing.T) {
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('u2','m@example.com','Member','UTC',0)`)
 	database.Exec(`INSERT INTO sessions (id,user_id,expires_at) VALUES ('victim-sess','u2','2099-01-01T00:00:00Z')`)
 
-	req := authReq(http.MethodPost, "/v1/users/u2/password", `{"password":"newpassword123"}`, ownerKey)
+	req := authReq(http.MethodPost, "/v1/users/u2/password", `{"password":"granite-meadow-comet-harbor"}`, ownerKey)
 	req.SetPathValue("id", "u2")
 	rec := httptest.NewRecorder()
 	h.RequireAuth(h.AdminSetPassword)(rec, req)

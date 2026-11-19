@@ -107,7 +107,7 @@ func TestPasswordReset_happyPath(t *testing.T) {
 	seedResetToken(t, db, "rawtoken123", "u1", time.Now().Add(time.Hour))
 
 	rec := httptest.NewRecorder()
-	h.ResetPassword(rec, resetReq("rawtoken123", "newpassword1"))
+	h.ResetPassword(rec, resetReq("rawtoken123", "granite-meadow-comet-harbor"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset status = %d; want 200 — %s", rec.Code, rec.Body.String())
 	}
@@ -123,7 +123,7 @@ func TestPasswordReset_happyPath(t *testing.T) {
 
 	// New password works, old one doesn't.
 	rec2 := httptest.NewRecorder()
-	h.LoginEmail(rec2, loginEmailReq("alice@example.com", "newpassword1"))
+	h.LoginEmail(rec2, loginEmailReq("alice@example.com", "granite-meadow-comet-harbor"))
 	if rec2.Code != http.StatusOK {
 		t.Errorf("login with new password: got %d; want 200", rec2.Code)
 	}
@@ -140,7 +140,7 @@ func TestPasswordReset_tokenSingleUse(t *testing.T) {
 	seedResetToken(t, db, "oncetoken", "u1", time.Now().Add(time.Hour))
 
 	rec := httptest.NewRecorder()
-	h.ResetPassword(rec, resetReq("oncetoken", "newpassword1"))
+	h.ResetPassword(rec, resetReq("oncetoken", "granite-meadow-comet-harbor"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("first reset: got %d; want 200", rec.Code)
 	}
@@ -157,7 +157,7 @@ func TestPasswordReset_expiredToken(t *testing.T) {
 	seedResetToken(t, db, "expiredtok", "u1", time.Now().Add(-time.Minute))
 
 	rec := httptest.NewRecorder()
-	h.ResetPassword(rec, resetReq("expiredtok", "newpassword1"))
+	h.ResetPassword(rec, resetReq("expiredtok", "granite-meadow-comet-harbor"))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expired reset: got %d; want 400", rec.Code)
 	}
@@ -181,7 +181,7 @@ func TestPasswordReset_weakPasswordDoesNotConsume(t *testing.T) {
 
 	// Same link works with a good password.
 	rec2 := httptest.NewRecorder()
-	h.ResetPassword(rec2, resetReq("retrytoken", "goodpassword1"))
+	h.ResetPassword(rec2, resetReq("retrytoken", "orchard-granite-velvet-moon"))
 	if rec2.Code != http.StatusOK {
 		t.Errorf("retry with good password: got %d; want 200", rec2.Code)
 	}
@@ -197,7 +197,7 @@ func TestPasswordReset_archivedAndDisabledForbidden(t *testing.T) {
 
 	for _, tc := range []struct{ raw string }{{"archtok"}, {"distok"}} {
 		rec := httptest.NewRecorder()
-		h.ResetPassword(rec, resetReq(tc.raw, "newpassword1"))
+		h.ResetPassword(rec, resetReq(tc.raw, "granite-meadow-comet-harbor"))
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("token %s: got %d; want 403", tc.raw, rec.Code)
 		}
@@ -217,7 +217,7 @@ func TestPasswordReset_revokesOldSessions(t *testing.T) {
 	seedResetToken(t, db, "sesstoken", "u1", time.Now().Add(time.Hour))
 
 	rec := httptest.NewRecorder()
-	h.ResetPassword(rec, resetReq("sesstoken", "newpassword1"))
+	h.ResetPassword(rec, resetReq("sesstoken", "granite-meadow-comet-harbor"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset: got %d; want 200", rec.Code)
 	}

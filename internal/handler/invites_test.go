@@ -141,7 +141,7 @@ func TestClaimInvite_success(t *testing.T) {
 	token := parts[len(parts)-1]
 
 	// Claim it.
-	body := `{"name":"Bob","password":"bobspassword1","timezone":"UTC"}`
+	body := `{"name":"Bob","password":"orchard-lantern-violet-river","timezone":"UTC"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/invites/"+token+"/claim", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.SetPathValue("token", token)
@@ -172,7 +172,7 @@ func TestClaimInvite_cannotReuseToken(t *testing.T) {
 	parts := strings.Split(mustString(t, created, "invite_url", "create invite"), "/")
 	token := parts[len(parts)-1]
 
-	claimBody := `{"name":"Bob","password":"bobspassword1","timezone":"UTC"}`
+	claimBody := `{"name":"Bob","password":"orchard-lantern-violet-river","timezone":"UTC"}`
 	claim := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/v1/invites/"+token+"/claim", strings.NewReader(claimBody))
 		req.Header.Set("Content-Type", "application/json")

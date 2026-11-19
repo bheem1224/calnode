@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/calnode/calnode/internal/calendar"
+	"github.com/calnode/calnode/internal/connstore"
 )
 
 // graphTZ is the UTC wall-clock format Graph expects for event start/end.
@@ -65,7 +66,7 @@ type graphEventResp struct {
 // ID and, when p.AddMeet is set, the Teams join URL. Graph emails attendees its own
 // invite. Returns ("", "", nil) if the user has no is_destination connection.
 func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.CreateEventParams) (string, string, string, error) {
-	hc, err := c.httpClient(ctx, userID, -1, 1)
+	hc, err := c.clientForCalendar(ctx, userID, p.DestinationCalendarID)
 	if err != nil || hc == nil {
 		return "", "", "", err
 	}
@@ -110,7 +111,13 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 	// cancel stay on /me/events/{id}, which Graph resolves across all of the user's
 	// calendars, so only creation needs to be calendar-scoped.
 	createURL := c.apiBase + "/me/events"
-	destCal, err := c.destinationCalendarID(ctx, userID)
+	destCal := p.DestinationCalendarID
+	if connstore.IsCalendarReference(destCal) {
+		_, destCal, _, err = connstore.CalendarTarget(ctx, c.db, userID, destCal)
+	}
+	if destCal == "" {
+		destCal, err = c.destinationCalendarID(ctx, userID)
+	}
 	if err != nil {
 		return "", "", "", err
 	}
@@ -141,6 +148,9 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 	if evResp.OnlineMeeting != nil {
 		join = evResp.OnlineMeeting.JoinURL
 	}
+	if connstore.IsCalendarReference(p.DestinationCalendarID) {
+		destCal = p.DestinationCalendarID
+	}
 	return evResp.ID, join, destCal, nil
 }
 
@@ -154,7 +164,7 @@ func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID st
 	if eventID == "" {
 		return nil
 	}
-	hc, err := c.httpClient(ctx, userID, -1, 1)
+	hc, err := c.clientForCalendar(ctx, userID, calendarID)
 	if err != nil || hc == nil {
 		return err
 	}
@@ -195,7 +205,7 @@ func (c *Client) CancelEvent(ctx context.Context, userID, calendarID, eventID st
 	if eventID == "" {
 		return nil
 	}
-	hc, err := c.httpClient(ctx, userID, -1, 1)
+	hc, err := c.clientForCalendar(ctx, userID, calendarID)
 	if err != nil || hc == nil {
 		return err
 	}

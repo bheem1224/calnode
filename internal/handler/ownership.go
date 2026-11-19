@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/calnode/calnode/internal/authsecurity"
 	"github.com/calnode/calnode/internal/mailer"
 	"github.com/calnode/calnode/internal/uid"
-	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"time"
 )
@@ -47,7 +47,7 @@ func (h *Handler) Reauthenticate(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, 401, "session expired")
 		return
 	}
-	valid := h.passwordAllowed(r.Context(), u.ID) && hash != "" && bcrypt.CompareHashAndPassword([]byte(hash), []byte(in.Password)) == nil
+	valid := h.passwordAllowed(r.Context(), u.ID) && hash != "" && authsecurity.ComparePassword(hash, in.Password) == nil
 	if isSSOMethod(method) {
 		started, err := time.Parse(time.RFC3339Nano, created)
 		valid = valid || (err == nil && time.Since(started) >= 0 && time.Since(started) < 5*time.Minute)

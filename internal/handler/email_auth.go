@@ -9,25 +9,12 @@ import (
 	"time"
 
 	"github.com/calnode/calnode/internal/abuse"
-	"golang.org/x/crypto/bcrypt"
+	"github.com/calnode/calnode/internal/authsecurity"
 )
 
-const maxPasswordLen = 72 // bcrypt silently truncates at 72 bytes
-
-// dummyHash is compared when no user is found so response time is constant
-// and an attacker cannot enumerate valid emails via timing differences.
-// Must use DefaultCost to match the cost of real stored hashes.
-var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("dummy-constant-string"), bcrypt.DefaultCost)
-
-func validatePassword(p string) string {
-	if len(p) < 8 {
-		return "password must be at least 8 characters"
-	}
-	if len(p) > maxPasswordLen {
-		return "password must be 72 characters or fewer"
-	}
-	return ""
-}
+// Existing bcrypt credentials remain usable; unknown accounts do the same
+// memory-hard verification as newly configured accounts.
+var dummyHash = authsecurity.DummyPasswordHash()
 
 // LoginEmail handles POST /v1/auth/login/email — email + password authentication.
 func (h *Handler) LoginEmail(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +58,7 @@ func (h *Handler) LoginEmail(w http.ResponseWriter, r *http.Request) {
 	if err != nil || emailLogin == 0 || storedHash == "" {
 		hashToCompare = string(dummyHash)
 	}
-	bcryptErr := bcrypt.CompareHashAndPassword([]byte(hashToCompare), []byte(req.Password))
+	bcryptErr := authsecurity.ComparePassword(hashToCompare, req.Password)
 
 	if err != nil || emailLogin == 0 || storedHash == "" || bcryptErr != nil {
 		h.writeError(w, http.StatusUnauthorized, "invalid email or password")
@@ -126,7 +113,7 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if msg := validatePassword(req.NewPassword); msg != "" {
+	if msg := h.validatePassword(r.Context(), req.NewPassword); msg != "" {
 		h.writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -144,12 +131,12 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "email login is not enabled for this account")
 		return
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(req.CurrentPassword)); err != nil {
+	if err := authsecurity.ComparePassword(storedHash, req.CurrentPassword); err != nil {
 		h.writeError(w, http.StatusUnauthorized, "current password is incorrect")
 		return
 	}
 
-	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	newHash, err := authsecurity.HashPassword(req.NewPassword)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "change password: bcrypt", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -232,7 +219,7 @@ func (h *Handler) AdminSetPassword(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if msg := validatePassword(req.Password); msg != "" {
+	if msg := h.validatePassword(r.Context(), req.Password); msg != "" {
 		h.writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -268,7 +255,7 @@ func (h *Handler) AdminSetPassword(w http.ResponseWriter, r *http.Request) {
 	if (targetIsAdmin != 0 || h.hasMFA(r.Context(), admin.ID) || h.mfaRequired(r.Context(), admin.ID)) && !h.freshAuthFactor(w, r, admin) {
 		return
 	}
-	newHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	newHash, err := authsecurity.HashPassword(req.Password)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "admin set password: bcrypt", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")

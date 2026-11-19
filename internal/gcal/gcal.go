@@ -428,3 +428,28 @@ func (c *Client) decryptEncoding(ciphertext string, enc *base64.Encoding) ([]byt
 	}
 	return plain, nil
 }
+
+// clientForCalendar resolves the owning account before loading credentials. A
+// per-event override or stored booking calendar must not use another account's token.
+func (c *Client) clientForCalendar(ctx context.Context, userID, reference string) (*http.Client, string, error) {
+	if reference == "" {
+		return c.DestinationClient(ctx, userID)
+	}
+	provider, actualCalendar, email, err := connstore.CalendarTarget(ctx, c.db, userID, reference)
+	if err == sql.ErrNoRows && !connstore.IsCalendarReference(reference) {
+		return c.DestinationClient(ctx, userID)
+	}
+	if err == nil && provider != "google" {
+		err = fmt.Errorf("calendar provider mismatch")
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	var access, refresh, storedCalendar, expiry string
+	err = c.db.QueryRowContext(ctx, `SELECT access_token_enc,COALESCE(refresh_token_enc,''),calendar_id,COALESCE(expiry_at,'') FROM calendar_connections WHERE user_id=? AND provider=? AND COALESCE(account_email,'')=?`, userID, provider, email).Scan(&access, &refresh, &storedCalendar, &expiry)
+	if err != nil {
+		return nil, "", err
+	}
+	hc, err := c.buildClient(ctx, userID, access, refresh, storedCalendar, expiry, email)
+	return hc, actualCalendar, err
+}
