@@ -18,13 +18,16 @@
  let draft=$state<Provider>(blank());
  const hasSSO=$derived(draft.purpose!=='integrations');
  const hasCalendar=$derived(draft.purpose!=='sso'&&draft.kind!=='oidc');
- const callback=$derived(origin+(draft.legacy_key==='google'?'/v1/auth/callback':draft.legacy_key==='microsoft'?'/v1/auth/microsoft/callback':`/v1/auth/providers/${draft.id}/callback`));
+ const baseURL=$derived(origin.replace(/\/+$/,''));
+ const callback=$derived(baseURL+(draft.legacy_key==='google'?'/v1/auth/callback':draft.legacy_key==='microsoft'?'/v1/auth/microsoft/callback':`/v1/auth/providers/${draft.id}/callback`));
+ const calendarCallback=$derived(baseURL+'/v1/calendar/callback');
  const purposes=$derived([{value:'sso',label:$t('identity.sso')},{value:'both',label:$t('identity.both')},{value:'integrations',label:$t('identity.integrations')}]);
  const kinds=[{value:'microsoft',label:'Microsoft Entra ID'},{value:'google',label:'Google'},{value:'oidc',label:'OpenID Connect (OIDC)'}];
  onMount(()=>{load();});
  async function load(){try{const result=await api.get<{items:Provider[];base_url:string}>('/v1/settings/identity-providers');items=result.items;origin=result.base_url;}catch(e){error=e instanceof Error?e.message:$t('common.failed');}finally{loading=false;}}
  function edit(provider?:Provider){draft=provider?structuredClone($state.snapshot(provider)):blank();secret='';error='';review=false;open=true;}
  function changeKind(kind:string){draft.kind=kind;if(kind==='oidc')draft.purpose='sso';draft.group_ids=[];}
+ async function copyCallback(value:string){try{await navigator.clipboard.writeText(value);toast.success($t('identity.callbackCopied'));}catch{toast.error($t('identity.callbackCopyFailed'));}}
  async function save(){busy=true;error='';try{const payload={...draft,auto_provision:hasSSO&&draft.auto_provision,client_secret:secret};if(draft.id){await api.put('/v1/settings/identity-providers/'+draft.id,payload);open=false;}else{draft=await api.post<Provider>('/v1/settings/identity-providers',payload);review=false;}secret='';await load();toast.success($t('identity.saved'));}catch(e){error=e instanceof Error?e.message:$t('common.failed');}finally{busy=false;}}
 </script>
 <svelte:head><title>{$t('identity.title')}</title></svelte:head>
@@ -48,7 +51,18 @@
     {#if draft.kind==='oidc'}<div class="space-y-2"><Label for="provider-issuer">{$t('identity.issuer')}</Label><Input id="provider-issuer" type="url" bind:value={draft.issuer_url} required placeholder="https://id.company.com" /><p class="text-xs text-muted-foreground">{$t('identity.issuerHint')}</p></div>{/if}
     <div class="space-y-2"><Label for="provider-client">{$t('identity.clientID')}</Label><Input id="provider-client" bind:value={draft.client_id} required autocomplete="off" /></div>
     <div class="space-y-2"><Label for="provider-secret">{$t('identity.secret')}</Label><Input id="provider-secret" type="password" autocomplete="new-password" bind:value={secret} required={!draft.client_secret_set} placeholder={draft.client_secret_set?$t('identity.keepSecret'):''} /></div>
-    {#if draft.id}<div class="space-y-2"><p class="text-xs font-medium">{$t('identity.redirects')}</p>{#if hasSSO}<p class="text-xs text-muted-foreground">SSO</p><code class="block break-all rounded-md border bg-muted/30 p-2 text-xs">{callback}</code>{/if}{#if hasCalendar}<p class="text-xs text-muted-foreground">{$t('identity.calendar')}</p><code class="block break-all rounded-md border bg-muted/30 p-2 text-xs">{origin}/v1/calendar/callback</code>{/if}</div>{:else}<p class="rounded-lg border p-3 text-xs leading-relaxed text-muted-foreground">{$t('identity.redirectAfterSave')}</p>{/if}
+    <section class="space-y-3 rounded-lg border bg-muted/20 p-3" aria-label={$t('identity.redirects')}>
+     <p class="text-xs font-medium">{$t('identity.redirects')}</p>
+     {#if hasSSO}
+      <div class="space-y-1.5"><p class="text-xs text-muted-foreground">{$t('identity.ssoCallback')}</p>
+       {#if draft.id && origin}<div class="flex min-w-0 items-center gap-2"><code class="min-w-0 flex-1 break-all rounded-md border bg-background p-2 text-xs">{callback}</code><Button type="button" variant="outline" size="sm" onclick={()=>copyCallback(callback)} aria-label={$t('identity.copySSOCallback')}>{$t('common.copy')}</Button></div>
+       {:else}<p class="text-xs leading-relaxed text-muted-foreground">{$t('identity.ssoCallbackAfterSave')}</p>{/if}
+      </div>
+     {/if}
+     {#if hasCalendar}<div class="space-y-1.5"><p class="text-xs text-muted-foreground">{$t('identity.calendarCallback')}</p>
+      {#if origin}<div class="flex min-w-0 items-center gap-2"><code class="min-w-0 flex-1 break-all rounded-md border bg-background p-2 text-xs">{calendarCallback}</code><Button type="button" variant="outline" size="sm" onclick={()=>copyCallback(calendarCallback)} aria-label={$t('identity.copyCalendarCallback')}>{$t('common.copy')}</Button></div>{/if}
+     </div>{/if}
+    </section>
     <div class="flex items-center justify-between gap-4"><Label for="provider-enabled">{$t('identity.enabled')}</Label><Switch id="provider-enabled" bind:checked={draft.enabled} /></div>
     {#if hasSSO}<section class="space-y-4 border-t pt-4"><h3 class="text-sm font-semibold">{$t('identity.access')}</h3><div class="flex items-center justify-between gap-4"><Label for="provider-members">{$t('identity.allowMembers')}</Label><Switch id="provider-members" bind:checked={draft.allow_members} /></div><div class="flex items-start justify-between gap-4"><div class="space-y-1"><Label for="provider-enrollment">{$t('identity.auto')}</Label><p class="text-xs leading-relaxed text-muted-foreground">{$t('identity.autoHint')}</p></div><Switch id="provider-enrollment" bind:checked={draft.auto_provision} /></div>
      {#if draft.auto_provision||draft.approved_domains.length||draft.group_ids.length}

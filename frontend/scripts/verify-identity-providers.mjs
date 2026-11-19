@@ -3,12 +3,15 @@
 import { chromium } from 'playwright';
 import { randomBytes } from 'node:crypto';
 import assert from 'node:assert/strict';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
 const origin=process.env.CALNODE_IDENTITY_TEST_URL;
 if(!origin||new URL(origin).hostname!=='localhost')throw new Error('A fresh localhost instance is required');
 const browser=await chromium.launch({headless:true});
 try{
  const context=await browser.newContext({viewport:{width:1440,height:900}});
+ await context.grantPermissions(['clipboard-read','clipboard-write'],{origin});
  const status=await context.request.get(origin+'/v1/auth/status');
  assert.equal((await status.json()).claimed,false,'Refusing to change an existing instance');
  const password=randomBytes(24).toString('base64url');
@@ -19,6 +22,15 @@ try{
  async function create(name,purpose){
   await page.getByRole('button',{name:'+ Add provider',exact:true}).click();
   if(purpose!=='SSO only'){await page.getByLabel('Use for',{exact:true}).click();await page.getByRole('option',{name:purpose,exact:true}).click();}
+  if(purpose!=='SSO only'){
+   await dialog.getByText(origin+'/v1/calendar/callback',{exact:true}).waitFor();
+   await dialog.getByRole('button',{name:'Copy calendar callback URL'}).click();
+   assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),origin+'/v1/calendar/callback');
+  }else{assert.equal(await dialog.getByRole('button',{name:'Copy calendar callback URL'}).count(),0);}
+  if(purpose!=='Calendar & conferencing only'){
+   await dialog.getByText('Save this provider to generate its permanent sign-in callback URL.',{exact:false}).waitFor();
+   assert.equal(await dialog.getByRole('button',{name:'Copy sign-in callback URL'}).count(),0);
+  }
   await page.getByLabel('Display name',{exact:true}).fill(name);
   await page.getByLabel('Client ID',{exact:true}).fill('fake-'+randomBytes(8).toString('hex'));
   await page.getByLabel('Client secret',{exact:true}).fill('disposable-test-secret');
@@ -36,14 +48,29 @@ try{
   const saved=page.waitForResponse(r=>r.url().endsWith('/v1/settings/identity-providers')&&r.request().method()==='POST');
   await dialog.getByRole('button',{name:'Save',exact:true}).click();const response=await saved;assert.ok(response.ok(),await response.text());const provider=await response.json();
   assert.equal(provider.client_secret,undefined);
-  if(purpose==='SSO only'){await dialog.getByText(origin+'/v1/auth/providers/'+provider.id+'/callback',{exact:true}).waitFor();assert.equal(provider.group_match,'all');assert.equal(provider.group_ids.length,2);}
+  if(purpose!=='Calendar & conferencing only'){
+   const callback=origin+'/v1/auth/providers/'+provider.id+'/callback';
+   await dialog.getByText(callback,{exact:true}).waitFor();
+   await dialog.getByRole('button',{name:'Copy sign-in callback URL'}).click();
+   assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),callback);
+  }else{assert.equal(await dialog.getByRole('button',{name:'Copy sign-in callback URL'}).count(),0);}
+  if(purpose==='SSO + calendar & conferencing'&&process.env.CALNODE_SCREENSHOT_DIR){
+   await mkdir(process.env.CALNODE_SCREENSHOT_DIR,{recursive:true});
+   for(const mode of ['light','dark']){
+    await page.evaluate(dark=>document.documentElement.classList.toggle('dark',dark),mode==='dark');
+    await dialog.getByText(origin+'/v1/calendar/callback',{exact:true}).scrollIntoViewIfNeeded();
+    await dialog.screenshot({path:join(process.env.CALNODE_SCREENSHOT_DIR,`identity-callbacks-${mode}.png`)});
+   }
+  }
+  if(purpose==='SSO only'){assert.equal(provider.group_match,'all');assert.equal(provider.group_ids.length,2);}
   else{assert.equal(provider.microsoft_tenant_id,'common');}
   await dialog.getByRole('button',{name:'Close',exact:true}).click();return provider;
  }
- const company=await create('Company SSO','SSO only');const personal=await create('Personal calendars','Calendar & conferencing only');
+ const company=await create('Company SSO','SSO only');const personal=await create('Personal calendars','Calendar & conferencing only');const combined=await create('Combined app','SSO + calendar & conferencing');
  const publicStatus=await context.request.get(origin+'/v1/auth/status');const providers=(await publicStatus.json()).identity_providers;
- assert.deepEqual(providers.map(p=>p.id),[company.id]);
- const calendar=await context.request.get(origin+'/v1/calendar/status');assert.deepEqual((await calendar.json()).integration_providers.map(p=>p.id),[personal.id]);
+ const created=[company.id,personal.id,combined.id];
+ assert.deepEqual(providers.map(p=>p.id).filter(id=>created.includes(id)),[company.id,combined.id]);
+ const calendar=await context.request.get(origin+'/v1/calendar/status');assert.deepEqual((await calendar.json()).integration_providers.map(p=>p.id).filter(id=>created.includes(id)),[personal.id,combined.id]);
  const deny=await context.request.get(origin+'/v1/auth/providers/'+personal.id+'/login',{maxRedirects:0});assert.equal(deny.status(),404);
  for(const route of ['google','microsoft']){await page.goto(origin+'/admin/settings/'+route);await page.waitForURL(origin+'/admin/settings/identity');}
  await page.goto(origin+'/admin/settings/security');await page.getByText('Require SSO sign-in for Members',{exact:true}).waitFor();
