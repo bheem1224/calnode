@@ -143,6 +143,7 @@ body {
     {{template "eventMeta" .}}
     {{if and (not .TokenInvalid) (ne .Status "cancelled")}}
     <p class="tz-label">
+      <span class="tz-caption">{{call .T "times_shown_in"}}</span>
       <span class="tz-wrapper">
         <select id="tz-select" aria-label="{{call .T "timezone_aria"}}"></select>
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -683,8 +684,9 @@ body {
   function resizeTzSelect() {
     const sel = $('tz-select'); if (!sel) return;
     const sizer = $('tz-sizer');
+    sizer.style.font = getComputedStyle(sel).font;
     sizer.textContent = sel.options[sel.selectedIndex]?.text || '';
-    sel.style.width = sizer.offsetWidth + 'px';
+    sel.style.width = Math.ceil(sizer.getBoundingClientRect().width) + 4 + 'px';
   }
   function populateTzSelect() {
     const sel = $('tz-select'); if (!sel) return;

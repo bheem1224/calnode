@@ -147,10 +147,13 @@
 .cd:disabled { color: #d1d5db; cursor: default; background: none !important; }
 
 .tz-label {
-  margin-top: .875rem;
-  font-size: .6875rem;
-  color: #9ca3af;
+  position: relative;
+  display: flex; flex-direction: column; align-items: flex-start; gap: .25rem;
+  margin-top: 1rem; padding-top: .875rem;
+  border-top: 1px solid var(--fp-border, #e5e7eb);
+  font-size: .75rem; color: var(--fp-text-muted, #6b7280);
 }
+.tz-caption { font-size: .6875rem; color: var(--fp-text-muted, #6b7280); }
 .business-name-text {
   font-size: .9375rem;
   font-weight: 600;
@@ -161,38 +164,28 @@ html.dark .business-name-text,
   color: #f4f4f5;
 }
 .tz-wrapper {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  padding: 4px 8px;
-  background: #f9fafb;
-  transition: border-color .15s, background .15s;
+  display: inline-flex; align-items: center; gap: .375rem; width: 100%; max-width: 100%;
+  border: 0; border-radius: 6px; background: transparent;
 }
 .tz-wrapper select {
-  appearance: none;
-  -webkit-appearance: none;
-  font-size: .75rem;
-  color: #4b5563;
-  font-family: inherit;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-  outline: none;
+  appearance: none; -webkit-appearance: none;
+  min-width: 0; max-width: 100%; padding: .375rem 0;
+  font: inherit; font-size: .75rem; color: var(--fp-text-secondary, #4b5563);
+  background: transparent; border: none; cursor: pointer;
 }
-.tz-wrapper svg { pointer-events: none; color: #6b7280; flex-shrink: 0; }
-.tz-wrapper:hover { border-color: #d1d5db; }
-.tz-wrapper:hover select,
-.tz-wrapper:hover svg { color: #111827; }
+.tz-wrapper svg { pointer-events: none; color: var(--fp-text-muted, #6b7280); flex-shrink: 0; }
 .tz-btn {
-  display: inline-flex; align-items: center; gap: 5px;
-  background: transparent; border: none; padding: 0; cursor: pointer;
-  font-size: .75rem; font-family: inherit; color: #374151; outline: none;
+  display: inline-flex; align-items: center; gap: .5rem; max-width: 100%;
+  background: transparent; border: none; border-radius: 6px; padding: .375rem .5rem; margin-left: -.5rem;
+  font: inherit; font-size: .75rem; color: var(--fp-text-secondary, #4b5563); cursor: pointer;
+  transition: background-color 180ms cubic-bezier(.2,0,0,1), color 180ms cubic-bezier(.2,0,0,1);
 }
+.tz-btn:hover, .tz-btn[aria-expanded="true"] { background: var(--fp-surface-muted, #f1f3f5); color: var(--fp-text, #111827); }
+#tz-btn-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tz-current { display: inline-flex; align-items: center; gap: .5rem; color: var(--fp-text-secondary, #4b5563); overflow-wrap: anywhere; }
+.tz-current svg { flex-shrink: 0; color: var(--fp-text-muted, #6b7280); }
 .tz-popover {
-  position: absolute; bottom: 100%; left: 0; margin-bottom: 6px; width: 250px;
+  position: absolute; bottom: 100%; left: 0; margin-bottom: 6px; width: min(300px, 100%);
   background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px;
   box-shadow: 0 12px 30px rgba(0,0,0,.15); z-index: 60; padding: 6px;
 }
@@ -880,8 +873,8 @@ html.dark .field select,
 }
 html.dark .tz-wrapper,
 :host-context(.dark) .tz-wrapper {
-  background: #27272a;
-  border-color: #3f3f46;
+  background: transparent;
+  border-color: transparent;
 }
 html.dark .tz-wrapper:hover,
 :host-context(.dark) .tz-wrapper:hover {
@@ -1027,8 +1020,9 @@ html.dark .clock-format button[aria-pressed="true"], :host-context(.dark) .clock
 .calendar-actions { margin-top: 1.25rem; text-align: left; }
 .calendar-actions p { margin-bottom: .5rem; font-size: .75rem; font-weight: 600; color: #6b7280; }
 .calendar-actions-row { display: flex; flex-wrap: wrap; gap: .5rem; }
-.calendar-actions-row a, .calendar-actions-row button { display: inline-flex; align-items: center; padding: .5rem .75rem; border: 1px solid #d1d5db; border-radius: .5rem; background: #fff; color: #111827; font: inherit; font-size: .75rem; text-decoration: none; cursor: pointer; }
-.calendar-actions-row a:hover, .calendar-actions-row button:hover { background: #f1f3f5; }
+.calendar-actions-row a, .calendar-actions-row button { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 36px; padding: .5rem .75rem; border: 1px solid #d1d5db; border-radius: .5rem; background: #fff; color: #111827; font: inherit; font-size: .75rem; text-decoration: none; cursor: pointer; }
+.calendar-actions-row a:hover, .calendar-actions-row button:not(:disabled):hover { background: var(--fp-surface-muted, #f1f3f5); }
+.calendar-action-icon { width: 18px; height: 18px; flex-shrink: 0; }
 
 /* Keep the fixed theme control clear of the optional demo notice. */
 body:has(.fp-theme-switcher) .demo-banner { margin-top: 2.5rem; }
@@ -1056,7 +1050,7 @@ html.dark .calendar-actions-row a, html.dark .calendar-actions-row button, :host
 .is-success .calendar-actions { width: 100%; padding-top: 1.25rem; border-top: 1px solid #e5e7eb; }
 .is-success .calendar-actions-row { justify-content: center; }
 .is-success .calendar-actions > p { text-align: center; }
-.calendar-actions-row button:disabled { cursor: default; opacity: .6; }
+.calendar-actions-row button:disabled { cursor: default; opacity: .7; }
 html.dark .confirmation-details, html.dark .is-success .calendar-actions,
 :host-context(.dark) .confirmation-details, :host-context(.dark) .is-success .calendar-actions { border-color: #272930; }
 html.dark .confirmation-details p, html.dark .confirm-view .confirmation-details .when,
@@ -1089,3 +1083,39 @@ html.dark .phone-country-options button:focus-visible,:host-context(.dark) .phon
 /* Location choices share the booking form controls on hosted and embedded pages. */
 .location-choice { min-width: 0; }
 .location-choice select { width: 100%; min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+
+/* A framework-free listbox keeps the location menu styled in every browser.
+   The native select remains the form value and the no-JavaScript fallback. */
+.location-picker { position: relative; min-width: 0; }
+.location-trigger {
+  display: flex; align-items: center; justify-content: space-between; gap: .75rem;
+  width: 100%; min-width: 0; min-height: 38px; padding: .625rem .75rem;
+  border: 1px solid var(--fp-border, #e5e7eb); border-radius: 8px;
+  background: var(--fp-surface-muted, #f1f3f5); color: var(--fp-text, #111827);
+  font: inherit; font-size: .8125rem; text-align: left; cursor: pointer;
+  transition: background-color 180ms cubic-bezier(.2,0,0,1), border-color 180ms cubic-bezier(.2,0,0,1), transform 180ms cubic-bezier(.2,0,0,1);
+}
+.location-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.location-trigger > svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--fp-text-muted, #6b7280); }
+.location-trigger.is-placeholder { color: var(--fp-text-muted, #6b7280); }
+.location-trigger:hover, .location-trigger[aria-expanded="true"] { border-color: var(--fp-text-muted, #6b7280); }
+.location-trigger[aria-invalid="true"] { border-color: #dc2626; }
+.location-options {
+  position: absolute; inset: calc(100% + 6px) auto auto 0; z-index: 65;
+  width: 100%; max-height: 240px; overflow-y: auto; overscroll-behavior: contain;
+  margin: 0; padding: 5px; border: 1px solid var(--fp-border, #e5e7eb); border-radius: 10px;
+  background: var(--fp-surface, #fff); color: var(--fp-text, #111827);
+  box-shadow: 0 8px 24px #0002; font: inherit; font-size: .8125rem;
+}
+.location-options[popover] { position: fixed; inset: auto; }
+.location-options:not([hidden]) { animation: booking-menu-enter 200ms cubic-bezier(.16,1,.3,1); }
+.location-option {
+  display: flex; align-items: center; justify-content: space-between; gap: .75rem;
+  min-height: 36px; padding: .5rem .625rem; border-radius: 6px; cursor: pointer;
+  overflow-wrap: anywhere; outline: none;
+}
+.location-option:hover, .location-option:focus-visible { background: var(--fp-surface-muted, #f1f3f5); }
+.location-option[aria-selected="true"] { font-weight: 600; }
+.location-option[aria-selected="true"]::after { content: '\2713'; flex-shrink: 0; }
+@keyframes booking-menu-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .location-options:not([hidden]) { animation: none; } .location-trigger, .tz-btn { transition: none; } }

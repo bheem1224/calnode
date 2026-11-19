@@ -110,7 +110,7 @@ and run `CALNODE_LOCATION_TEST_URL=http://localhost:39221 node scripts/verify-bo
 The script refuses claimed instances, creates fake manual Meet/Teams links and
 availability, and verifies actual bookings through hosted, single-use and embed
 flows, plus the chosen provider on the manage page. It tests light/dark at desktop
-and mobile widths, required selection, submitted choices and horizontal overflow.
+and mobile widths, keyboard and mouse location selection, menu clipping, submitted choices, timezone switching, calendar action logos, the .ics download, read-only previews and horizontal overflow.
 No real calendar provider or email service is needed. Screenshots go to the system
 temporary directory unless `CALNODE_SCREENSHOT_DIR` is set. Unit tests additionally
 verify rescheduling preserves the choice and forged or unsafe locations are rejected.

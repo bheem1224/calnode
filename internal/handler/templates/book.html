@@ -186,18 +186,19 @@ body {
   <!-- Calendar column -->
   <section class="cal-col" aria-label="{{call .T "date_picker_aria"}}">
     {{template "calendarGrid" .}}
-    <div class="tz-label" style="position:relative;">
+    <div class="tz-label">
+      <span id="tz-caption" class="tz-caption">{{call .T "times_shown_in"}}</span>
       <span class="tz-wrapper">
         <select id="tz-select" aria-label="{{call .T "timezone_aria"}}" style="display:none"></select>
-        <button type="button" id="tz-btn" class="tz-btn" aria-haspopup="listbox" aria-expanded="false">
+        <button type="button" id="tz-btn" class="tz-btn" aria-labelledby="tz-caption tz-btn-label" aria-haspopup="dialog" aria-controls="tz-popover" aria-expanded="false">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
           <span id="tz-btn-label"></span>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </span>
-      <div id="tz-popover" class="tz-popover" hidden>
+      <div id="tz-popover" class="tz-popover" role="dialog" aria-label="{{call .T "timezone_aria"}}" hidden>
         <input type="search" id="tz-search" class="tz-search" placeholder="Search timezone..." autocomplete="off">
-        <ul id="tz-list" class="tz-list" role="listbox"></ul>
+        <ul id="tz-list" class="tz-list"></ul>
       </div>
       <span id="tz-sizer" aria-hidden="true"></span>
     </div>
@@ -567,6 +568,7 @@ body {
     const sel = $('f-location-select');
     return sel && sel.value !== '' ? sel.options[sel.selectedIndex].textContent : {{.LocationLabel}};
   }
+  BookingLogic.enhanceLocationSelect($('f-location-select'));
   $('f-location-select')?.addEventListener('change', () => {
     const summary = $('summary-location'); if (summary) summary.textContent = selectedLocationLabel();
     const error = $('form-error'); if (error?.textContent === t('required_fields_error')) error.textContent = '';
@@ -1075,7 +1077,7 @@ body {
 
     const locationSelect = $('f-location-select');
     if (locationSelect && locationSelect.value === '') {
-      errEl.textContent = t('required_fields_error');locationSelect.focus();return;
+      errEl.textContent = t('required_fields_error');$('f-location-select-trigger').focus();return;
     }
     const phoneAsLocation = selectedLocationType() === 'attendee_phone' || {{.PhoneChoice}};
     if (selectedLocationType() === 'attendee_phone' && !form.elements.phone?.value.trim()) {
@@ -1325,6 +1327,7 @@ body {
         resizeTzSelect();
         $('tz-popover').hidden = true;
         $('tz-btn').setAttribute('aria-expanded', 'false');
+        $('tz-btn').focus();
         await loadMonthAvailability(navYear, navMonth);
         if (pickedDate) {
           const ds = toDateStr(pickedDate.getFullYear(), pickedDate.getMonth(), pickedDate.getDate());
@@ -1359,7 +1362,7 @@ body {
       const inp = $('tz-search');
       inp.value = '';
       renderTzList('');
-      setTimeout(() => inp.focus(), 10);
+      inp.focus();
     }
   });
   $('tz-search')?.addEventListener('input', (e) => renderTzList(e.target.value));
@@ -1369,6 +1372,10 @@ body {
       pop.hidden = true;
       $('tz-btn')?.setAttribute('aria-expanded', 'false');
     }
+  });
+  $('tz-btn')?.closest('.tz-label').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); $('tz-popover').hidden = true; $('tz-btn').setAttribute('aria-expanded', 'false'); $('tz-btn').focus(); }
+    if (e.key === 'ArrowDown' && e.target === $('tz-search')) { e.preventDefault(); $('tz-list').querySelector('button')?.focus(); }
   });
 
   // ── Init ──────────────────────────────────────────────────────────────────
