@@ -770,6 +770,15 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		displayLogoURL = brand.LogoURL
 	}
 
+	// On single-use links (/t/{token}), never expose the underlying event slug
+	// in HTML/JS so the recipient cannot strip the token and rebook directly.
+	pageSlug := slug
+	assistantEnabled := h.getLLM() != nil
+	if prefill.SingleUseToken != "" {
+		pageSlug = ""
+		assistantEnabled = false
+	}
+
 	data := bookPageData{
 		OOONote:             oooNote,
 		OOORedirectName:     oooRedirName,
@@ -777,7 +786,7 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		PhoneChoice:         allowPhoneCall && onlineMeetingLocation(locType),
 		AccentColor:         accentColor,
 		AccentForeground:    accentForeground(accentColor),
-		Slug:                slug,
+		Slug:                pageSlug,
 		Name:                name,
 		Description:         renderMarkdown(description),
 		DurationLabel:       durationLabel(durMins, loc),
@@ -802,7 +811,7 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		Questions:           questions,
 		FormItems:           buildBookFormItems(bookingFormConfig, questions, allowPhoneCall && onlineMeetingLocation(locType)),
 		BookingLogicJS:      template.JS(bookingLogicJS), // #nosec G203 -- our own bundled JS source constant, not user input
-		AssistantEnabled:    h.getLLM() != nil,
+		AssistantEnabled:    assistantEnabled,
 		AssistantDisclosure: loc.T("assistant_disclosure"),
 		AssistantGreeting:   assistantGreeting(msgGreeting, loc),
 		CSSVersion:          bookingCSSVersion,

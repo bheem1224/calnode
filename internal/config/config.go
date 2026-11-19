@@ -104,6 +104,13 @@ type Config struct {
 	// DemoResetInterval is how often DemoMode wipes and re-seeds the DB. Configurable
 	// (not hardcoded to 30m) so local verification doesn't require waiting half an hour.
 	DemoResetInterval time.Duration
+
+	// Per-IP per-minute rate limits for public routes. Public HTML/info routes use
+	// two-tier classification (normal browser vs. automated/script client).
+	RateLimitPublicRPM  int
+	RateLimitBotRPM     int
+	RateLimitSlotsRPM   int
+	RateLimitBookingRPM int
 }
 
 func Load() *Config {
@@ -152,6 +159,10 @@ func Load() *Config {
 	cfg.CookieSecure = getBool("COOKIE_SECURE", strings.HasPrefix(cfg.BaseURL, "https://"))
 	cfg.DemoMode = getBool("DEMO_MODE", false)
 	cfg.DemoResetInterval = getDuration("DEMO_RESET_INTERVAL", 30*time.Minute)
+	cfg.RateLimitPublicRPM = getInt("RATE_LIMIT_PUBLIC_RPM", 120)
+	cfg.RateLimitBotRPM = getInt("RATE_LIMIT_BOT_RPM", 20)
+	cfg.RateLimitSlotsRPM = getInt("RATE_LIMIT_SLOTS_RPM", 60)
+	cfg.RateLimitBookingRPM = getInt("RATE_LIMIT_BOOKING_RPM", 20)
 
 	return cfg
 }
@@ -256,6 +267,18 @@ func getBool(key string, def bool) bool {
 		return def
 	}
 	return b
+}
+
+func getInt(key string, def int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return def
+	}
+	return n
 }
 
 func getDuration(key string, def time.Duration) time.Duration {

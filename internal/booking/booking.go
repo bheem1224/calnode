@@ -61,6 +61,9 @@ type Booking struct {
 	// PendingApproval is true when the event type requires manual host confirmation
 	// and the booking has not yet been approved.
 	PendingApproval bool
+	ContactPhone    string
+	Notes           string
+	Guests          []string
 }
 
 // Attendee is a participant in a booking (the person who made the booking).
@@ -107,6 +110,9 @@ type CreateParams struct {
 	LocationType  string
 	Organizer     Attendee
 	Answers       []Answer
+	ContactPhone  string
+	Notes         string
+	Guests        []string
 	// MaxActivePerInvitee caps how many active (upcoming, non-cancelled) bookings
 	// the organizer's email may already hold for this event type. 0 = unlimited.
 	MaxActivePerInvitee int

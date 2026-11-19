@@ -747,9 +747,12 @@ type bookingJSON struct {
 	InviteDelivery string `json:"invite_delivery" jsonschema:"who sent the booker's calendar invite: calendar (the host's calendar), calnode (Calnode's own email), or none (no invite was sent)"`
 	// RSVPStatus is the booker's answer to a Calnode-sent invite ("accepted", "declined",
 	// "tentative"), absent until one arrives. Admin list views only.
-	RSVPStatus string         `json:"rsvp_status,omitempty"`
-	Attendees  []attendeeJSON `json:"attendees,omitempty"`
-	Hosts      []hostBrief    `json:"hosts,omitempty"` // assigned host(s) for display; set on the public create response
+	RSVPStatus   string         `json:"rsvp_status,omitempty"`
+	ContactPhone string         `json:"contact_phone,omitempty"`
+	Notes        string         `json:"notes,omitempty"`
+	Guests       []string       `json:"guests,omitempty"`
+	Attendees    []attendeeJSON `json:"attendees,omitempty"`
+	Hosts        []hostBrief    `json:"hosts,omitempty"` // assigned host(s) for display; set on the public create response
 }
 
 // hostBrief is an assigned host's identity for the booking-confirmation screen.
@@ -774,6 +777,9 @@ func toBookingJSON(b *booking.Booking) bookingJSON {
 		CreatedAt:          b.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:          b.UpdatedAt.UTC().Format(time.RFC3339),
 		InviteDelivery:     b.InviteDelivery,
+		ContactPhone:       b.ContactPhone,
+		Notes:              b.Notes,
+		Guests:             b.Guests,
 	}
 	if j.Status == "confirmed" && b.PendingApproval {
 		j.Status = "pending"
@@ -1063,6 +1069,38 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "invalid telephone number")
 		return
 	}
+	req.Notes = strings.TrimSpace(req.Notes)
+	if len(req.Notes) > 2000 {
+		h.writeError(w, http.StatusBadRequest, "notes must be 2000 characters or fewer")
+		return
+	}
+	// Validate, deduplicate, and cap additional guests at 10 to prevent calendar/email relay abuse.
+	const maxBookingGuests = 10
+	if len(req.Guests) > maxBookingGuests {
+		h.writeError(w, http.StatusBadRequest, "at most 10 additional guests are allowed")
+		return
+	}
+	var cleanGuests []string
+	if len(req.Guests) > 0 {
+		seenGuests := map[string]bool{strings.ToLower(strings.TrimSpace(req.Email)): true}
+		for _, rawG := range req.Guests {
+			g := strings.TrimSpace(rawG)
+			if g == "" {
+				continue
+			}
+			addr, err := mail.ParseAddress(g)
+			if err != nil || addr.Address == "" || !strings.Contains(addr.Address, "@") {
+				h.writeError(w, http.StatusBadRequest, "invalid guest email address")
+				return
+			}
+			norm := strings.ToLower(addr.Address)
+			if seenGuests[norm] {
+				continue
+			}
+			seenGuests[norm] = true
+			cleanGuests = append(cleanGuests, addr.Address)
+		}
+	}
 	hosts, err := h.resolveEventTypeHosts(r.Context(), et.ID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "create booking: resolve hosts", "error", err)
@@ -1122,6 +1160,9 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 			Locale:       i18n.Resolve("", req.Language).Code,
 		},
 		Answers:             answers,
+		ContactPhone:        req.ContactPhone,
+		Notes:               req.Notes,
+		Guests:              cleanGuests,
 		MaxActivePerInvitee: et.MaxActiveBookings,
 		MaxBookingsPerHour:  maxBookingsPerEmailPerHour,
 		MaxPerDay:           et.MaxPerDay,
@@ -1437,14 +1478,41 @@ func (h *Handler) createHostEvents(ctx context.Context, b *booking.Booking, in b
 		Scan(&calTitleTmpl, &hideNotesCal, &hideCalDetails, &destCalID)
 	summary := bData.Tf("calendar_event_summary", in.EventTypeName, in.OrganizerName)
 	if strings.TrimSpace(calTitleTmpl) != "" {
+		hostName := primaryHost(hosts).Name
+		hostFirst := ""
+		if parts := strings.Fields(hostName); len(parts) > 0 {
+			hostFirst = parts[0]
+		}
+		schedFirst := ""
+		if parts := strings.Fields(in.OrganizerName); len(parts) > 0 {
+			schedFirst = parts[0]
+		}
+		durLabel := ""
+		if mins := int(b.EndAt.Sub(b.StartAt).Minutes()); mins > 0 {
+			durLabel = fmt.Sprintf("%dm", mins)
+		}
 		summary = strings.NewReplacer(
-			"{Host}", primaryHost(hosts).Name,
+			"{Host}", hostName,
+			"{HostFirst}", hostFirst,
 			"{Scheduler}", in.OrganizerName,
+			"{SchedulerFirst}", schedFirst,
+			"{Event}", in.EventTypeName,
 			"{EventName}", in.EventTypeName,
+			"{Duration}", durLabel,
+			"{Location}", bData.LocationValue,
 		).Replace(calTitleTmpl)
 	}
 	calDesc := bData.Tf("calendar_event_booking_id", b.ID)
 	if hideNotesCal == 0 {
+		if b.ContactPhone != "" {
+			calDesc += "\nPhone: " + b.ContactPhone
+		}
+		if b.Notes != "" {
+			calDesc += "\nNotes: " + b.Notes
+		}
+		if len(b.Guests) > 0 {
+			calDesc += "\nGuests: " + strings.Join(b.Guests, ", ")
+		}
 		ansRows, ansErr := h.db.QueryContext(ctx, `
 			SELECT q.label, a.value
 			FROM booking_answers a
@@ -1462,6 +1530,11 @@ func (h *Handler) createHostEvents(ctx context.Context, b *booking.Booking, in b
 		}
 	}
 	create := func(host assignedHost, location string) (link string) {
+		inviteeEmail := calendarInvitee(b.InviteDelivery, in.OrganizerEmail)
+		var inviteGuests []string
+		if inviteeEmail != "" {
+			inviteGuests = b.Guests
+		}
 		eventID, link, calID, provider, err := gc.CreateEvent(ctx, host.UserID, calendar.CreateEventParams{
 			// The attendee is added as a calendar invitee below, so this text reaches
 			// them via the provider's own native invite (Google/Outlook/CalDAV) —
@@ -1472,7 +1545,8 @@ func (h *Handler) createHostEvents(ctx context.Context, b *booking.Booking, in b
 			Start:                 b.StartAt,
 			End:                   b.EndAt,
 			OrganizerName:         in.OrganizerName,
-			OrganizerEmail:        calendarInvitee(b.InviteDelivery, in.OrganizerEmail),
+			OrganizerEmail:        inviteeEmail,
+			Guests:                inviteGuests,
 			AddMeet:               autoGenMeet && host.IsPrimary,
 			Private:               hideCalDetails != 0,
 			DestinationCalendarID: destCalID,
@@ -1661,6 +1735,21 @@ func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConf
 	// After the calendar phase, so the payload carries a minted Meet/Teams link. Not
 	// bound to ctx: the calendar phase may have spent it, and this is one local insert.
 	if h.webhookSvc != nil {
+		var whAnswers []webhook.BookingAnswerPayload
+		if ansRows, ansErr := h.db.QueryContext(context.WithoutCancel(ctx), `
+			SELECT a.question_id, q.label, a.value
+			FROM booking_answers a
+			JOIN event_type_questions q ON q.id = a.question_id
+			WHERE a.booking_id = ?
+			ORDER BY q.position, q.id`, b.ID); ansErr == nil {
+			for ansRows.Next() {
+				var a webhook.BookingAnswerPayload
+				if ansRows.Scan(&a.QuestionID, &a.Label, &a.Value) == nil {
+					whAnswers = append(whAnswers, a)
+				}
+			}
+			_ = ansRows.Close()
+		}
 		if err := h.webhookSvc.Enqueue(context.WithoutCancel(ctx), "booking.created", webhook.BookingPayload{
 			ID:                 b.ID,
 			EventTypeSlug:      in.EventTypeSlug,
@@ -1673,6 +1762,12 @@ func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConf
 			PaymentStatus:      paymentStatusForWebhook(b.PaymentStatus),
 			AmountPaidCents:    b.AmountPaidCents,
 			AmountPaidCurrency: b.AmountPaidCurrency,
+			AttendeeName:       in.OrganizerName,
+			AttendeeEmail:      in.OrganizerEmail,
+			ContactPhone:       b.ContactPhone,
+			Notes:              b.Notes,
+			Guests:             b.Guests,
+			Answers:            whAnswers,
 		}); err != nil {
 			h.logger.Error("enqueue booking.created webhook", "error", err, "booking_id", b.ID)
 		}

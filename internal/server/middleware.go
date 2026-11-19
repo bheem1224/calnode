@@ -286,6 +286,63 @@ func RateLimit(limit int, period time.Duration) func(http.HandlerFunc) http.Hand
 	}
 }
 
+// TieredRateLimit applies a lower per-IP limit to automated/scripted clients
+// (classified via User-Agent and browser fetch/locale headers) and a higher
+// per-IP limit to interactive browsers. Defense-in-depth alongside edge WAF.
+func TieredRateLimit(normalLimit, botLimit int, period time.Duration) func(http.HandlerFunc) http.HandlerFunc {
+	if normalLimit <= 0 {
+		normalLimit = 120
+	}
+	if botLimit <= 0 {
+		botLimit = 20
+	}
+	normalRL := &rateLimiter{windows: make(map[string]*rlWindow), limit: normalLimit, period: period}
+	botRL := &rateLimiter{windows: make(map[string]*rlWindow), limit: botLimit, period: period}
+	go normalRL.cleanup()
+	go botRL.cleanup()
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			ip := remoteIP(r)
+			rl := normalRL
+			if isAutomatedClient(r) {
+				rl = botRL
+			}
+			if !rl.allow(ip) {
+				w.Header().Set("Retry-After", fmt.Sprintf("%d", int(period.Seconds())))
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				fmt.Fprint(w, `{"error":"rate limit exceeded"}`)
+				return
+			}
+			next(w, r)
+		}
+	}
+}
+
+var automatedUASubstrings = []string{
+	"curl/", "wget", "python-requests", "python-urllib", "httpx", "aiohttp",
+	"go-http-client", "scrapy", "headlesschrome", "phantomjs", "selenium",
+	"playwright", "puppeteer", "bot", "crawler", "spider", "postmanruntime",
+	"insomnia", "httpie", "libwww-perl", "okhttp",
+}
+
+func isAutomatedClient(r *http.Request) bool {
+	ua := strings.ToLower(strings.TrimSpace(r.Header.Get("User-Agent")))
+	if ua == "" {
+		return true
+	}
+	for _, tok := range automatedUASubstrings {
+		if strings.Contains(ua, tok) {
+			return true
+		}
+	}
+	if strings.TrimSpace(r.Header.Get("Accept-Language")) == "" &&
+		strings.TrimSpace(r.Header.Get("Sec-Fetch-Mode")) == "" {
+		return true
+	}
+	return false
+}
+
 type rlWindow struct {
 	count     int
 	expiresAt time.Time

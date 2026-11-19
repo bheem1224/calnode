@@ -93,6 +93,11 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 			Email:       p.OrganizerEmail,
 			DisplayName: p.OrganizerName,
 		})
+		for _, g := range p.Guests {
+			if g != "" {
+				attendees = append(attendees, calEventAttendee{Email: g})
+			}
+		}
 	}
 
 	reqBody := calEventReq{

@@ -6,12 +6,38 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/calnode/calnode/internal/db"
 	"github.com/calnode/calnode/internal/uid"
 )
+
+var reTeamBrandColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+func validTeamLogoURL(raw string) bool {
+	if raw == "" {
+		return true
+	}
+	if len(raw) > 500 {
+		return false
+	}
+	for _, r := range raw {
+		if r <= 0x20 || r == 0x7f || r == '\\' {
+			return false
+		}
+	}
+	if strings.HasPrefix(raw, "/") {
+		return !strings.HasPrefix(raw, "//") && !strings.Contains(raw, "?")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" {
+		return false
+	}
+	return true
+}
 
 // slugify normalises a string into a URL-safe slug: lowercase, alphanumeric
 // runs joined by single hyphens, no leading/trailing hyphens.
@@ -295,16 +321,26 @@ func (h *Handler) PatchTeam(w http.ResponseWriter, r *http.Request) {
 		args = append(args, strings.TrimSpace(*req.Description))
 	}
 	if req.LogoURL != nil {
+		logo := strings.TrimSpace(*req.LogoURL)
+		if !validTeamLogoURL(logo) {
+			h.writeError(w, http.StatusBadRequest, "logo_url must be a relative path or an https:// URL without query parameters or credentials")
+			return
+		}
 		sets = append(sets, "logo_url = ?")
-		args = append(args, strings.TrimSpace(*req.LogoURL))
+		args = append(args, logo)
 	}
 	if req.Location != nil {
 		sets = append(sets, "location = ?")
 		args = append(args, strings.TrimSpace(*req.Location))
 	}
 	if req.BrandColor != nil {
+		color := strings.TrimSpace(*req.BrandColor)
+		if color != "" && !reTeamBrandColor.MatchString(color) {
+			h.writeError(w, http.StatusBadRequest, "brand_color must be a 6-digit hex color like #2563eb")
+			return
+		}
 		sets = append(sets, "brand_color = ?")
-		args = append(args, strings.TrimSpace(*req.BrandColor))
+		args = append(args, color)
 	}
 	if req.ShowMembersPublicly != nil {
 		sets = append(sets, "show_members_publicly = ?")

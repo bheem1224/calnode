@@ -458,7 +458,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("GET /v1/invites", h.RequireAuth(h.ListInvites))
 	mux.HandleFunc("DELETE /v1/invites/{id}", h.RequireAuth(h.RevokeInvite))
 	mux.HandleFunc("POST /v1/invites/{id}/resend", inviteRL(h.RequireAuth(h.ResendInvite)))
-	mux.HandleFunc("GET /v1/invites/{token}", h.GetInvite)
+	mux.HandleFunc("GET /v1/invites/{token}", inviteRL(h.GetInvite))
 	mux.HandleFunc("POST /v1/invites/{token}/claim", inviteRL(h.ClaimInvite))
 
 	// Users
@@ -596,12 +596,23 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	// only — admin/auth routes never get CORS. Default (empty allowlist) = any origin.
 	cors := PublicCORS(cfg.EmbedAllowedOrigins)
 
+	publicRL := TieredRateLimit(cfg.RateLimitPublicRPM, cfg.RateLimitBotRPM, time.Minute)
+	slotsRPM := cfg.RateLimitSlotsRPM
+	if slotsRPM <= 0 {
+		slotsRPM = 60
+	}
+	bookingRPM := cfg.RateLimitBookingRPM
+	if bookingRPM <= 0 {
+		bookingRPM = 20
+	}
+
 	// Public event-type display info for the widget (name/duration/location/brand).
-	mux.HandleFunc("GET /v1/event-types/{slug}/public", cors(h.PublicEventType))
+	mux.HandleFunc("GET /v1/event-types/{slug}/public", cors(publicRL(h.PublicEventType)))
 
 	// unthrottled is a CPU + API-quota abuse vector on an openly-public page.
-	slotsRL := RateLimit(60, time.Minute)
+	slotsRL := RateLimit(slotsRPM, time.Minute)
 	mux.HandleFunc("GET /v1/event-types/{slug}/slots", cors(slotsRL(h.GetSlots)))
+	mux.HandleFunc("GET /v1/t/{token}/slots", cors(slotsRL(h.GetSingleUseSlots)))
 	mux.HandleFunc("GET /v1/public/group/{handles}/slots", cors(slotsRL(h.GetDynamicGroupSlots)))
 
 	// Conversational booking assistant (optional AI; public, anonymous → tighter limit).
@@ -610,19 +621,25 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("OPTIONS /v1/event-types/{slug}/assistant", cors(func(http.ResponseWriter, *http.Request) {}))
 
 	// Intake questions
-	mux.HandleFunc("GET /v1/event-types/{slug}/questions", cors(h.ListQuestions))
+	mux.HandleFunc("GET /v1/event-types/{slug}/questions", cors(publicRL(h.ListQuestions)))
 	mux.HandleFunc("GET /v1/event-types/{slug}/questions/admin", h.RequireAuth(h.ListQuestionsAdmin))
 	mux.HandleFunc("POST /v1/event-types/{slug}/questions", h.RequireAuth(h.CreateQuestion))
 	mux.HandleFunc("PATCH /v1/event-types/{slug}/questions/{id}", h.RequireAuth(h.UpdateQuestion))
 	mux.HandleFunc("DELETE /v1/event-types/{slug}/questions/{id}", h.RequireAuth(h.DeleteQuestion))
 
-	bookingRL := RateLimit(20, time.Minute)
+	bookingRL := RateLimit(bookingRPM, time.Minute)
 	manageRL := RateLimit(30, time.Minute)
 
 	// Bookings — public create is CORS-enabled for the widget; the JSON body makes it
 	// a non-simple request, so the OPTIONS preflight is handled too.
 	mux.HandleFunc("POST /v1/bookings", cors(bookingRL(h.CreateBooking)))
 	mux.HandleFunc("OPTIONS /v1/bookings", cors(func(http.ResponseWriter, *http.Request) {}))
+	mux.HandleFunc("POST /v1/t/{token}/bookings", cors(bookingRL(h.CreateSingleUseBooking)))
+	mux.HandleFunc("OPTIONS /v1/t/{token}/bookings", cors(func(http.ResponseWriter, *http.Request) {}))
+	mux.HandleFunc("POST /v1/t/{token}/verify-email/send", cors(bookingRL(h.SendSingleUseVerificationCode)))
+	mux.HandleFunc("OPTIONS /v1/t/{token}/verify-email/send", cors(func(http.ResponseWriter, *http.Request) {}))
+	mux.HandleFunc("POST /v1/t/{token}/verify-email/check", cors(bookingRL(h.CheckSingleUseVerificationCode)))
+	mux.HandleFunc("OPTIONS /v1/t/{token}/verify-email/check", cors(func(http.ResponseWriter, *http.Request) {}))
 	mux.HandleFunc("POST /v1/public/group/{handles}/bookings", cors(bookingRL(h.CreateDynamicGroupBooking)))
 	mux.HandleFunc("OPTIONS /v1/public/group/{handles}/bookings", cors(func(http.ResponseWriter, *http.Request) {}))
 	mux.HandleFunc("POST /v1/book/{slug}/verify-email/send", cors(bookingRL(h.SendVerificationCode)))
@@ -642,16 +659,16 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("GET /embed.js", h.EmbedJS)
 	mux.HandleFunc("GET /booking.css", h.BookingCSS)
 	mux.HandleFunc("GET /phone-input.js", h.PhoneInputJS)
-	mux.HandleFunc("GET /book/{slug}", h.BookPage)
-	mux.HandleFunc("GET /t/{token}", h.SingleUseBookPage)
-	mux.HandleFunc("GET /u/{handle}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /book/{slug}", publicRL(h.BookPage))
+	mux.HandleFunc("GET /t/{token}", publicRL(h.SingleUseBookPage))
+	mux.HandleFunc("GET /u/{handle}", publicRL(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.PathValue("handle"), "+") {
 			h.DynamicGroupBookPage(w, r)
 			return
 		}
 		h.PersonPage(w, r)
-	})
-	mux.HandleFunc("GET /team/{slug}", h.TeamPage)
+	}))
+	mux.HandleFunc("GET /team/{slug}", publicRL(h.TeamPage))
 
 	// Built-in LiveKit video room (public): the page, its vendored assets, and the token
 	// exchange. The signed room token in the join URL is the capability — no auth.

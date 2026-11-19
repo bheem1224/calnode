@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -378,4 +379,112 @@ func (h *Handler) adHocSlots(ctx context.Context, token, eventID string) ([]book
 		return nil, booking.ErrAdHocSlotMismatch
 	}
 	return offered, nil
+}
+
+// resolveActiveSingleUseSlug validates an unused, unexpired single-use token and
+// returns its underlying event_types.slug without ever exposing that slug to the client.
+func (h *Handler) resolveActiveSingleUseSlug(ctx context.Context, token string) (string, bool) {
+	token = strings.TrimSpace(token)
+	if token == "" || !h.dynamicLinkAllowed(ctx, token) {
+		return "", false
+	}
+	var (
+		slug      string
+		isActive  int
+		expiresAt sql.NullString
+		usedAt    sql.NullString
+	)
+	err := h.db.QueryRowContext(ctx, `
+		SELECT et.slug, et.is_active, s.expires_at, s.used_at
+		FROM single_use_tokens s
+		JOIN event_types et ON et.id = s.event_type_id
+		WHERE s.token = ?`, token).
+		Scan(&slug, &isActive, &expiresAt, &usedAt)
+	if err != nil || isActive == 0 || usedAt.Valid {
+		return "", false
+	}
+	if expiresAt.Valid && expiresAt.String != "" {
+		expT, parseErr := time.Parse(time.RFC3339Nano, expiresAt.String)
+		if parseErr != nil {
+			expT, parseErr = time.Parse(time.RFC3339, expiresAt.String)
+		}
+		if parseErr != nil || !expT.After(time.Now().UTC()) {
+			return "", false
+		}
+	}
+	return slug, true
+}
+
+// GetSingleUseSlots handles GET /v1/t/{token}/slots without exposing the event slug.
+func (h *Handler) GetSingleUseSlots(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.PathValue("token"))
+	slug, ok := h.resolveActiveSingleUseSlug(r.Context(), token)
+	if !ok {
+		h.writeError(w, http.StatusGone, "This booking link has expired or has already been used")
+		return
+	}
+	r2 := r.Clone(r.Context())
+	r2.SetPathValue("slug", slug)
+	q := r2.URL.Query()
+	q.Set("single_use_token", token)
+	r2.URL.RawQuery = q.Encode()
+	h.GetSlots(w, r2)
+}
+
+// CreateSingleUseBooking handles POST /v1/t/{token}/bookings without exposing the event slug.
+func (h *Handler) CreateSingleUseBooking(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.PathValue("token"))
+	slug, ok := h.resolveActiveSingleUseSlug(r.Context(), token)
+	if !ok {
+		h.writeError(w, http.StatusGone, "This booking link has expired or has already been used")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "could not read request body")
+		return
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil || payload == nil {
+		h.writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	payload["event_type_slug"] = slug
+	payload["single_use_token"] = token
+	rewritten, err := json.Marshal(payload)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	r2 := r.Clone(r.Context())
+	r2.Body = io.NopCloser(bytes.NewReader(rewritten))
+	r2.ContentLength = int64(len(rewritten))
+	h.CreateBooking(w, r2)
+}
+
+// SendSingleUseVerificationCode handles POST /v1/t/{token}/verify-email/send without exposing the slug.
+func (h *Handler) SendSingleUseVerificationCode(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.PathValue("token"))
+	slug, ok := h.resolveActiveSingleUseSlug(r.Context(), token)
+	if !ok {
+		h.writeError(w, http.StatusGone, "This booking link has expired or has already been used")
+		return
+	}
+	r2 := r.Clone(r.Context())
+	r2.SetPathValue("slug", slug)
+	h.SendVerificationCode(w, r2)
+}
+
+// CheckSingleUseVerificationCode handles POST /v1/t/{token}/verify-email/check without exposing the slug.
+func (h *Handler) CheckSingleUseVerificationCode(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.PathValue("token"))
+	slug, ok := h.resolveActiveSingleUseSlug(r.Context(), token)
+	if !ok {
+		h.writeError(w, http.StatusGone, "This booking link has expired or has already been used")
+		return
+	}
+	r2 := r.Clone(r.Context())
+	r2.SetPathValue("slug", slug)
+	h.CheckVerificationCode(w, r2)
 }

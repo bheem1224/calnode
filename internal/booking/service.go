@@ -212,13 +212,20 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 		pendingInt = 1
 	}
 
+	guestsJSON := "[]"
+	if len(p.Guests) > 0 {
+		if bJSON, mErr := json.Marshal(p.Guests); mErr == nil {
+			guestsJSON = string(bJSON)
+		}
+	}
+
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO bookings
 		  (id, event_type_id, host_id, start_at, end_at, status, location_value, location_type,
-		   invite_delivery, pending_approval, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?)`,
+		   invite_delivery, pending_approval, contact_phone, notes, guests_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		bookingID, p.EventTypeID, chosenHost, startStr, endStr, p.LocationValue, p.LocationType,
-		inviteDelivery, pendingInt, now, now)
+		inviteDelivery, pendingInt, p.ContactPhone, p.Notes, guestsJSON, now, now)
 	if err != nil {
 		if db.IsUniqueViolation(err) {
 			return nil, ErrDoubleBooked
@@ -308,6 +315,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 		LocationType:    p.LocationType,
 		InviteDelivery:  inviteDelivery,
 		PendingApproval: p.PendingApproval,
+		ContactPhone:    p.ContactPhone,
+		Notes:           p.Notes,
+		Guests:          p.Guests,
 		CreatedAt:       nowT,
 		UpdatedAt:       nowT,
 	}, nil
@@ -389,7 +399,8 @@ const bookingColumns = `id, event_type_id, host_id, start_at, end_at, status,
 	       COALESCE(cancellation_reason, ''), COALESCE(location_value, ''),
 	       created_at, updated_at,
 	       payment_status, amount_paid_cents, amount_paid_currency, location_type,
-	       confirm_failed, invite_delivery, pending_approval`
+	       confirm_failed, invite_delivery, pending_approval,
+	       COALESCE(contact_phone, ''), COALESCE(notes, ''), COALESCE(guests_json, '[]')`
 
 // hostBusy reports whether hostID has any non-cancelled booking overlapping
 // [start, end) — the double-booking invariant every write path (Create, Reschedule,
@@ -858,6 +869,7 @@ func scanBooking(s scanner) (*Booking, error) {
 	var b Booking
 	var startStr, endStr, createdStr, updatedStr string
 	var confirmFailed, pendingApproval int
+	var guestsRaw string
 
 	err := s.Scan(
 		&b.ID, &b.EventTypeID, &b.HostID,
@@ -866,6 +878,7 @@ func scanBooking(s scanner) (*Booking, error) {
 		&createdStr, &updatedStr,
 		&b.PaymentStatus, &b.AmountPaidCents, &b.AmountPaidCurrency, &b.LocationType,
 		&confirmFailed, &b.InviteDelivery, &pendingApproval,
+		&b.ContactPhone, &b.Notes, &guestsRaw,
 	)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
@@ -889,6 +902,9 @@ func scanBooking(s scanner) (*Booking, error) {
 	}
 	b.ConfirmFailed = confirmFailed != 0
 	b.PendingApproval = pendingApproval != 0
+	if guestsRaw != "" && guestsRaw != "[]" {
+		_ = json.Unmarshal([]byte(guestsRaw), &b.Guests)
+	}
 	return &b, nil
 }
 

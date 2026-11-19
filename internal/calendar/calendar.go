@@ -23,6 +23,7 @@ type CreateEventParams struct {
 	Start, End            time.Time
 	OrganizerName         string
 	OrganizerEmail        string
+	Guests                []string
 	AddMeet               bool
 	Private               bool
 	DestinationCalendarID string

@@ -116,22 +116,35 @@ type Delivery struct {
 	LastAttemptedAt *string
 }
 
+// BookingAnswerPayload carries one custom question answer inside a webhook payload.
+type BookingAnswerPayload struct {
+	QuestionID string `json:"question_id"`
+	Label      string `json:"label"`
+	Value      string `json:"value"`
+}
+
 // BookingPayload is the "data" object inside every webhook envelope.
 type BookingPayload struct {
-	ID                 string `json:"id"`
-	EventTypeSlug      string `json:"event_type_slug"`
-	HostID             string `json:"host_id"`
-	StartAt            string `json:"start_at"`
-	EndAt              string `json:"end_at"`
-	Status             string `json:"status"`
-	CancellationReason string `json:"cancellation_reason,omitempty"`
-	LocationValue      string `json:"location_value,omitempty"`
-	CreatedAt          string `json:"created_at"`
-	PreviousStartAt    string `json:"previous_start_at,omitempty"`
-	PreviousEndAt      string `json:"previous_end_at,omitempty"`
-	PaymentStatus      string `json:"payment_status,omitempty"`
-	AmountPaidCents    int    `json:"amount_paid_cents,omitempty"`
-	AmountPaidCurrency string `json:"amount_paid_currency,omitempty"`
+	ID                 string                 `json:"id"`
+	EventTypeSlug      string                 `json:"event_type_slug"`
+	HostID             string                 `json:"host_id"`
+	StartAt            string                 `json:"start_at"`
+	EndAt              string                 `json:"end_at"`
+	Status             string                 `json:"status"`
+	CancellationReason string                 `json:"cancellation_reason,omitempty"`
+	LocationValue      string                 `json:"location_value,omitempty"`
+	CreatedAt          string                 `json:"created_at"`
+	PreviousStartAt    string                 `json:"previous_start_at,omitempty"`
+	PreviousEndAt      string                 `json:"previous_end_at,omitempty"`
+	PaymentStatus      string                 `json:"payment_status,omitempty"`
+	AmountPaidCents    int                    `json:"amount_paid_cents,omitempty"`
+	AmountPaidCurrency string                 `json:"amount_paid_currency,omitempty"`
+	AttendeeName       string                 `json:"attendee_name,omitempty"`
+	AttendeeEmail      string                 `json:"attendee_email,omitempty"`
+	ContactPhone       string                 `json:"contact_phone,omitempty"`
+	Notes              string                 `json:"notes,omitempty"`
+	Guests             []string               `json:"guests,omitempty"`
+	Answers            []BookingAnswerPayload `json:"answers,omitempty"`
 	// RSVPStatus is the booker's answer to a Calnode-sent invite (accepted, declined,
 	// tentative); set on booking.rsvp only.
 	RSVPStatus string `json:"rsvp_status,omitempty"`

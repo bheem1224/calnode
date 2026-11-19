@@ -86,6 +86,13 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 		a.EmailAddress.Address = p.OrganizerEmail
 		a.EmailAddress.Name = p.OrganizerName
 		reqBody.Attendees = append(reqBody.Attendees, a)
+		for _, g := range p.Guests {
+			if g != "" {
+				ga := graphAttendee{Type: "optional"}
+				ga.EmailAddress.Address = g
+				reqBody.Attendees = append(reqBody.Attendees, ga)
+			}
+		}
 	}
 	if p.AddMeet {
 		reqBody.IsOnlineMeeting = true

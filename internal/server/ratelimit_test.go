@@ -133,3 +133,36 @@ func TestRemoteIP_usesRemoteAddr(t *testing.T) {
 		t.Errorf("remoteIP = %q; want 203.0.113.3", got)
 	}
 }
+
+func TestTieredRateLimit_SeparatesBotsAndBrowsers(t *testing.T) {
+	mw := TieredRateLimit(5, 2, time.Minute)
+	h := mw(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	// Automated client (curl) hits limit at 2.
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/book/test", nil)
+		req.RemoteAddr = "198.51.100.10:1234"
+		req.Header.Set("User-Agent", "curl/8.4.0")
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		if i < 2 && rec.Code != http.StatusOK {
+			t.Fatalf("bot req %d: got %d, want 200", i, rec.Code)
+		}
+		if i == 2 && rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("bot req %d: got %d, want 429", i, rec.Code)
+		}
+	}
+
+	// Normal browser from same IP still gets its 5-request tier.
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/book/test", nil)
+		req.RemoteAddr = "198.51.100.10:5678"
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("browser req %d: got %d, want 200", i, rec.Code)
+		}
+	}
+}
