@@ -39,6 +39,9 @@ func (h *Handler) RequestPasswordReset(w http.ResponseWriter, r *http.Request) {
 	}
 	email := strings.TrimSpace(strings.ToLower(req.Email))
 	if email != "" {
+		if !h.allowAuthEmail(w, r, email) {
+			return
+		}
 		var userID string
 		var archivedAt sql.NullString
 		var emailLogin int

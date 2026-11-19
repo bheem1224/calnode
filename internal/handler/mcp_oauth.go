@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
+	"github.com/calnode/calnode/internal/abuse"
 	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/uid"
 )
@@ -153,8 +155,8 @@ func (h *Handler) RegisterOAuthClient(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "invalid JSON")
 		return
 	}
-	if len(req.RedirectURIs) == 0 {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect_uris is required")
+	if len(req.RedirectURIs) == 0 || len(req.RedirectURIs) > 10 {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_redirect_uri", "provide between 1 and 10 redirect URIs")
 		return
 	}
 	for _, ru := range req.RedirectURIs {
@@ -170,11 +172,40 @@ func (h *Handler) RegisterOAuthClient(w http.ResponseWriter, r *http.Request) {
 	clientID := uid.New()
 	urisJSON, _ := json.Marshal(req.RedirectURIs)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := h.db.ExecContext(r.Context(), `
-		INSERT INTO oauth_clients (client_id, client_name, redirect_uris, created_at)
-		VALUES (?, ?, ?, ?)`, clientID, req.ClientName, string(urisJSON), now); err != nil {
-		h.logger.ErrorContext(r.Context(), "oauth: register client", "error", err)
-		writeOAuthError(w, http.StatusInternalServerError, "server_error", "could not register client")
+
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeOAuthError(w, 503, "temporarily_unavailable", "registration unavailable")
+		return
+	}
+	defer tx.Rollback()
+	if err = abuse.CleanupOAuthClients(r.Context(), tx, time.Now()); err != nil {
+		writeOAuthError(w, 503, "temporarily_unavailable", "registration unavailable")
+		return
+	}
+	var count int
+	if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM oauth_clients`).Scan(&count); err != nil {
+		writeOAuthError(w, 503, "temporarily_unavailable", "registration unavailable")
+		return
+	}
+	if count >= abuse.Limit("MCP_CLIENT_LIMIT", 1000) {
+		writeOAuthError(w, 429, "temporarily_unavailable", "registration temporarily limited")
+		return
+	}
+	if err = abuse.TakeTx(r.Context(), tx, time.Now(), abuse.Rule{Key: "mcp:register:instance", Limit: abuse.Limit("MCP_REGISTRATION_DAILY_LIMIT", 100), Window: 24 * time.Hour}); err != nil {
+		if errors.Is(err, abuse.ErrLimited) {
+			writeOAuthError(w, 429, "temporarily_unavailable", err.Error())
+		} else {
+			writeOAuthError(w, 503, "temporarily_unavailable", "registration unavailable")
+		}
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(), `INSERT INTO oauth_clients(client_id,client_name,redirect_uris,created_at) VALUES(?,?,?,?)`, clientID, req.ClientName, string(urisJSON), now); err != nil {
+		writeOAuthError(w, 503, "temporarily_unavailable", "registration unavailable")
+		return
+	}
+	if tx.Commit() != nil {
+		writeOAuthError(w, 503, "temporarily_unavailable", "registration unavailable")
 		return
 	}
 
@@ -194,21 +225,25 @@ func (h *Handler) RegisterOAuthClient(w http.ResponseWriter, r *http.Request) {
 // convention, e.g. http://127.0.0.1:port/callback). Custom app schemes (e.g. for native
 // desktop clients) are also allowed.
 func validRedirectURI(raw string) bool {
+	if len(raw) > 2048 || strings.ContainsAny(raw, "\r\n\t ") {
+		return false
+	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" && u.Scheme == "" {
+	if err != nil || u.User != nil || strings.Contains(raw, "#") {
 		return false
 	}
 	switch u.Scheme {
 	case "https":
-		return true
+		return u.Hostname() != "" && u.Opaque == ""
 	case "http":
 		host := u.Hostname()
-		return host == "localhost" || host == "127.0.0.1" || host == "::1"
-	case "":
-		return false
+		return u.Opaque == "" && (host == "localhost" || host == "127.0.0.1" || host == "::1")
 	default:
-		// A non-http(s) custom scheme (native app redirect) — require a scheme + opaque/path.
-		return u.Scheme != "" && raw != ""
+		// Native private-use schemes use reverse-domain names (RFC 8252), or
+		// these established desktop-client schemes. Executable/content schemes and
+		// opaque URLs are never valid OAuth callbacks.
+		allowed := strings.Contains(u.Scheme, ".") || u.Scheme == "claude" || u.Scheme == "vscode" || u.Scheme == "vscode-insiders" || u.Scheme == "cursor"
+		return allowed && u.Opaque == "" && (u.Host != "" || strings.HasPrefix(u.Path, "/"))
 	}
 }
 

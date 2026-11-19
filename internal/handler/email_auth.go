@@ -6,7 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/calnode/calnode/internal/abuse"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -44,6 +46,19 @@ func (h *Handler) LoginEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.takeBudget(w, r, abuse.Rule{Key: "password:instance", Limit: abuse.Limit("LOGIN_ATTEMPTS_PER_MINUTE", 600), Window: time.Minute}) {
+		return
+	}
+	if err := h.reservePasswordAttempt(r.Context(), req.Email); err != nil {
+		if errors.Is(err, abuse.ErrLimited) {
+			w.Header().Set("Retry-After", "60")
+			h.writeError(w, 429, abuse.ErrLimited.Error())
+		} else {
+			h.writeError(w, 503, "temporarily unavailable")
+		}
+		return
+	}
+
 	var userID, storedHash string
 	var emailLogin int
 	var archivedAt sql.NullString
@@ -76,6 +91,11 @@ func (h *Handler) LoginEmail(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, 401, "invalid email or password")
 		return
 	}
+	if _, err := h.db.ExecContext(r.Context(), `DELETE FROM login_backoff WHERE account_hash=?`, abuse.Hash(req.Email)); err != nil {
+		h.writeError(w, 503, "temporarily unavailable")
+		return
+	}
+
 	if err := h.createSession(r.Context(), w, userID); err != nil {
 		if errors.Is(err, errNativeRecoveryRequired) {
 			h.writeError(w, 403, err.Error())

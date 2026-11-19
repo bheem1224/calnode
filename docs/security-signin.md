@@ -71,3 +71,75 @@ Run with the normal instance `DATABASE_URL` and `BASE_URL`, on the server or ins
 3. Check **Security & sign-in → Delivery & calendar health**, SMTP delivery, calendar reconnect, and failed-job retry. Booking confirmation work is committed durably with free booking creation, approval, or successful payment. Delivery retries are at least once: a partial failure/crash can resend a notification. A retry is not an exactly-once guarantee.
 4. Exercise concurrent bookings, approvals, cancellations and rescheduling under your expected load on staging, and rehearse a restore/restart. Calendar checks fail closed at booking time when required hosts cannot be checked. An external calendar can still change after a check; this is not a distributed calendar lock.
 5. Keep browser and Go dependency scans enabled in CI. These tests and controls support a security review; they are not an independent penetration test, OWASP certification, or a guarantee that every exploit has been eliminated.
+
+
+## Public abuse controls
+
+IP throttles are combined with durable sliding-window budgets in SQLite. Account,
+recipient, event and instance counters apply independently, including across client
+IP changes and process restarts. Counter keys are hashed and expired counters are
+removed automatically. A denied reservation commits no partial budget charges.
+
+Password attempts against the same normalized account incur increasing temporary
+delays after five attempts, from one second up to five minutes. Backoff expires
+after 15 minutes of inactivity and successful password verification clears it.
+Unknown accounts follow the same path. OTP/recovery-code verification is additionally
+limited to ten attempts per account per five minutes, across login challenges.
+Passkey/SSO and password recovery remain
+available. MFA enforcement remains an explicit company policy, off by default.
+
+Booking verification allows one send per recipient per minute and five per hour,
+across events. Each code accepts at most five guesses and succeeds once. A refused
+resend preserves the outstanding code. Password-reset and magic-link requests share
+a separate recipient cooldown of one minute and five sends per hour, applied to
+both known and unknown accounts. The booking assistant directs users to the normal
+form when email verification is required.
+
+The booking service enforces hidden guest controls and the maximum of ten extra
+guests for every caller, including single-use links. Booking budgets are reserved
+inside the booking transaction: failed bookings spend none, cancellations do not
+refund them, and rotating the organizer email cannot reset event, instance or guest
+recipient limits. Calendar-provider invitations count toward these booking budgets;
+they do not pass through Calnode's SMTP/Resend mail budget.
+
+MCP registration grants no permissions. Consent records the chosen subset of the
+approving user's permissions; each authenticated request intersects that snapshot
+with the user's current permissions. Promotion cannot expand an existing grant,
+and permission removal takes effect immediately. Registration accepts at most ten
+callback URLs (2048 characters each), HTTPS, HTTP loopback, and hierarchical native
+callbacks using reverse-domain schemes or the established claude/vscode/
+vscode-insiders/cursor schemes. Credentials, fragments and executable/content URL
+schemes are refused, including for previously registered callback values. Abandoned
+registrations without tokens or live authorization codes expire after 24 hours;
+clients with refresh grants are retained even when their access token has expired.
+
+Advanced deployment overrides (positive integers; invalid/zero values retain the
+default). Set these in the service environment and restart. Sliding-window budgets
+apply per running instance database; concurrency bounds apply per process.
+
+| Environment variable | Default |
+| --- | ---: |
+| `LOGIN_ATTEMPTS_PER_MINUTE` | 600 across accounts |
+| `AUTH_EMAIL_HOURLY_LIMIT` | 300 reset/magic-link requests |
+| `VERIFICATION_EVENT_HOURLY_LIMIT` | 120 sends per event |
+| `VERIFICATION_HOURLY_LIMIT` | 600 sends across events |
+| `BOOKING_HOURLY_LIMIT` | 1000 successful bookings |
+| `BOOKING_EVENT_HOURLY_LIMIT` | 120 successful bookings per event |
+| `BOOKING_RECIPIENT_HOURLY_LIMIT` | 30 bookings per organizer/guest address |
+| `MCP_REGISTRATION_DAILY_LIMIT` | 100 registrations |
+| `MCP_CLIENT_LIMIT` | 1000 stored clients |
+| `AI_CONVERSATIONS_HOURLY_LIMIT` | 120 assistant requests |
+| `AI_EVENT_HOURLY_LIMIT` | 60 assistant requests per event |
+| `EMAIL_HOURLY_LIMIT` | 6000 SMTP/Resend recipients, including retry attempts |
+| `EMAIL_RECIPIENT_HOURLY_LIMIT` | 100 sends per recipient, including retries |
+| `CALENDAR_CHECK_CONCURRENCY` | 32 provider free/busy calls |
+| `AI_REQUEST_CONCURRENCY` | 4 model calls, including streamed calls |
+| `EMAIL_SEND_CONCURRENCY` | 8 SMTP/Resend sends |
+
+Tune these to expected traffic and monitor throttling, delivery errors and calendar
+health. Saturated external work fails promptly instead of creating an unbounded
+waiting queue. Email throttling returns a delivery error to the existing retry and
+failure reporting paths; it never reports an undelivered message as successful.
+These controls complement edge rate limits and origin isolation; they do not replace
+Cloudflare or reverse-proxy DDoS protection. Keep secure cookies enabled when TLS
+terminates at a proxy.

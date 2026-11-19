@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/abuse"
 	"github.com/calnode/calnode/internal/booking"
 	"github.com/calnode/calnode/internal/i18n"
 	"github.com/calnode/calnode/internal/llm"
@@ -138,6 +139,10 @@ func (h *Handler) BookingAssistant(w http.ResponseWriter, r *http.Request) {
 	sysPrompt, ok := h.assistantSystemPrompt(r.Context(), slug, tz, lang)
 	if !ok {
 		h.writeError(w, http.StatusNotFound, "event type not found")
+		return
+	}
+
+	if !h.takeBudget(w, r, abuse.Rule{Key: "assistant:instance", Limit: abuse.Limit("AI_CONVERSATIONS_HOURLY_LIMIT", 120), Window: time.Hour}, abuse.Rule{Key: "assistant:event:" + slug, Limit: abuse.Limit("AI_EVENT_HOURLY_LIMIT", 60), Window: time.Hour}) {
 		return
 	}
 
@@ -416,6 +421,14 @@ func (h *Handler) runAssistantTool(ctx context.Context, slug, tz, lang, name, ar
 		for i, a := range args.Answers {
 			raw[i] = booking.Answer{QuestionID: a.QuestionID, Value: a.Value}
 		}
+		et, err := h.loadBookableEventType(ctx, slug)
+		if err != nil {
+			return "error: event type unavailable", nil
+		}
+		if et.RequireEmailVerification {
+			return "error: use the booking form to verify your email and complete this booking", nil
+		}
+
 		b, err := h.createBookingForSlug(ctx, slug, startAt,
 			booking.Attendee{Name: args.Name, Email: args.Email, IANATimezone: tz, Locale: lang}, raw)
 		if err != nil {

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/abuse"
 	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/authsecurity"
 	"github.com/calnode/calnode/internal/mailer"
@@ -109,6 +110,12 @@ func (h *Handler) consumeAuthChallenge(ctx context.Context, raw, purpose string)
 	return id, payload, err
 }
 func (h *Handler) verifyNativeCode(ctx context.Context, id, code string) bool {
+	// A new login challenge must not reset the account's OTP/recovery-code budget.
+	if err := abuse.Take(ctx, h.db, abuse.Rule{Key: "mfa:account:" + id, Limit: 10, Window: 5 * time.Minute}); err != nil {
+		h.logger.WarnContext(ctx, "MFA verification throttled or unavailable", "error", err)
+		return false
+	}
+
 	code = strings.TrimSpace(code)
 	if len(code) == 6 {
 		var encrypted string

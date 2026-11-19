@@ -3,13 +3,14 @@ package handler
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/calnode/calnode/internal/abuse"
 	"math/big"
 	"net/http"
-	"net/mail"
 	"strings"
 	"time"
 
@@ -30,19 +31,17 @@ func (h *Handler) SendVerificationCode(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	email := strings.TrimSpace(strings.ToLower(req.Email))
-	if email == "" {
-		h.writeError(w, http.StatusBadRequest, "email is required")
-		return
-	}
-	if _, err := mail.ParseAddress(email); err != nil {
-		h.writeError(w, http.StatusBadRequest, "email must be a valid email address")
+
+	email, err := normalizeBookerEmail(req.Email)
+	email = strings.ToLower(email)
+	if err != nil {
+		h.writeError(w, 400, "email must be a valid email address")
 		return
 	}
 
 	var etName string
-	err := h.db.QueryRowContext(r.Context(),
-		`SELECT name FROM event_types WHERE slug = ? AND is_active = 1`, slug).Scan(&etName)
+	err = h.db.QueryRowContext(r.Context(),
+		`SELECT name FROM event_types WHERE slug = ? AND is_active = 1 AND (is_public=1 OR ?=1)`, slug, boolArg(r.PathValue("token") != "")).Scan(&etName)
 	if errors.Is(err, sql.ErrNoRows) {
 		h.writeError(w, http.StatusNotFound, "event type not found")
 		return
@@ -50,6 +49,14 @@ func (h *Handler) SendVerificationCode(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "verify email send: lookup event type", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	if !h.takeBudget(w, r,
+		abuse.Rule{Key: "verify:cooldown:" + email, Limit: 1, Window: time.Minute},
+		abuse.Rule{Key: "verify:recipient:" + email, Limit: 5, Window: time.Hour},
+		abuse.Rule{Key: "verify:event:" + slug, Limit: abuse.Limit("VERIFICATION_EVENT_HOURLY_LIMIT", 120), Window: time.Hour},
+		abuse.Rule{Key: "verify:instance", Limit: abuse.Limit("VERIFICATION_HOURLY_LIMIT", 600), Window: time.Hour}) {
 		return
 	}
 
@@ -105,36 +112,47 @@ func (h *Handler) CheckVerificationCode(w http.ResponseWriter, r *http.Request) 
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	email := strings.TrimSpace(strings.ToLower(req.Email))
+
+	email, err := normalizeBookerEmail(req.Email)
+	email = strings.ToLower(email)
 	code := strings.TrimSpace(req.Code)
-	if email == "" || code == "" {
-		h.writeError(w, http.StatusBadRequest, "email and code are required")
+	if err != nil || len(code) != 6 {
+		h.writeError(w, 400, "invalid or expired verification code")
 		return
 	}
-
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		h.writeError(w, 503, "temporarily unavailable")
+		return
+	}
+	defer tx.Rollback()
 	now := bookingNow().UTC().Format(time.RFC3339)
-	var id string
-	err := h.db.QueryRowContext(r.Context(), `
-		SELECT id FROM email_verification_codes
-		WHERE event_type_slug = ? AND LOWER(email) = LOWER(?) AND code = ? AND expires_at > ?
-		ORDER BY created_at DESC LIMIT 1`,
-		slug, email, code, now).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		h.writeError(w, http.StatusBadRequest, "invalid or expired verification code")
+	var id, expected string
+	// Increment before comparing, inside the transaction, including incorrect guesses.
+	err = tx.QueryRowContext(r.Context(), `UPDATE email_verification_codes SET attempts=attempts+1 WHERE id=(SELECT id FROM email_verification_codes WHERE event_type_slug=? AND LOWER(email)=LOWER(?) AND expires_at>? AND verified=0 ORDER BY created_at DESC LIMIT 1) AND attempts<5 RETURNING id,code`, slug, email, now).Scan(&id, &expected)
+	if err == sql.ErrNoRows {
+		h.writeError(w, 400, "invalid or expired verification code")
 		return
 	}
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "verify email check: lookup", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
+		h.writeError(w, 503, "temporarily unavailable")
 		return
 	}
-
+	if subtle.ConstantTimeCompare([]byte(code), []byte(expected)) != 1 {
+		if tx.Commit() != nil {
+			h.writeError(w, 503, "temporarily unavailable")
+			return
+		}
+		h.writeError(w, 400, "invalid or expired verification code")
+		return
+	}
 	token := uid.New()
-	if _, err := h.db.ExecContext(r.Context(),
-		`UPDATE email_verification_codes SET verified = 1, token = ? WHERE id = ?`,
-		token, id); err != nil {
-		h.logger.ErrorContext(r.Context(), "verify email check: update", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
+	if _, err = tx.ExecContext(r.Context(), `UPDATE email_verification_codes SET verified=1,token=?,code='' WHERE id=?`, token, id); err != nil {
+		h.writeError(w, 503, "temporarily unavailable")
+		return
+	}
+	if tx.Commit() != nil {
+		h.writeError(w, 503, "temporarily unavailable")
 		return
 	}
 

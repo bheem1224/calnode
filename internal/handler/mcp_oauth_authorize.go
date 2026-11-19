@@ -396,7 +396,7 @@ func (h *Handler) parseAuthRequest(ctx context.Context, get func(string) string)
 	if !ok {
 		return ar, false, errStr("unknown client_id")
 	}
-	if ar.RedirectURI == "" || !redirectURIAllowed(registered, ar.RedirectURI) {
+	if !validRedirectURI(ar.RedirectURI) || !redirectURIAllowed(registered, ar.RedirectURI) {
 		return ar, false, errStr("redirect_uri is not registered for this client")
 	}
 	// client_id + redirect_uri are valid → further errors may go back via redirect.

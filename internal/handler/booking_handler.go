@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/calnode/calnode/internal/abuse"
 	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/booking"
 	"github.com/calnode/calnode/internal/calendar"
@@ -1173,6 +1174,16 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		PendingApproval:     needsApproval,
 	})
 	if err != nil {
+		if errors.Is(err, booking.ErrInvalidGuests) {
+			h.writeError(w, 400, err.Error())
+			return
+		}
+		if errors.Is(err, abuse.ErrLimited) {
+			w.Header().Set("Retry-After", "60")
+			h.writeError(w, 429, err.Error())
+			return
+		}
+
 		if errors.Is(err, booking.ErrAdHocSlotMismatch) {
 			h.writeError(w, http.StatusConflict, "this time was not offered")
 			return

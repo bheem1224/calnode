@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/calnode/calnode/internal/abuse"
 	"github.com/calnode/calnode/internal/branding"
 	"github.com/calnode/calnode/internal/i18n"
 	"github.com/calnode/calnode/internal/mailer"
@@ -136,6 +137,27 @@ func (w *Worker) Poll(ctx context.Context) {
 	if _, err := w.db.ExecContext(ctx,
 		`DELETE FROM oauth_auth_codes WHERE expires_at < ?`, now); err != nil {
 		w.logger.Error("worker: purge oauth auth codes", "error", err)
+	}
+	if _, err := w.db.ExecContext(ctx,
+		`DELETE FROM email_verification_codes WHERE expires_at < ?`, now); err != nil {
+		w.logger.Error("worker: purge expired email codes", "error", err)
+	}
+
+	if tx, err := w.db.BeginTx(ctx, nil); err == nil {
+		err = abuse.CleanupOAuthClients(ctx, tx, time.Now())
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `DELETE FROM abuse_events WHERE expires_at<=?`, time.Now().UnixMilli())
+		}
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `DELETE FROM login_backoff WHERE expires_at<=?`, time.Now().UnixMilli())
+		}
+		if err == nil {
+			err = tx.Commit()
+		}
+		_ = tx.Rollback()
+		if err != nil {
+			w.logger.Error("worker: purge abuse counters and unused OAuth clients", "error", err)
+		}
 	}
 	w.sweepExpiredSingleUseLinks(ctx, now)
 	w.sweepScheduledTimezones(ctx, now)

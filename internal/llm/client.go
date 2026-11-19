@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/abuse"
 	"github.com/calnode/calnode/internal/netutil"
 )
 
@@ -26,6 +27,8 @@ type Config struct {
 	Model    string
 	APIKey   string
 }
+
+var requestGate = abuse.NewGate(abuse.Limit("AI_REQUEST_CONCURRENCY", 4))
 
 // Client talks to one configured endpoint.
 type Client struct {
@@ -106,6 +109,10 @@ type chatBody struct {
 
 // Chat performs one (non-streaming) chat-completions call.
 func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResult, error) {
+	if !requestGate.Enter() {
+		return nil, abuse.ErrLimited
+	}
+	defer requestGate.Leave()
 	buf, err := json.Marshal(chatBody{
 		Model:       c.cfg.Model,
 		Messages:    req.Messages,
@@ -152,6 +159,10 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResult, error)
 // (content + any tool calls, with streamed tool-call argument fragments concatenated),
 // so callers get the same result shape as Chat plus live deltas.
 func (c *Client) ChatStream(ctx context.Context, req ChatRequest, onContent func(string)) (*ChatResult, error) {
+	if !requestGate.Enter() {
+		return nil, abuse.ErrLimited
+	}
+	defer requestGate.Leave()
 	buf, err := json.Marshal(chatBody{
 		Model: c.cfg.Model, Messages: req.Messages, Tools: req.Tools,
 		Temperature: req.Temperature, MaxTokens: req.MaxTokens, Stream: true,

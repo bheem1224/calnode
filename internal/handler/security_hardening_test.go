@@ -155,3 +155,50 @@ func TestPatchTeam_ValidatesLogoURLAndBrandColor(t *testing.T) {
 		t.Errorf("PatchTeam valid payload: got %d — %s", okRec.Code, okRec.Body.String())
 	}
 }
+
+func TestHiddenGuestsCannotBeSubmittedThroughPublicOrTokenAPI(t *testing.T) {
+	h, database, key, _ := setupWorkspaceWithDB(t)
+	slug, id := seedEventTypeHTTP(t, h, key)
+	for day := 0; day < 7; day++ {
+		seedAvailabilityWindow(t, h, key, day, "08:00", "20:00")
+	}
+	if _, err := database.Exec(`UPDATE event_types SET booking_form_config='[{"key":"guests","hidden":true}]' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	tokenReq := authReq("POST", "/", `{}`, key)
+	tokenReq.SetPathValue("id", id)
+	tokenRec := httptest.NewRecorder()
+	h.RequireAuth(h.CreateSingleUseLink)(tokenRec, tokenReq)
+	if tokenRec.Code != 201 {
+		t.Fatal(tokenRec.Code, tokenRec.Body)
+	}
+	var link struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(tokenRec.Body.Bytes(), &link); err != nil {
+		t.Fatal(err)
+	}
+	day := time.Now().UTC().AddDate(0, 0, 5)
+	start := time.Date(day.Year(), day.Month(), day.Day(), 10, 0, 0, 0, time.UTC)
+	body := fmt.Sprintf(`{"event_type_slug":%q,"start_at":%q,"name":"Booker","email":"booker@example.com","guests":["unwanted@example.com"]}`, slug, start.Format(time.RFC3339))
+	for _, viaToken := range []bool{false, true} {
+		req := httptest.NewRequest("POST", "/", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		if viaToken {
+			req.SetPathValue("token", link.Token)
+			h.CreateSingleUseBooking(rec, req)
+		} else {
+			h.CreateBooking(rec, req)
+		}
+		if rec.Code != 400 {
+			t.Fatalf("via token %v: %d %s", viaToken, rec.Code, rec.Body)
+		}
+	}
+	var count int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM bookings`).Scan(&count); err != nil || count != 0 {
+		t.Fatal("rejected request created booking", count, err)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM single_use_tokens WHERE token=? AND used_at IS NULL`, link.Token).Scan(&count); err != nil || count != 1 {
+		t.Fatal("rejected request burned token", count, err)
+	}
+}

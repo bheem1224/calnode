@@ -135,6 +135,7 @@ func BuildHandler(ctx context.Context, cfg *config.Config, db *sql.DB, logger *s
 	// Create the hot-swappable mailer wrapper. All sends everywhere use this
 	// reference, so changing SMTP settings in the UI takes effect immediately.
 	live := mailer.NewLive(&mailer.Noop{})
+	live.SetBudgetDB(db)
 
 	// DB settings take priority over env vars — they're what the UI controls.
 	dbSMTP, dbErr := handler.LoadEmailSettingsFromDB(db, encKey)

@@ -434,3 +434,26 @@ first event type + availability.
 ### SMTP through a TCP relay
 
 Set `EMAIL_SMTP_CONNECT_HOST` and `EMAIL_SMTP_CONNECT_PORT` to dial a TCP relay instead of the configured SMTP address. Each unset value falls back to the SMTP host or port. The original SMTP host remains the TLS server name and authentication identity; certificate verification stays enabled. These overrides are loaded at startup and apply to both environment and database SMTP settings, including settings reloads and test emails. Restart after changing the relay environment variables. An active relay is logged when the SMTP mailer is configured. The relay must forward the SMTP connection without terminating TLS.
+
+
+### Public booking abuse budgets
+
+The application enforces persistent account, recipient, event and instance quotas
+in addition to per-IP limits. See [Public abuse controls](docs/security-signin.md#public-abuse-controls)
+for defaults and environment overrides, including calendar, email and AI concurrency.
+MFA enforcement remains controlled by the instance sign-in policy.
+
+### Personal Google calendars in a Microsoft organization
+
+A paid Google Workspace subscription is not required to connect personal Google
+calendars. Configure the Calnode Google provider for calendar/conferencing only and
+keep Microsoft as the account sign-in provider. For multiple people's calendars,
+use an External Google OAuth app with publishing status In production; a small
+group of personally known users may qualify for Google's personal-use verification
+exception, with unverified-app warnings and user caps. Wider distribution requires
+appropriate verification. For only the creator's account, Google's separate Personal
+app mode removes the testing expiry but cannot be shared with the team or converted
+from an existing External project. Reconnect existing calendar grants after changing
+the Google publishing configuration; tokens can still be revoked or expire for
+other reasons. Consult Google's current [audience settings](https://support.google.com/cloud/answer/15549945)
+and [verification exceptions](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification).

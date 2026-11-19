@@ -10,14 +10,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/mail"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/abuse"
 	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/db"
 	"github.com/calnode/calnode/internal/uid"
 )
+
+var ErrInvalidGuests = errors.New("additional guests are disabled or invalid (maximum 10)")
 
 // Service handles booking creation and lifecycle.
 type Service struct {
@@ -85,6 +89,28 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 			if !match {
 				return nil, ErrAdHocSlotMismatch
 			}
+		}
+	}
+
+	// Enforce guest controls at the shared write boundary, including token, AI and
+	// MCP callers. Rendering a hidden field is never an authorization check.
+	var formJSON string
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(booking_form_config,'') FROM event_types WHERE id=?`, p.EventTypeID).Scan(&formJSON); err != nil {
+		return nil, err
+	}
+	if len(p.Guests) > 10 {
+		return nil, ErrInvalidGuests
+	}
+	var fields []struct {
+		Key    string `json:"key"`
+		Hidden bool   `json:"hidden"`
+	}
+	if formJSON != "" && json.Unmarshal([]byte(formJSON), &fields) != nil {
+		return nil, ErrInvalidGuests
+	}
+	for _, f := range fields {
+		if f.Key == "guests" && f.Hidden && len(p.Guests) > 0 {
+			return nil, ErrInvalidGuests
 		}
 	}
 
@@ -198,6 +224,31 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 	}
 
 	if err := enforceFrequencyCaps(ctx, tx, p, ""); err != nil {
+		return nil, err
+	}
+
+	rules := []abuse.Rule{
+		{Key: "booking:instance", Limit: abuse.Limit("BOOKING_HOURLY_LIMIT", 1000), Window: time.Hour},
+		{Key: "booking:event:" + p.EventTypeID, Limit: abuse.Limit("BOOKING_EVENT_HOURLY_LIMIT", 120), Window: time.Hour},
+	}
+	recipients := append([]string{p.Organizer.Email}, p.Guests...)
+	seen := map[string]bool{}
+	for _, email := range recipients {
+		address, err := mail.ParseAddress(email)
+		if err != nil {
+			return nil, ErrInvalidGuests
+		}
+		key := strings.ToLower(address.Address)
+		if seen[key] {
+			if email != p.Organizer.Email {
+				return nil, ErrInvalidGuests
+			}
+			continue
+		}
+		seen[key] = true
+		rules = append(rules, abuse.Rule{Key: "booking:recipient:" + key, Limit: abuse.Limit("BOOKING_RECIPIENT_HOURLY_LIMIT", 30), Window: time.Hour})
+	}
+	if err := abuse.TakeTx(ctx, tx, time.Now(), rules...); err != nil {
 		return nil, err
 	}
 

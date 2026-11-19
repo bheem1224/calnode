@@ -11,6 +11,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/calnode/calnode/internal/abuse"
 	"github.com/calnode/calnode/internal/slots"
 )
 
@@ -101,6 +102,8 @@ type EventRecognizer interface {
 // It is a verdict on stored state, not a failed request: a retry re-reads the same connections
 // and refuses the same way, so the reconciler stops retrying an event that returns it.
 var ErrEventUnreachable = errors.New("calendar: no single connected account holds this event")
+
+var freeBusyGate = abuse.NewGate(abuse.Limit("CALENDAR_CHECK_CONCURRENCY", 32))
 
 // Service holds the configured providers and dispatches per-user operations to
 // whichever provider that user has connected.
@@ -386,6 +389,11 @@ func (s *Service) FreeBusy(ctx context.Context, userID string, from, to time.Tim
 	results := make(chan result, len(s.providers))
 	for _, p := range s.providers {
 		go func(p Provider) {
+			if !freeBusyGate.Enter() {
+				results <- result{err: abuse.ErrLimited}
+				return
+			}
+			defer freeBusyGate.Leave()
 			iv, err := p.FreeBusy(ctx, userID, from, to)
 			results <- result{iv, err}
 		}(p)

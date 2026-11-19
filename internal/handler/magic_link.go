@@ -36,6 +36,9 @@ func (h *Handler) RequestMagicLink(w http.ResponseWriter, r *http.Request) {
 	}
 	email := strings.TrimSpace(strings.ToLower(req.Email))
 	if email != "" {
+		if !h.allowAuthEmail(w, r, email) {
+			return
+		}
 		var userID string
 		var archivedAt sql.NullString
 		err := h.db.QueryRowContext(r.Context(),
