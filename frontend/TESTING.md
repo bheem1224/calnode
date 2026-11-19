@@ -79,3 +79,9 @@ test Owner credentials and a virtual passkey; it never uses an operator's real
 passkey, password, browser profile, or production database. Use a separate port
 and `DATABASE_URL=sqlite://:memory:`. Normal provider sign-in still needs a staging
 tenant test; a virtual authenticator does not prove real-device interoperability.
+
+Use `http://localhost:39137` consistently for `BASE_URL`, browser navigation and
+`CALNODE_AUTH_TEST_URL`. **Do not substitute `127.0.0.1`**: Chromium rejects IP
+addresses as passkey relying-party domains even though loopback HTTP is otherwise
+a secure context. Registration errors now fail the script with the visible error
+or server response instead of only timing out waiting for a passkey label.

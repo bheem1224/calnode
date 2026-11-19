@@ -5,12 +5,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/go-webauthn/webauthn/protocol"
-	wa "github.com/go-webauthn/webauthn/webauthn"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/go-webauthn/webauthn/protocol"
+	wa "github.com/go-webauthn/webauthn/webauthn"
 )
 
 type passkeyUser struct {
@@ -25,7 +27,10 @@ func (u passkeyUser) WebAuthnDisplayName() string          { return u.Name }
 func (u passkeyUser) WebAuthnCredentials() []wa.Credential { return u.Credentials }
 func (h *Handler) webAuthn() (*wa.WebAuthn, error) {
 	u, err := url.Parse(h.baseURL)
-	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"))) {
+	if err == nil && net.ParseIP(u.Hostname()) != nil {
+		return nil, fmt.Errorf("passkeys require a DNS hostname; use http://localhost for local development")
+	}
+	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && !(u.Scheme == "http" && u.Hostname() == "localhost")) {
 		return nil, fmt.Errorf("passkeys require an HTTPS identity URL (localhost is allowed for development)")
 	}
 	return wa.New(&wa.Config{RPID: u.Hostname(), RPDisplayName: "Calnode", RPOrigins: []string{u.Scheme + "://" + u.Host}, AuthenticatorSelection: protocol.AuthenticatorSelection{ResidentKey: protocol.ResidentKeyRequirementRequired, UserVerification: protocol.VerificationRequired}})

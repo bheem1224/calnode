@@ -361,3 +361,21 @@ func TestPasskeys_EnforceOriginUVAndChallengeBinding(t *testing.T) {
 		t.Fatal("passkeys allowed an insecure public origin")
 	}
 }
+
+func TestPasskeysRejectIPRelyingParties(t *testing.T) {
+	h := newInternalHandler(t)
+	for _, origin := range []string{"http://127.0.0.1:39137", "https://127.0.0.1", "https://[::1]"} {
+		t.Run(origin, func(t *testing.T) {
+			h.baseURL = origin
+			if _, err := h.webAuthn(); err == nil || !strings.Contains(err.Error(), "DNS hostname") {
+				t.Fatalf("expected actionable IP-domain error, got %v", err)
+			}
+		})
+	}
+	for _, origin := range []string{"http://localhost:39137", "https://scheduler.example.com"} {
+		h.baseURL = origin
+		if _, err := h.webAuthn(); err != nil {
+			t.Fatalf("valid origin %s rejected: %v", origin, err)
+		}
+	}
+}

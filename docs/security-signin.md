@@ -30,7 +30,7 @@ An invite exception does not exempt an account from Microsoft's own tenant/condi
 
 ## Native MFA and passkeys
 
-Open **Settings → Account security** to register a passkey (recommended), an authenticator app using TOTP, and recovery codes. Passkeys require HTTPS, except localhost during development. Their relying-party ID and allowed origin come from `BASE_URL`, never the request's Host header. Device user verification (PIN/biometric) and discoverable credentials are required. Changing `BASE_URL` to another host can make existing passkeys unusable: arrange backup access before moving domains.
+Open **Settings → Account security** to register a passkey (recommended), an authenticator app using TOTP, and recovery codes. Passkeys require an HTTPS DNS hostname, except `http://localhost` during development; IP addresses such as `127.0.0.1` are not valid relying-party domains. Their relying-party ID and allowed origin come from `BASE_URL`, never the request's Host header. Device user verification (PIN/biometric) and discoverable credentials are required. Changing `BASE_URL` to another host can make existing passkeys unusable: arrange backup access before moving domains.
 
 TOTP secrets are encrypted using the existing database encryption key. TOTP time steps cannot be reused, and recovery codes are random, hashed at rest, and single-use. Save recovery codes outside the scheduler; generating another set invalidates the previous set. Register a second passkey before relying on a single device. Removing the last authentication method is refused when MFA is required.
 
