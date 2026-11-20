@@ -449,6 +449,13 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	tokenRL := RateLimit(30, time.Minute)
 	mux.HandleFunc("POST /oauth/token", tokenRL(h.TokenMCP))
 
+	// Human review and personal/company agent policy.
+	mux.HandleFunc("GET /v1/users/me/mcp-preferences", h.RequireAuth(h.GetMCPPreferences))
+	mux.HandleFunc("PUT /v1/users/me/mcp-preferences", h.RequireAuth(h.PutMCPPreferences))
+	mux.HandleFunc("GET /v1/mcp/change-requests", h.RequireAuth(h.ListMCPChangeRequests))
+	mux.HandleFunc("GET /v1/mcp/change-requests/{id}", h.RequireAuth(h.GetMCPChangeRequest))
+	mux.HandleFunc("POST /v1/mcp/change-requests/{id}/decision", h.RequireAuth(h.DecideMCPChangeRequest))
+	mux.HandleFunc("GET /v1/mcp/integration-drafts/{id}", h.RequireAuth(h.GetMCPIntegrationDraft))
 	// Password management.
 	mux.HandleFunc("POST /v1/users/me/password", h.RequireAuth(h.ChangePassword))
 	mux.HandleFunc("POST /v1/users/{id}/password", h.RequireAuth(h.AdminSetPassword))

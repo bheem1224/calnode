@@ -86,13 +86,16 @@ var consentTmpl = template.Must(template.New("consent").Parse(`<!doctype html>
     <input type="hidden" name="resource" value="{{.AR.Resource}}">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <input type="hidden" name="permissions_present" value="1">
-    <fieldset class="scope"><legend>Connection permissions</legend>{{range .Permissions}}<label style="display:block;padding:.4rem 0"><input type="checkbox" name="permissions" value="{{.ID}}" {{if .Checked}}checked{{end}}> {{.Label}} · {{.Scope}}</label>{{end}}</fieldset>
+    <label style="display:block;margin-top:1rem" for="agent-profile">Start with a profile</label>
+    <select id="agent-profile" style="width:100%;padding:.6rem;border-radius:8px;font:inherit"><option value="read_only">Read-only assistant</option><option value="scheduling">Scheduling assistant</option><option value="event_manager">Event manager</option><option value="workspace_operator">Workspace operator</option></select>
+    <p style="font-size:.85rem">Profiles select only permissions you can grant. Adjust the selection below for this connection. Sensitive changes follow your personal and company review policy.</p>
+    <fieldset class="scope"><legend>Connection permissions</legend>{{range .Permissions}}<label style="display:block;padding:.4rem 0"><input type="checkbox" name="permissions" value="{{.ID}}" data-profiles="{{.Profiles}}" {{if .Checked}}checked{{end}}> {{.Label}} · {{.Scope}}</label>{{end}}</fieldset>
     <div class="row">
       <button class="deny" name="decision" value="deny" type="submit">Deny</button>
       <button class="allow" name="decision" value="allow" type="submit">Allow</button>
     </div>
   </form>
-</div></body></html>`))
+</div><script nonce="{{.Nonce}}">document.getElementById('agent-profile').addEventListener('change',function(){var value=this.value;document.querySelectorAll('input[name="permissions"]').forEach(function(input){input.checked=input.dataset.profiles.split(' ').includes(value);});});</script></body></html>`))
 
 // AuthorizeMCP handles GET /oauth/authorize: validate the request, ensure the user is
 // signed in (bouncing through the existing Google/Microsoft login if not), then render
@@ -453,18 +456,19 @@ func (h *Handler) renderConsent(w http.ResponseWriter, r *http.Request, ar authR
 		formAction += " " + u.Scheme + "://" + u.Host
 	}
 	csrf := randHex(16)
+	nonce := randHex(16)
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- HttpOnly/SameSite/Secure are all set; Secure is h.secureCookie (dynamic on BASE_URL scheme), which gosec's static check can't verify
 		Name: oauthCSRFCookie, Value: csrf, Path: "/oauth/authorize",
 		MaxAge: 600, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: h.secureCookie,
 	})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action "+formAction+"; base-uri 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'nonce-"+nonce+"'; style-src 'unsafe-inline'; form-action "+formAction+"; base-uri 'none'")
 	w.Header().Set("X-Frame-Options", "DENY")
 	userID, _, _ := h.sessionUser(r)
 	current, _ := access.Load(r.Context(), h.db, userID)
 	type choice struct {
-		ID, Label, Scope string
-		Checked          bool
+		ID, Label, Scope, Profiles string
+		Checked                    bool
 	}
 	choices := []choice{}
 	for _, id := range mcpActions {
@@ -474,10 +478,17 @@ func (h *Handler) renderConsent(w http.ResponseWriter, r *http.Request, ar authR
 		if ar.Scope != "mcp" && !strings.Contains(" "+ar.Scope+" ", " "+id+" ") {
 			continue
 		}
-		choices = append(choices, choice{id, strings.ReplaceAll(strings.ReplaceAll(id, "_", " "), ".", "  -  "), current[id], id == "event_types.read" || id == "availability.read" || id == "bookings.read"})
+		profiles := []string{}
+		for _, profile := range []string{"read_only", "scheduling", "event_manager", "workspace_operator"} {
+			if mcpProfileActions(profile)[id] {
+				profiles = append(profiles, profile)
+			}
+		}
+		choices = append(choices, choice{ID: id, Label: strings.ReplaceAll(strings.ReplaceAll(id, "_", " "), ".", " - "), Scope: current[id], Profiles: strings.Join(profiles, " "), Checked: mcpProfileActions("read_only")[id]})
 	}
 	_ = consentTmpl.Execute(w, map[string]any{
 		"Permissions": choices,
+		"Nonce":       nonce,
 		"Business":    business,
 		"ClientName":  clientName,
 		"UserEmail":   email,

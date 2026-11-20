@@ -97,7 +97,13 @@ func (h *Handler) userTeamRole(ctx context.Context, userID, teamID string) (stri
 }
 
 func (h *Handler) canManageTeam(ctx context.Context, user AuthUser, teamID string) (bool, error) {
-	if user.IsAdmin {
+	// IsAdmin can be a compatibility flag for one pre-authorized resource.
+	// It must never authorize a different team referenced inside that request.
+	var admin bool
+	if err := h.db.QueryRowContext(ctx, `SELECT is_admin OR is_owner FROM users WHERE id=? AND archived_at IS NULL`, user.ID).Scan(&admin); err != nil {
+		return false, err
+	}
+	if admin {
 		return true, nil
 	}
 	role, err := h.userTeamRole(ctx, user.ID, teamID)

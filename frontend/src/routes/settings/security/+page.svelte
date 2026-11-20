@@ -10,10 +10,10 @@
  import { Switch } from '$lib/components/ui/switch';
  import * as Dialog from '$lib/components/ui/dialog';
  import { toast } from 'svelte-sonner';
- type Policy={password_min_length:number;require_admin_mfa:boolean;require_member_mfa:boolean;session_hours:number;dynamic_link_days:number;google_enabled:boolean;microsoft_enabled:boolean;members_sso_only:boolean;admin_password_enabled:boolean;auto_provision:boolean;approved_domains:string;required_group_id:string};
+ type Policy={mcp_review_enforced:boolean;password_min_length:number;require_admin_mfa:boolean;require_member_mfa:boolean;session_hours:number;dynamic_link_days:number;google_enabled:boolean;microsoft_enabled:boolean;members_sso_only:boolean;admin_password_enabled:boolean;auto_provision:boolean;approved_domains:string;required_group_id:string};
  type Response={policy:Policy;google_configured:boolean;microsoft_configured:boolean};
  let data=$state<Response|null>(null),error=$state(''),verify=$state(false),busy=$state(false),password=$state('');
- onMount(async()=>{try{data=await api.get<Response>('/v1/settings/security');}catch(e){error=e instanceof Error?e.message:$t('securitySettings.loadError');}});
+ onMount(async()=>{try{data=await api.get<Response>('/v1/settings/security');data.policy.mcp_review_enforced??=false;}catch(e){error=e instanceof Error?e.message:$t('securitySettings.loadError');}});
  async function save(){busy=true;error='';try{
   data=await api.put<Response>('/v1/settings/security',data!.policy);
   verify=false;password='';toast.success($t('securitySettings.saved'));
@@ -32,6 +32,7 @@
   </section>
   <section class="rounded-xl border bg-card p-5 space-y-4"><h3 class="text-sm font-semibold">{$t('nativeAuth.title')}</h3><p class="text-xs text-muted-foreground">{$t('nativeAuth.policyHint')}</p><div class="flex items-center justify-between gap-4"><Label for="require-admin-mfa">{$t('nativeAuth.adminMFA')}</Label><Switch id="require-admin-mfa" bind:checked={data.policy.require_admin_mfa} /></div><div class="flex items-center justify-between gap-4"><Label for="require-member-mfa">{$t('nativeAuth.memberMFA')}</Label><Switch id="require-member-mfa" bind:checked={data.policy.require_member_mfa} /></div><div class="grid gap-4 sm:grid-cols-2"><div class="space-y-2"><Label for="session-hours">{$t('nativeAuth.sessionHours')}</Label><Input id="session-hours" type="number" min={1} max={720} bind:value={data.policy.session_hours} /></div><div class="space-y-2"><Label for="dynamic-expiry">{$t('nativeAuth.linkDays')}</Label><Input id="dynamic-expiry" type="number" min={1} max={30} bind:value={data.policy.dynamic_link_days} /></div></div></section>
   <section class="space-y-4 rounded-xl border bg-card p-5"><div><h3 class="text-sm font-semibold">{$t('passwordPolicy.title')}</h3><p class="mt-1 text-xs leading-relaxed text-muted-foreground">{$t('passwordPolicy.description')}</p></div><div class="max-w-xs space-y-2"><Label for="password-minimum">{$t('passwordPolicy.minimum')}</Label><Input id="password-minimum" type="number" min={15} max={128} bind:value={data.policy.password_min_length} /></div><p class="text-xs leading-relaxed text-muted-foreground">{$t('passwordPolicy.application')}</p></section>
+  <section class="space-y-3 rounded-xl border bg-card p-5"><div class="flex items-start justify-between gap-5"><div class="space-y-1"><Label for="agent-company-review">{$t('agentReview.companyTitle')}</Label><p class="text-xs leading-relaxed text-muted-foreground">{$t('agentReview.companyHint')}</p></div><Switch id="agent-company-review" bind:checked={data.policy.mcp_review_enforced} /></div></section>
   <p class="text-xs leading-relaxed text-muted-foreground">{$t('identity.sessionHint')}</p>
   <Button type="button" onclick={()=>{error='';password='';verify=true;}}>{$t('securitySettings.save')}</Button>
   <SecurityOperations />

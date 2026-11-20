@@ -23,7 +23,7 @@
  const calendarCallback=$derived(baseURL+'/v1/calendar/callback');
  const purposes=$derived([{value:'sso',label:$t('identity.sso')},{value:'both',label:$t('identity.both')},{value:'integrations',label:$t('identity.integrations')}]);
  const kinds=[{value:'microsoft',label:'Microsoft Entra ID'},{value:'google',label:'Google'},{value:'oidc',label:'OpenID Connect (OIDC)'}];
- onMount(()=>{load();});
+ onMount(async()=>{await load();const id=new URL(window.location.href).searchParams.get('draft');if(id){try{const proposed=await api.get<Partial<Provider>>('/v1/mcp/integration-drafts/'+encodeURIComponent(id));edit();draft={...blank(),...proposed,id:'',enabled:false};}catch(e){error=e instanceof Error?e.message:$t('common.failed');}}});
  async function load(){try{const result=await api.get<{items:Provider[];base_url:string}>('/v1/settings/identity-providers');items=result.items;origin=result.base_url;}catch(e){error=e instanceof Error?e.message:$t('common.failed');}finally{loading=false;}}
  function edit(provider?:Provider){draft=provider?structuredClone($state.snapshot(provider)):blank();secret='';error='';review=false;open=true;}
  function changeKind(kind:string){draft.kind=kind;if(kind==='oidc')draft.purpose='sso';draft.group_ids=[];}

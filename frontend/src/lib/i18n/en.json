@@ -2135,7 +2135,9 @@
 			"transcripts": "Transcripts",
 			"notes": "Meeting notes",
 			"impersonation": "Impersonation",
-			"dynamic_links": "Dynamic links"
+			"dynamic_links": "Dynamic links",
+			"team_event_types": "Team event types",
+			"logs": "Application and audit logs"
 		},
 		"labels": {
 			"profile": {
@@ -2147,7 +2149,8 @@
 				"create": "Create",
 				"update": "Edit",
 				"delete": "Delete",
-				"links": "Generate booking links"
+				"links": "Generate one-time links",
+				"custom_times": "Offer custom times"
 			},
 			"bookings": {
 				"read": "View",
@@ -2169,7 +2172,8 @@
 				"invite_admin": "Invite Admins",
 				"update_role": "Assign roles",
 				"archive": "Archive and restore",
-				"password": "Reset passwords"
+				"password": "Reset passwords",
+				"reset_mfa": "Recover native MFA"
 			},
 			"roles": {
 				"manage": "Manage",
@@ -2228,8 +2232,20 @@
 				"use": "Impersonate users",
 				"audit": "View security audit"
 			},
-			"dynamic_links.create": "Create one-time group scheduling links",
-			"members.reset_mfa": "Recover native MFA"
+			"dynamic_links": {
+				"create": "Create one-time group scheduling links"
+			},
+			"team_event_types": {
+				"read": "View",
+				"create": "Create",
+				"update": "Edit",
+				"delete": "Delete",
+				"links": "Generate one-time links",
+				"custom_times": "Offer custom times"
+			},
+			"logs": {
+				"read": "Read application and audit logs"
+			}
 		},
 		"scope": {
 			"none": "No access",
@@ -2490,5 +2506,34 @@
 		"phone": "Phone call",
 		"attendeePhone": "Attendee’s phone number",
 		"loadError": "Could not load meeting defaults. Try again before creating the link."
+	}
+,
+	"agentReview": {
+		"companyTitle": "Require review for sensitive agent changes",
+		"companyHint": "When enabled, everyone must approve event configuration and administration changes in Calnode. When disabled, each person chooses their review preference. Routine scheduling is unaffected.",
+		"preferencesTitle": "Agent review preferences",
+		"preferencesHint": "Your MCP client controls routine scheduling approvals. These settings add a Calnode review step for reusable event changes and administration. Credential entry and security verification always remain interactive.",
+		"personalTitle": "Review sensitive agent changes in Calnode",
+		"personalHint": "Turn off only if your agent client already provides the review you need. This never grants additional permissions.",
+		"enforced": "Your company requires Calnode review.",
+		"saved": "Agent review preference saved",
+		"recent": "Recent agent changes",
+		"title": "Review agent changes",
+		"reviewHint": "Review the exact configuration changes proposed by your agent. Approval does not grant additional permissions. Changed resources or expired/revoked connections require a new proposal.",
+		"expires": "Expires",
+		"before": "Current state",
+		"proposed": "Proposed fields",
+		"results": "Execution results",
+		"batchHint": "A batch stops at its first failure. Earlier successful operations remain applied; review results before retrying. No existing bookings are imported.",
+		"reject": "Reject",
+		"approve": "Approve these changes",
+		"confirmHint": "Apply this exact proposal using the original connection’s current permissions? Changes can affect future bookings and external services.",
+		"status": {
+			"pending": "Awaiting review",
+			"executing": "Executing — do not retry",
+			"completed": "Completed",
+			"partial": "Partially completed",
+			"rejected": "Rejected"
+		}
 	}
 }

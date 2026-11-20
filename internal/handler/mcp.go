@@ -29,54 +29,66 @@ func (h *Handler) MCPServer() *mcp.Server {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_event_types",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 		Description: "List the bookable event types in this workspace (active and public). Returns each type's slug (use it as event_type_id in other tools), name, duration, and location.",
 	}, h.mcpListEventTypes)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_event_type",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 		Description: "Get full details for one event type by slug: duration, location, hosts, and especially its intake QUESTIONS (which are required, and any allowed options). Call this before create_booking so you can supply the required answers.",
 	}, h.mcpGetEventType)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_available_slots",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 		Description: "List bookable time slots for an event type over a date range, in the given timezone. Returns slot start/end as RFC3339 timestamps. Use a slot's exact start as slot_start in create_booking.",
 	}, h.mcpGetAvailableSlots)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_booking",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 		Description: "Fetch a single booking by its id, returning its event type, host, start/end times, status, location, and payment (payment_status + amount_paid_cents/currency for paid bookings).",
 	}, h.mcpGetBooking)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_bookings",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 		Description: "List bookings in this workspace, newest first, with optional filters (status, date range, event type, host). Times are RFC3339 in UTC. Each booking includes payment fields (payment_status + amount_paid_cents/currency) for paid bookings — usable for revenue reporting.",
 	}, h.mcpListBookings)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "create_booking",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: agentBool(false)},
 		Description: "Book a slot on an event type. slot_start must be an exact start from get_available_slots. Answers the event type's required intake questions if any. Returns the created booking (with its id and assigned host).",
 	}, h.mcpCreateBooking)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "reschedule_booking",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: agentBool(true)},
 		Description: "Move an existing booking to a new start time (RFC3339). The duration is preserved. Fails if the new slot is taken or the booking is cancelled.",
 	}, h.mcpRescheduleBooking)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "cancel_booking",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: agentBool(true)},
 		Description: "Cancel a booking by id, with an optional reason. Removes the calendar event(s) and notifies attendee and hosts.",
 	}, h.mcpCancelBooking)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_meeting_notes",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 		Description: "Get the AI-generated meeting notes (Markdown) for a booking's built-in video call, produced by the notetaker after a recorded meeting. exists=false if the meeting wasn't recorded or notes aren't ready. NOTE: contains the meeting's spoken content.",
 	}, h.mcpGetMeetingNotes)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_transcript",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 		Description: "Get the raw speech-to-text transcript for a booking's built-in video call (speakers labelled Speaker 0, Speaker 1, …). exists=false if the meeting wasn't recorded/transcribed. NOTE: contains the meeting's spoken content.",
 	}, h.mcpGetTranscript)
 
+	h.registerAgentTools(s)
+	s.AddReceivingMiddleware(h.filterAgentTools)
 	return s
 }
 
@@ -105,16 +117,17 @@ func (h *Handler) mcpListEventTypes(ctx context.Context, _ *mcp.CallToolRequest,
 	}
 	ctx = authorizedCtx
 
-	scope, userID := "all", ""
+	scope, teamScope, userID := "all", "all", ""
 	if c, ok := mcpCallerFromContext(ctx); ok && c.Permissions != nil {
 		scope = c.Permissions["event_types.read"]
+		teamScope = c.Permissions["team_event_types.read"]
 		userID = c.UserID
 	}
 	rows, err := h.db.QueryContext(ctx, `
 		SELECT slug, name, duration_minutes, location_type, COALESCE(description, ''), max_per_day, max_per_week
 		FROM event_types
-		WHERE is_active = 1 AND is_public = 1 AND (?='all' OR user_id=? OR id IN(SELECT event_type_id FROM event_type_hosts WHERE user_id=?) OR (?='team' AND team_id IN(SELECT team_id FROM team_members WHERE user_id=?)))
-		ORDER BY name`, scope, userID, userID, scope, userID)
+		WHERE is_active=1 AND is_public=1 AND ((COALESCE(team_id,'')='' AND (?='all' OR (?<>'' AND (user_id=? OR id IN(SELECT event_type_id FROM event_type_hosts WHERE user_id=?))))) OR (COALESCE(team_id,'')<>'' AND (?='all' OR (?='team' AND team_id IN(SELECT team_id FROM team_members WHERE user_id=?)))))
+		ORDER BY name`, scope, scope, userID, userID, teamScope, teamScope, userID)
 	if err != nil {
 		return nil, listEventTypesOut{}, fmt.Errorf("list event types: %w", err)
 	}

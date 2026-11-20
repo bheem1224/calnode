@@ -96,6 +96,28 @@ jobs:
       - name: Booking feature browser matrix
         run: CALNODE_TEST_BINARY="$RUNNER_TEMP/calnode-auth-test" node frontend/scripts/verify-booking-flows.mjs
 
+      - name: MCP profiles and human-review browser verification
+        run: |
+          PORT=39144 BASE_URL=http://localhost:39144 DATABASE_URL=sqlite://:memory: DEMO_MODE=false \
+            CALNODE_ENCRYPTION_KEY="$(openssl rand -hex 32)" \
+            "$RUNNER_TEMP/calnode-auth-test" > "$RUNNER_TEMP/agent-server.log" 2>&1 &
+          server_pid=$!
+          cleanup() {
+            result=$?
+            if [ "$result" -ne 0 ]; then tail -n 60 "$RUNNER_TEMP/agent-server.log"; fi
+            kill "$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+            exit "$result"
+          }
+          trap cleanup EXIT
+          ready=false
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://localhost:39144/v1/auth/status >/dev/null; then ready=true; break; fi
+            sleep 1
+          done
+          test "$ready" = true
+          CALNODE_AGENT_TEST_URL=http://localhost:39144 node frontend/scripts/verify-agent-operations.mjs
+
       - name: Go vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
 

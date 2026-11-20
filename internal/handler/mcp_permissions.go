@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-var mcpActions = []string{"event_types.read", "availability.read", "bookings.read", "bookings.create", "bookings.reschedule", "bookings.cancel", "notes.read", "transcripts.read"}
+var mcpActions = []string{"event_types.read", "event_types.create", "event_types.update", "event_types.delete", "event_types.links", "event_types.custom_times", "team_event_types.read", "team_event_types.create", "team_event_types.update", "team_event_types.delete", "team_event_types.links", "team_event_types.custom_times", "dynamic_links.create", "availability.read", "availability.update", "bookings.read", "bookings.create", "bookings.reschedule", "bookings.cancel", "notes.read", "transcripts.read", "profile.read", "profile.update", "teams.read", "teams.create", "teams.update", "teams.delete", "settings.read", "settings.update", "branding.read", "branding.update", "integrations.read", "integrations.update", "logs.read"}
 
 func (h *Handler) mcpPrincipal(ctx context.Context, token string) (AuthUser, time.Time, error) {
 	var u AuthUser
@@ -72,6 +72,12 @@ func (h *Handler) authorizeMCPTool(ctx context.Context, action, kind, id string)
 	if c.Permissions == nil {
 		return ctx, nil
 	} // legacy internal callers in tests
+	if action == "event_types.read" && id != "" {
+		action = access.EventPermission(ctx, h.db, action, id)
+	}
+	if action == "event_types.read" && kind == "" && !c.Permissions.Has(action) && c.Permissions.Has("team_event_types.read") {
+		action = "team_event_types.read"
+	}
 	if !c.Permissions.Has(action) {
 		return ctx, errors.New("permission required: " + action)
 	}
@@ -79,8 +85,11 @@ func (h *Handler) authorizeMCPTool(ctx context.Context, action, kind, id string)
 	if kind == "booking" && id != "" && !access.BookingAllowed(ctx, h.db, c.UserID, scope, id) {
 		return ctx, errors.New("booking not found")
 	}
-	if kind == "event" && id != "" && !access.EventAllowed(ctx, h.db, c.UserID, scope, id) {
-		return ctx, errors.New("event type not found")
+	if kind == "event" && id != "" {
+		allowed := access.EventActionAllowed(ctx, h.db, c.UserID, c.Permissions, "read", id)
+		if !allowed {
+			return ctx, errors.New("event type not found")
+		}
 	}
 	c.Operation = action
 	c.IsAdmin = scope == "all" || (kind != "" && id != "") // a concrete resource was already authorized above
@@ -113,4 +122,32 @@ func selectedMCPGrants(current access.Grants, ar authRequest, r *http.Request) (
 		out[id] = current[id]
 	}
 	return out, nil
+}
+
+// Profiles are one-time checkbox selections, never stored roles or authority.
+func mcpProfileActions(profile string) map[string]bool {
+	out := map[string]bool{}
+	read := []string{"event_types.read", "team_event_types.read", "availability.read", "bookings.read"}
+	scheduling := []string{"bookings.create", "bookings.reschedule", "bookings.cancel", "event_types.links", "event_types.custom_times", "team_event_types.links", "team_event_types.custom_times", "dynamic_links.create"}
+	for _, p := range read {
+		out[p] = true
+	}
+	if profile == "scheduling" || profile == "event_manager" || profile == "workspace_operator" {
+		for _, p := range scheduling {
+			out[p] = true
+		}
+	}
+	if profile == "event_manager" || profile == "workspace_operator" {
+		for _, p := range []string{"profile.read", "profile.update", "teams.read", "availability.update", "integrations.read", "integrations.update", "event_types.create", "event_types.update", "event_types.delete", "team_event_types.create", "team_event_types.update", "team_event_types.delete"} {
+			out[p] = true
+		}
+	}
+	if profile == "workspace_operator" {
+		for _, p := range mcpActions {
+			if p != "notes.read" && p != "transcripts.read" {
+				out[p] = true
+			}
+		}
+	}
+	return out
 }

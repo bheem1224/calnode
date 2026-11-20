@@ -123,7 +123,9 @@ type eventTypeJSON struct {
 	// CanEdit is true when the requesting user may change this event type: its owner,
 	// or any admin. False means read-only (an assigned host). Owned alone no longer
 	// answers that question, since an admin can edit event types they do not own.
-	CanEdit bool `json:"can_edit"`
+	CanEdit             bool `json:"can_edit"`
+	CanGenerateLinks    bool `json:"can_generate_links"`
+	CanOfferCustomTimes bool `json:"can_offer_custom_times"`
 	// OwnerID is the user the event type belongs to (event_types.user_id). Per-owner
 	// resources - availability, calendar and Zoom connections - are that user's, also
 	// when an admin is the one editing.
@@ -447,6 +449,8 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 		Slug                string  `json:"slug"`
 		Name                string  `json:"name"`
 		DisplayOrder        int     `json:"display_order"`
+		IsActive            *bool   `json:"is_active"`
+		IsPublic            *bool   `json:"is_public"`
 		Description         *string `json:"description"`
 		DurationMinutes     int     `json:"duration_minutes"`
 		SlotIntervalMinutes *int    `json:"slot_interval_minutes"`
@@ -608,13 +612,13 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 		   routing_mode, buffer_before_minutes, buffer_after_minutes,
 		   min_notice_minutes, max_future_days, max_active_bookings, show_taken_slots, invite_delivery,
 		   msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, display_order,
-		   max_per_day, max_per_week)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   max_per_day, max_per_week, is_active, is_public)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, user.ID, teamIDArg, req.Slug, req.Name, req.Description,
 		req.DurationMinutes, slotInterval, locType, req.LocationValue, req.AllowPhoneCall != nil && *req.AllowPhoneCall,
 		routingMode, bufBefore, bufAfter, minNotice, maxFuture, maxActive, showTaken, inviteDelivery,
 		defaultMsgConfirmation, defaultMsgCancellation, defaultMsgReschedule, defaultMsgReminder, req.DisplayOrder,
-		maxPerDayVal, maxPerWeekVal)
+		maxPerDayVal, maxPerWeekVal, req.IsActive == nil || *req.IsActive, req.IsPublic == nil || *req.IsPublic)
 	if err != nil {
 		if db.IsUniqueViolation(err) {
 			h.writeError(w, http.StatusConflict, "slug already in use")
@@ -680,6 +684,7 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	et.setOwnership(user, user.ID) // the creator owns it
+	h.setEventTypeCapabilities(r.Context(), user, et)
 	h.writeJSON(w, http.StatusCreated, et)
 }
 
@@ -723,8 +728,8 @@ func (h *Handler) ListEventTypes(w http.ResponseWriter, r *http.Request) {
 	if user.Permissions != nil {
 		visible := items[:0]
 		for _, et := range items {
-			if access.EventAllowed(r.Context(), h.db, user.ID, user.Permissions["event_types.read"], et.ID) {
-				et.CanEdit = user.Permissions.Has("event_types.update") && access.EventManageAllowed(r.Context(), h.db, user.ID, user.Permissions["event_types.update"], et.ID)
+			if access.EventAllowed(r.Context(), h.db, user.ID, user.Permissions[access.EventPermission(r.Context(), h.db, "event_types.read", et.ID)], et.ID) {
+				h.setEventTypeCapabilities(r.Context(), user, &et)
 				visible = append(visible, et)
 			}
 		}
@@ -750,7 +755,7 @@ func (h *Handler) GetEventType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user.Permissions != nil {
-		et.CanEdit = access.EventManageAllowed(r.Context(), h.db, user.ID, user.Permissions["event_types.update"], et.ID)
+		h.setEventTypeCapabilities(r.Context(), user, et)
 	}
 	et.InviteSenderReady = h.inviteSenderReady(r.Context())
 	if err := h.loadReminders(r.Context(), et.ID, et); err != nil {
@@ -1339,6 +1344,23 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 	effTeamID := curTeamID.String
 	if req.TeamID != nil {
 		tid := strings.TrimSpace(*req.TeamID)
+		if tid != curTeamID.String && user.Permissions != nil {
+			permission := "team_event_types.create"
+			if tid == "" {
+				permission = "event_types.create"
+			}
+			if !user.Permissions.Has(permission) || (tid == "" && ownerID != user.ID && user.Permissions["event_types.update"] != "all") {
+				h.writeError(w, http.StatusForbidden, "destination event creation permission required")
+				return
+			}
+			if tid != "" && user.Permissions[permission] != "all" {
+				var member int
+				if h.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM team_members WHERE team_id=? AND user_id=?`, tid, user.ID).Scan(&member) != nil || member == 0 {
+					h.writeError(w, http.StatusForbidden, "destination team is outside the connection scope")
+					return
+				}
+			}
+		}
 		if tid == "" {
 			set("team_id", nil)
 			effTeamID = ""
@@ -1533,6 +1555,7 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 	}
 	et.setOwnership(user, ownerID)
 	h.logForeignEventTypeChange(r.Context(), "update", etID, ownerID, user)
+	h.setEventTypeCapabilities(r.Context(), user, et)
 	h.writeJSON(w, http.StatusOK, et)
 }
 
@@ -1634,4 +1657,14 @@ func (h *Handler) ListConnectedCalendars(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	h.writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// Keep permission affordances consistent on reads and mutation responses.
+func (h *Handler) setEventTypeCapabilities(ctx context.Context, user AuthUser, et *eventTypeJSON) {
+	if user.Permissions == nil {
+		return
+	}
+	et.CanGenerateLinks = access.EventActionAllowed(ctx, h.db, user.ID, user.Permissions, "links", et.ID)
+	et.CanOfferCustomTimes = access.EventActionAllowed(ctx, h.db, user.ID, user.Permissions, "custom_times", et.ID)
+	et.CanEdit = access.EventActionAllowed(ctx, h.db, user.ID, user.Permissions, "update", et.ID)
 }

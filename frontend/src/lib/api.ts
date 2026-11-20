@@ -129,6 +129,8 @@ export type EventType = {
 	owned?: boolean;
 	/** True if the current user may edit it (the owner, or any admin); false = read-only host. */
 	can_edit?: boolean;
+ can_generate_links?: boolean;
+ can_offer_custom_times?: boolean;
 	/** The user the event type belongs to; its availability and calendar/Zoom connections are theirs. */
 	owner_id?: string;
 	/** Owner identity, returned when the viewer is not the owner. */

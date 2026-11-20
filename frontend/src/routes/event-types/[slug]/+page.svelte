@@ -1134,7 +1134,7 @@
     }
   }
   async function mintOneTimeLink() {
-    if (!et || mintingOneTime) return;
+    if (!et || et.can_generate_links === false || mintingOneTime) return;
     mintingOneTime = true;
     try {
       const created = await api.post<SingleUseLink>(
@@ -1330,7 +1330,7 @@
           variant="outline"
           size="sm"
           onclick={mintOneTimeLink}
-          disabled={mintingOneTime || !form.is_active}
+          disabled={et?.can_generate_links === false || mintingOneTime || !form.is_active}
         >
           {mintingOneTime ? "Copying..." : "1-Time Link"}
         </Button>

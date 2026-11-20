@@ -147,3 +147,15 @@ screenshots. The booking matrix additionally asserts delivery of real RSVP-beari
 invitation messages to its local SMTP capture. Provider contract tests inspect actual
 HTTP requests for Google/Microsoft create/update/cancel, conferencing and explicit
 calendar/account routing; they do not prove delivery to an external mailbox.
+
+## MCP agent configuration and review
+
+`src/agent-review.visual.test.ts` checks company enforcement, escaped proposal
+content, confirmation behavior and overflow in both themes. CI also runs
+`scripts/verify-agent-operations.mjs` against a fresh in-memory server using
+`CALNODE_AGENT_TEST_URL=http://localhost:39144`. It exercises real OAuth PKCE,
+the four permission profiles, MCP calls, browser approval, inactive/private event
+creation and replay rejection. The runner refuses claimed or non-localhost
+instances. Optional `CALNODE_SCREENSHOT_DIR` retains light/dark screenshots;
+screenshots select the actual stored theme and wait for its text colors to settle.
+See `docs/mcp-agents.md` for policy and import limitations.

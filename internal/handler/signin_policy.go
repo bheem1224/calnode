@@ -14,6 +14,7 @@ import (
 // A missing policy preserves existing installations until an administrator opts in.
 // Provider credentials configure calendar integrations independently of this policy.
 type SigninPolicy struct {
+	MCPReviewEnforced    bool   `json:"mcp_review_enforced"`
 	RequireAdminMFA      bool   `json:"require_admin_mfa"`
 	RequireMemberMFA     bool   `json:"require_member_mfa"`
 	PasswordMinLength    int    `json:"password_min_length"`

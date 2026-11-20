@@ -25,7 +25,9 @@ var Catalog = func() []Permission {
 	}{
 		{"profile", "read update", false},
 		{"dynamic_links", "create", false},
-		{"event_types", "read create update delete links", false},
+		{"event_types", "read create update delete links custom_times", false},
+		{"team_event_types", "read create update delete links custom_times", false},
+		{"logs", "read", true},
 		{"bookings", "read create reschedule cancel approve reassign answers", false},
 		{"availability", "read update", false},
 		{"members", "read invite_member invite_admin update_role archive password reset_mfa", true},
@@ -48,6 +50,9 @@ var Catalog = func() []Permission {
 			scopes := []string{"own", "team", "all"}
 			if g.global || (g.name == "teams" && (a == "create" || a == "delete")) {
 				scopes = []string{"all"}
+			}
+			if g.name == "team_event_types" {
+				scopes = []string{"team", "all"}
 			}
 			if g.name == "profile" || (g.name == "availability" && a == "update") || g.name == "integrations" || (g.name == "api_keys" && a == "create") || (g.name == "mcp" && a == "connect") {
 				scopes = []string{"own"}
@@ -98,6 +103,9 @@ func Member(legacy bool) Grants {
 	delete(g, "teams.create")
 	delete(g, "teams.delete")
 	g["event_types.read"] = "team"
+	g["team_event_types.read"] = "team"
+	g["team_event_types.links"] = "team"
+	g["team_event_types.custom_times"] = "team"
 	g["dynamic_links.create"] = "all"
 	g["mcp.connect"] = "own"
 	g["mcp.manage"] = "own"
@@ -179,12 +187,12 @@ func Load(ctx context.Context, db Querier, userID string) (Grants, error) {
 		g := Parse(raw.String)
 		g["profile.read"] = "own"
 		g["profile.update"] = "own"
-		return g, nil
+		return WithTeamAuthority(ctx, db, userID, g), nil
 	}
 	if roleID != "" {
-		return LegacyRole(users.Bool, settings.Bool, teams.Bool, imp.Bool), nil
+		return WithTeamAuthority(ctx, db, userID, LegacyRole(users.Bool, settings.Bool, teams.Bool, imp.Bool)), nil
 	}
-	return Member(legacy), nil
+	return WithTeamAuthority(ctx, db, userID, Member(legacy)), nil
 }
 
 func Related(ctx context.Context, db *sql.DB, userID, otherID string) bool {
@@ -313,4 +321,55 @@ func DynamicHostsAllowed(ctx context.Context, q Querier, actor, scope string, ho
 		}
 	}
 	return true
+}
+
+// Team authority is evaluated against current membership, never frozen in a token.
+func WithTeamAuthority(ctx context.Context, db Querier, userID string, g Grants) Grants {
+	var heads int
+	if db.QueryRowContext(ctx, `SELECT COUNT(*) FROM team_members WHERE user_id=? AND role='owner'`, userID).Scan(&heads) == nil && heads > 0 {
+		for _, action := range []string{"read", "create", "update", "delete", "links", "custom_times"} {
+			if g.Has("event_types."+action) && !g.Has("team_event_types."+action) {
+				g["team_event_types."+action] = "team"
+			}
+		}
+	}
+	return g
+}
+
+func EventPermission(ctx context.Context, db Querier, permission, id string) string {
+	var team string
+	if id != "" && db.QueryRowContext(ctx, `SELECT COALESCE(team_id,'') FROM event_types WHERE id=? OR slug=?`, id, id).Scan(&team) == nil && team != "" {
+		return "team_event_types." + strings.TrimPrefix(permission, "event_types.")
+	}
+	return permission
+}
+
+// Operating team links is independent of configuring the reusable event type.
+func EventActionAllowed(ctx context.Context, db *sql.DB, userID string, grants Grants, action, id string) bool {
+	p := EventPermission(ctx, db, "event_types."+action, id)
+	scope := grants[p]
+	if !grants.Has(p) {
+		return false
+	}
+	if strings.HasPrefix(p, "team_event_types.") {
+		var team string
+		if db.QueryRowContext(ctx, `SELECT team_id FROM event_types WHERE id=? OR slug=?`, id, id).Scan(&team) != nil {
+			return false
+		}
+		if action != "read" && action != "links" && action != "custom_times" {
+			var can int
+			if db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users u WHERE u.id=? AND u.archived_at IS NULL AND (u.is_admin=1 OR u.is_owner=1 OR EXISTS(SELECT 1 FROM team_members tm WHERE tm.user_id=u.id AND tm.team_id=? AND tm.role='owner'))`, userID, team).Scan(&can) != nil || can == 0 {
+				return false
+			}
+		}
+		if scope == "all" {
+			return true
+		}
+		var n int
+		return db.QueryRowContext(ctx, `SELECT COUNT(*) FROM team_members WHERE team_id=? AND user_id=?`, team, userID).Scan(&n) == nil && n > 0
+	}
+	if action == "read" || action == "links" || action == "custom_times" {
+		return EventAllowed(ctx, db, userID, scope, id)
+	}
+	return EventManageAllowed(ctx, db, userID, scope, id)
 }

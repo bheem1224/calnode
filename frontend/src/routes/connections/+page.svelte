@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+ import AgentReviewPreferences from '$lib/components/AgentReviewPreferences.svelte';
  import CredentialOwnerPicker from '$lib/components/CredentialOwnerPicker.svelte';
  let credentialOwner=$state('');
  import { Badge } from '$lib/components/ui/badge';
@@ -96,6 +97,8 @@
 		{$t('connections.subtitle')}
 	</p>
 </div>
+
+<AgentReviewPreferences />
 
 <CredentialOwnerPicker bind:value={credentialOwner} permission="mcp.manage" onChange={load} />
 

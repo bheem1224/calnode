@@ -26,7 +26,7 @@
   const visible = $derived(items.filter(x => matches(`${x.name} ${x.slug}`, query.trim().toLowerCase())));
   $effect(() => { if (open) { query = ''; selected = 0; error = ''; api.get<{items: EventType[]}>('/v1/event-types').then(r => items = r.items.filter(x => x.is_active && !x.archived)).catch(() => error = $t('quickLink.loadError')); } });
   async function copy(item: EventType, once = false) {
-    if (busy) return; busy = true;
+    if (busy || (once && item.can_generate_links === false)) return; busy = true;
     try {
       const url = once ? singleUseLink(await api.post<SingleUseLink>(`/v1/event-types/${item.id}/single-use-links`, {})) : bookingLink(item.slug);
       await navigator.clipboard.writeText(url); toast.success($t('quickLink.copied')); open = false;
@@ -54,8 +54,8 @@
           <Badge variant="secondary">{item.duration_minutes}m</Badge>
           <div class="flex w-full flex-wrap items-center gap-1 sm:w-auto">
             <Button type="button" size="sm" variant="outline" disabled={busy} onclick={() => copy(item)}>{$t('quickLink.copy')}</Button>
-            <Button type="button" size="sm" variant="ghost" disabled={busy} onclick={() => { customEvent = item; open = false; customOpen = true; }}>{$t('customTimes.title')}</Button>
-            <Button type="button" size="sm" variant="ghost" disabled={busy} onclick={() => copy(item, true)}>{$t('quickLink.once')}</Button>
+            <Button type="button" size="sm" variant="ghost" disabled={busy || item.can_offer_custom_times === false} onclick={() => { customEvent = item; open = false; customOpen = true; }}>{$t('customTimes.title')}</Button>
+            <Button type="button" size="sm" variant="ghost" disabled={busy || item.can_generate_links === false} onclick={() => copy(item, true)}>{$t('quickLink.once')}</Button>
           </div>
         </div>
       {/each}

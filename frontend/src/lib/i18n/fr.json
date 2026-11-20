@@ -2135,7 +2135,9 @@
 			"transcripts": "Transcriptions",
 			"notes": "Notes de réunion",
 			"impersonation": "Accès en tant qu’utilisateur",
-			"dynamic_links": "Liens dynamiques"
+			"dynamic_links": "Liens dynamiques",
+			"team_event_types": "Types d’événements d’équipe",
+			"logs": "Journaux et audit"
 		},
 		"labels": {
 			"profile": {
@@ -2147,7 +2149,8 @@
 				"create": "Créer",
 				"update": "Modifier",
 				"delete": "Supprimer",
-				"links": "Générer des liens de réservation"
+				"links": "Générer des liens uniques",
+				"custom_times": "Proposer des horaires personnalisés"
 			},
 			"bookings": {
 				"read": "Consulter",
@@ -2169,7 +2172,8 @@
 				"invite_admin": "Inviter des administrateurs",
 				"update_role": "Attribuer des rôles",
 				"archive": "Archiver et restaurer",
-				"password": "Réinitialiser les mots de passe"
+				"password": "Réinitialiser les mots de passe",
+				"reset_mfa": "Récupérer le MFA local"
 			},
 			"roles": {
 				"manage": "Gérer",
@@ -2228,8 +2232,20 @@
 				"use": "Accéder en tant qu’utilisateur",
 				"audit": "Consulter le journal de sécurité"
 			},
-			"dynamic_links.create": "Créer des liens de groupe à usage unique",
-			"members.reset_mfa": "Récupérer le MFA local"
+			"dynamic_links": {
+				"create": "Créer des liens de groupe à usage unique"
+			},
+			"team_event_types": {
+				"read": "Consulter",
+				"create": "Créer",
+				"update": "Modifier",
+				"delete": "Supprimer",
+				"links": "Générer des liens uniques",
+				"custom_times": "Proposer des horaires personnalisés"
+			},
+			"logs": {
+				"read": "Consulter les journaux et l’audit"
+			}
 		},
 		"scope": {
 			"none": "Aucun accès",
@@ -2490,5 +2506,34 @@
 		"phone": "Appel téléphonique",
 		"attendeePhone": "Téléphone du participant",
 		"loadError": "Impossible de charger les préférences. Réessayez avant de créer le lien."
+	}
+,
+	"agentReview": {
+		"companyTitle": "Exiger la validation des modifications sensibles des agents",
+		"companyHint": "Si activé, chacun doit valider dans Calnode les modifications de configuration et d’administration. Sinon, chaque personne choisit. La planification courante reste inchangée.",
+		"preferencesTitle": "Validation des actions des agents",
+		"preferencesHint": "Votre client MCP gère la validation de la planification courante. Ces paramètres ajoutent une validation Calnode pour la configuration et l’administration. La saisie des secrets et les vérifications de sécurité restent interactives.",
+		"personalTitle": "Valider les modifications sensibles dans Calnode",
+		"personalHint": "Désactivez uniquement si votre client fournit la validation souhaitée. Cela n’accorde aucun droit supplémentaire.",
+		"enforced": "Votre entreprise exige la validation dans Calnode.",
+		"saved": "Préférence enregistrée",
+		"recent": "Modifications récentes des agents",
+		"title": "Valider les modifications de l’agent",
+		"reviewHint": "Vérifiez les modifications exactes proposées. La validation n’accorde aucun droit supplémentaire. Une ressource modifiée ou une connexion expirée ou révoquée nécessite une nouvelle proposition.",
+		"expires": "Expiration",
+		"before": "État actuel",
+		"proposed": "Champs proposés",
+		"results": "Résultats",
+		"batchHint": "Le lot s’arrête au premier échec. Les opérations déjà réussies restent appliquées. Vérifiez les résultats avant de réessayer. Aucune réservation existante n’est importée.",
+		"reject": "Refuser",
+		"approve": "Approuver ces modifications",
+		"confirmHint": "Appliquer cette proposition exacte avec les droits actuels de la connexion d’origine ? Ces modifications peuvent affecter les futures réservations et les services externes.",
+		"status": {
+			"pending": "En attente de validation",
+			"executing": "En cours — ne pas réessayer",
+			"completed": "Terminé",
+			"partial": "Partiellement terminé",
+			"rejected": "Refusé"
+		}
 	}
 }

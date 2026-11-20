@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"reflect"
 	"runtime"
@@ -18,10 +21,10 @@ import (
 // handlers fail closed; the server contract test keeps the inventory complete.
 var handlerPermissions = func() map[string]string {
 	groups := map[string]string{
-		"profile.read":          "GetMe ListDirectoryUsers GetMeetingDefaults GetAuthSecurity ListMyIdentities",
+		"profile.read":          "GetMCPPreferences GetMCPChangeRequest ListMCPChangeRequests GetMCPIntegrationDraft GetMe ListDirectoryUsers GetMeetingDefaults GetAuthSecurity ListMyIdentities",
 		"dynamic_links.create":  "CreateDynamicLink DynamicLinkOptions",
 		"members.reset_mfa":     "ResetUserMFA",
-		"profile.update":        "PutMeetingDefaults BeginTOTP ConfirmTOTP DeleteAuthFactor GenerateRecoveryCodes BeginPasskeyRegistration FinishPasskeyRegistration PatchMe UploadAvatar DeleteAvatar ChangePassword RevokeAllSessions StopImpersonation",
+		"profile.update":        "PutMCPPreferences DecideMCPChangeRequest PutMeetingDefaults BeginTOTP ConfirmTOTP DeleteAuthFactor GenerateRecoveryCodes BeginPasskeyRegistration FinishPasskeyRegistration PatchMe UploadAvatar DeleteAvatar ChangePassword RevokeAllSessions StopImpersonation",
 		"members.password":      "AdminSetPassword",
 		"members.invite_member": "CreateInvite ListInvites RevokeInvite ResendInvite",
 		"members.read":          "ListUsers ListUserUpcomingBookings",
@@ -95,6 +98,18 @@ func (h *Handler) authorizedCall(w http.ResponseWriter, r *http.Request, u AuthU
 		return
 	}
 	p, known := handlerPermissions[name]
+	if name == "ListEventTypes" && !u.Permissions.Has(p) && u.Permissions.Has("team_event_types.read") {
+		p = "team_event_types.read"
+	}
+	var eventTarget string
+	if known && strings.HasPrefix(p, "event_types.") {
+		var err error
+		p, eventTarget, err = h.eventRequestPermission(r, p, name)
+		if err != nil {
+			h.writeError(w, 400, err.Error())
+			return
+		}
+	}
 	if known && u.ImpersonatorID != "" && name != "StopImpersonation" && (!access.Delegable(access.Full()).Has(p) || p == "profile.update" || p == "integrations.update" || (strings.HasPrefix(p, "webhooks.") && p != "webhooks.read" && p != "webhooks.deliveries")) {
 		h.writeError(w, 403, "exit impersonation before changing credentials, connections, or security settings")
 		return
@@ -107,7 +122,11 @@ func (h *Handler) authorizedCall(w http.ResponseWriter, r *http.Request, u AuthU
 	} else if name != "Reauthenticate" && name != "ClaimOwnership" && name != "GetPermissionCatalog" {
 		if !u.Permissions.Has(p) {
 			h.logger.WarnContext(r.Context(), "permission denied", "actor_user_id", u.ID, "credential_id", u.CredentialID, "permission", p, "operation", name)
-			h.writeError(w, 403, "permission required: "+p)
+			if strings.HasPrefix(p, "team_event_types.") && eventTarget != "" {
+				h.writeError(w, 404, "event type not found")
+			} else {
+				h.writeError(w, 403, "permission required: "+p)
+			}
 			return
 		}
 		if u.CredentialID != "" && !access.Delegable(access.Full()).Has(p) {
@@ -117,30 +136,42 @@ func (h *Handler) authorizedCall(w http.ResponseWriter, r *http.Request, u AuthU
 		scope := u.Permissions[p]
 		id := r.PathValue("id")
 		slug := r.PathValue("slug")
-		if strings.HasPrefix(p, "event_types.") {
-			target := slug
-			if target == "" && (name == "CreateSingleUseLink" || name == "ListSingleUseLinks") {
-				target = id
-			}
-			if name == "RevokeSingleUseLink" {
-				_ = h.db.QueryRowContext(r.Context(), `SELECT event_type_id FROM single_use_tokens WHERE token=?`, r.PathValue("token")).Scan(&target)
-			}
-			allowed := true
-			if target != "" {
-				if p == "event_types.read" {
-					allowed = access.EventAllowed(r.Context(), h.db, u.ID, scope, target)
-				} else {
-					allowed = access.EventManageAllowed(r.Context(), h.db, u.ID, scope, target)
-				}
-			}
-			if !allowed {
+		if strings.HasPrefix(p, "event_types.") || strings.HasPrefix(p, "team_event_types.") {
+			if eventTarget != "" && !access.EventActionAllowed(r.Context(), h.db, u.ID, u.Permissions, strings.TrimPrefix(strings.TrimPrefix(p, "team_event_types."), "event_types."), eventTarget) {
 				h.writeError(w, 404, "event type not found")
 				return
 			}
+			if p == "team_event_types.create" && eventTarget == "" {
+				var body struct {
+					TeamID string `json:"team_id"`
+				}
+				raw, _ := io.ReadAll(r.Body)
+				r.Body = io.NopCloser(bytes.NewReader(raw))
+				_ = json.Unmarshal(raw, &body)
+				var n int
+				if h.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM users u WHERE id=? AND (is_admin=1 OR is_owner=1 OR EXISTS(SELECT 1 FROM team_members tm WHERE tm.user_id=u.id AND tm.team_id=? AND tm.role='owner'))`, u.ID, body.TeamID).Scan(&n) != nil || n == 0 {
+					h.writeError(w, 403, "admin or team head access required")
+					return
+				}
+				if scope != "all" {
+					if h.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM team_members WHERE team_id=? AND user_id=?`, body.TeamID, u.ID).Scan(&n) != nil || n == 0 {
+						h.writeError(w, 403, "destination team is outside the connection scope")
+						return
+					}
+				}
+			}
 		}
+
 		if strings.HasPrefix(p, "bookings.") || strings.HasPrefix(p, "notes.") || strings.HasPrefix(p, "transcripts.") {
 			if id != "" && !access.BookingAllowed(r.Context(), h.db, u.ID, scope, id) {
 				h.writeError(w, 404, "booking not found")
+				return
+			}
+		}
+		if p == "teams.update" && id != "" {
+			var n int
+			if h.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM users u WHERE id=? AND archived_at IS NULL AND (is_admin=1 OR is_owner=1 OR EXISTS(SELECT 1 FROM team_members tm WHERE tm.user_id=u.id AND tm.team_id=? AND tm.role='owner'))`, u.ID, id).Scan(&n) != nil || n == 0 {
+				h.writeError(w, 403, "admin or team head access required")
 				return
 			}
 		}
@@ -165,7 +196,7 @@ func (h *Handler) authorizedCall(w http.ResponseWriter, r *http.Request, u AuthU
 		if p != "profile.read" && p != "profile.update" {
 			u.IsAdmin = scope == "all"
 		}
-		if (strings.HasPrefix(p, "teams.") && scope == "team" && id != "") || strings.HasPrefix(p, "recordings.") || (strings.HasPrefix(p, "event_types.") && scope == "team" && (slug != "" || name == "CreateSingleUseLink")) {
+		if (strings.HasPrefix(p, "team_event_types.") && (eventTarget != "" || p == "team_event_types.create")) || ((p == "event_types.links" || p == "event_types.custom_times") && eventTarget != "") || (strings.HasPrefix(p, "teams.") && scope == "team" && id != "") || strings.HasPrefix(p, "recordings.") || (strings.HasPrefix(p, "event_types.") && scope == "team" && (slug != "" || name == "CreateSingleUseLink")) {
 			u.IsAdmin = true
 		}
 	}
@@ -255,4 +286,36 @@ func (h *Handler) ListSecurityAudit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.writeJSON(w, 200, map[string]any{"items": items})
+}
+
+func (h *Handler) eventRequestPermission(r *http.Request, p, name string) (string, string, error) {
+	target := r.PathValue("slug")
+	if name == "CreateSingleUseLink" || name == "ListSingleUseLinks" {
+		target = r.PathValue("id")
+	}
+	if name == "RevokeSingleUseLink" {
+		_ = h.db.QueryRowContext(r.Context(), `SELECT event_type_id FROM single_use_tokens WHERE token=?`, r.PathValue("token")).Scan(&target)
+	}
+	if name == "CreateSingleUseLink" || name == "CreateEventType" {
+		raw, err := io.ReadAll(io.LimitReader(r.Body, 65537))
+		if err != nil {
+			return p, target, err
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		if len(raw) > 65536 {
+			return p, target, errors.New("request too large")
+		}
+		var body map[string]json.RawMessage
+		if len(raw) > 0 && json.Unmarshal(raw, &body) != nil {
+			return p, target, errors.New("invalid JSON")
+		}
+		if name == "CreateSingleUseLink" && len(body["custom_slots"]) > 0 && string(body["custom_slots"]) != "null" {
+			p = "event_types.custom_times"
+		}
+		var team string
+		if name == "CreateEventType" && json.Unmarshal(body["team_id"], &team) == nil && team != "" {
+			return "team_event_types.create", target, nil
+		}
+	}
+	return access.EventPermission(r.Context(), h.db, p, target), target, nil
 }

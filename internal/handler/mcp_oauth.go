@@ -38,10 +38,11 @@ const (
 // have full-workspace (admin/owner) access. Bound to the request context by
 // MCPCallerMiddleware so the tools can scope by role.
 type mcpCaller struct {
-	Permissions access.Grants
-	Operation   string
-	UserID      string
-	IsAdmin     bool // owner or admin → full workspace access
+	CredentialID string
+	Permissions  access.Grants
+	Operation    string
+	UserID       string
+	IsAdmin      bool // owner or admin → full workspace access
 }
 
 type mcpCallerKey struct{}
@@ -96,7 +97,7 @@ func (h *Handler) MCPCallerMiddleware(next http.Handler) http.Handler {
 			h.writeError(w, 401, "MCP credential rejected")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(withMCPCaller(r.Context(), mcpCaller{UserID: u.ID, Permissions: u.Permissions, IsAdmin: u.Permissions["bookings.read"] == "all"})))
+		next.ServeHTTP(w, r.WithContext(withMCPCaller(r.Context(), mcpCaller{CredentialID: u.CredentialID, UserID: u.ID, Permissions: u.Permissions, IsAdmin: u.Permissions["bookings.read"] == "all"})))
 	})
 }
 

@@ -7,6 +7,7 @@
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { ConfirmDialog } from '$lib/components/ui/confirm-dialog';
 	import * as Dialog from '$lib/components/ui/dialog';
+	import * as Select from '$lib/components/ui/select';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Switch } from '$lib/components/ui/switch';
 	import { Input } from '$lib/components/ui/input';
@@ -203,7 +204,7 @@
 	}
 
 	async function mintAndCopyOneTimeLink(et: EventType) {
-		if (mintingId) return;
+		if (mintingId || et.can_generate_links === false) return;
 		mintingId = et.id;
 		try {
 			const created = await api.post<SingleUseLink>(
@@ -319,7 +320,7 @@
 							class="flex w-full flex-col items-start rounded-sm px-2.5 py-2 text-left hover:bg-accent"
 							onclick={() => {
 								newMenuOpen = false;
-								oneTimeQuickSlug = items.find((i) => i.is_active && !i.archived)?.slug ?? '';
+								oneTimeQuickSlug = items.find((i) => i.is_active && !i.archived && i.can_generate_links !== false)?.slug ?? '';
 								oneTimeQuickOpen = true;
 							}}
 						>
@@ -439,7 +440,7 @@
 							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
 						</Button>
 
-						<Button type="button" variant="outline" size="sm" class="h-8 rounded-lg px-3" disabled={!et.is_active || !!et.archived} onclick={() => { customEvent = et; customOpen = true; }}>{$t('customTimes.title')}</Button>
+						<Button type="button" variant="outline" size="sm" class="h-8 rounded-lg px-3" disabled={et.can_offer_custom_times === false || !et.is_active || !!et.archived} onclick={() => { customEvent = et; customOpen = true; }}>{$t('customTimes.title')}</Button>
 						<Popover.Root open={openMenuSlug === et.slug} onOpenChange={(o) => (openMenuSlug = o ? et.slug : null)}>
 							<Popover.Trigger
 								class="inline-flex h-8 w-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground"
@@ -451,7 +452,7 @@
 								<button
 									type="button"
 									class="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-sm hover:bg-accent disabled:opacity-50"
-									disabled={!et.is_active || !!et.archived || mintingId === et.id}
+									disabled={et.can_generate_links === false || !et.is_active || !!et.archived || mintingId === et.id}
 									onclick={() => { openMenuSlug = null; mintAndCopyOneTimeLink(et); }}
 								>
 									Create & copy 1-time link
@@ -524,15 +525,14 @@
 		</Dialog.Header>
 		<div class="space-y-3 py-2">
 			<Label for="quick-onetime-et">Event type</Label>
-			<select
-				id="quick-onetime-et"
-				bind:value={oneTimeQuickSlug}
-				class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-			>
-				{#each items.filter((i) => i.is_active && !i.archived) as et (et.id)}
-					<option value={et.slug}>{et.name} ({et.duration_minutes}m)</option>
-				{/each}
-			</select>
+			<Select.Root type="single" bind:value={oneTimeQuickSlug}>
+                <Select.Trigger id="quick-onetime-et" class="w-full justify-between">{items.find(i=>i.slug===oneTimeQuickSlug)?.name ?? '—'}</Select.Trigger>
+                <Select.Content class="min-w-(--bits-select-anchor-width)">
+                    {#each items.filter(i=>i.is_active && !i.archived && i.can_generate_links !== false) as et (et.id)}
+                        <Select.Item value={et.slug}>{et.name} ({et.duration_minutes}m)</Select.Item>
+                    {/each}
+                </Select.Content>
+            </Select.Root>
 		</div>
 		<Dialog.Footer>
 			<Button variant="ghost" onclick={() => (oneTimeQuickOpen = false)}>Cancel</Button>
@@ -562,7 +562,7 @@
 
 		<div class="space-y-4 py-2">
 			{#if linkEventType}
-				<Button class="w-full" onclick={() => linkEventType && mintAndCopyOneTimeLink(linkEventType)} disabled={!!mintingId}>
+				<Button class="w-full" onclick={() => linkEventType && mintAndCopyOneTimeLink(linkEventType)} disabled={!!mintingId || linkEventType.can_generate_links === false}>
 					{mintingId ? 'Generating...' : 'Generate & Copy New 1-Time Link'}
 				</Button>
 			{/if}
