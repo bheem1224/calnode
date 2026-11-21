@@ -194,7 +194,7 @@ func (h *Handler) ListSingleUseLinks(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.db.QueryContext(r.Context(), `
 		SELECT id, token, event_type_id, created_by_user_id,
-		       expires_at, used_at, booking_id, created_at
+		       expires_at, used_at, booking_id, created_at, custom_slots_json
 		FROM single_use_tokens
 		WHERE event_type_id = ?
 		ORDER BY created_at DESC`, etID)
@@ -208,14 +208,17 @@ func (h *Handler) ListSingleUseLinks(w http.ResponseWriter, r *http.Request) {
 	links := []singleUseLinkJSON{}
 	for rows.Next() {
 		var item singleUseLinkJSON
-		var expiresAt, usedAt, bookingID sql.NullString
+		var expiresAt, usedAt, bookingID, customSlots sql.NullString
 		if err := rows.Scan(
 			&item.ID, &item.Token, &item.EventTypeID, &item.CreatedByUserID,
-			&expiresAt, &usedAt, &bookingID, &item.CreatedAt,
+			&expiresAt, &usedAt, &bookingID, &item.CreatedAt, &customSlots,
 		); err != nil {
 			h.logger.ErrorContext(r.Context(), "list single-use links: scan", "error", err)
 			h.writeError(w, http.StatusInternalServerError, "internal error")
 			return
+		}
+		if customSlots.Valid {
+			_ = json.Unmarshal([]byte(customSlots.String), &item.CustomSlots)
 		}
 		item.URL = h.singleUseURL(item.Token)
 		if expiresAt.Valid {

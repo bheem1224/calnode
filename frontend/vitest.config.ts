@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 export default defineConfig({
 	plugins: [tailwindcss(), svelte({configFile:false,preprocess:vitePreprocess()})],
 	optimizeDeps: {
-		include: ['@lucide/svelte/icons/chevron-down', '@lucide/svelte/icons/chevron-up', 'svelte-sonner', 'tailwind-variants']
+		include: ['@lucide/svelte/icons/circle-help', '@lucide/svelte/icons/chevron-down', '@lucide/svelte/icons/chevron-up', '@lucide/svelte/icons/pencil', '@lucide/svelte/icons/trash-2', 'svelte-sonner', 'tailwind-variants']
 	},
 	resolve: {
 		alias: {

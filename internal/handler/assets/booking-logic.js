@@ -139,7 +139,13 @@
   // consolidated onto it. If these are ever unified, the shared version must take the
   // locale's list_separator/list_conjunction, not hardcode punctuation.
 
+  // Two visitor-local halves of the day; noon belongs to the second half.
+  function slotPeriod(start, timeZone) {
+    return Number(new Intl.DateTimeFormat('en-GB', {timeZone: timeZone, hour: 'numeric', hourCycle: 'h23'}).format(new Date(start))) < 12 ? 0 : 1;
+  }
+
   return {
+    slotPeriod: slotPeriod,
     dateKeyFromISO: dateKeyFromISO,
     ymd: ymd,
     groupSlotsByDay: groupSlotsByDay,

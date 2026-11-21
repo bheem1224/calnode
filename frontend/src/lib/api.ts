@@ -245,7 +245,10 @@ export type OAuthConnection = {
 	expires_at: string;
 };
 
+export type WebhookScope = {type: 'user'|'team'|'event'|'instance';id?:string};
+
 export type Webhook = {
+ scopes?: WebhookScope[] | null;
 	id: string;
 	url: string;
 	events: string[];

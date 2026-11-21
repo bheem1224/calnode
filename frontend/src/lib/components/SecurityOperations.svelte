@@ -1,4 +1,5 @@
 <script lang="ts">
+ import HelpTooltip from '$lib/components/HelpTooltip.svelte';
  import { onMount } from 'svelte';
  import { api } from '$lib/api';
  import { t } from '$lib/i18n';
@@ -12,7 +13,7 @@
  async function retry(){busy=true;try{await api.post('/v1/settings/security/jobs/'+encodeURIComponent(selected)+'/retry',{});open=false;await refresh();}catch(e){error=e instanceof Error?e.message:$t('securityOperations.retryError');}finally{busy=false;}}
 </script>
 <section class="space-y-4 rounded-xl border bg-card p-5" aria-labelledby="security-operations">
- <div class="flex flex-wrap items-center justify-between gap-3"><div><h3 id="security-operations" class="text-sm font-semibold">{$t('securityOperations.title')}</h3><p class="mt-1 text-xs text-muted-foreground">{$t('securityOperations.description')}</p></div><Button type="button" size="sm" variant="outline" onclick={refresh}>{$t('securityOperations.refresh')}</Button></div>
+ <div class="flex flex-wrap items-center justify-between gap-3"><div><div class="flex items-center gap-1"><h3 id="security-operations" class="text-sm font-semibold">{$t('securityOperations.title')}</h3><HelpTooltip label={$t('securityOperations.title')} text={$t('securityOperations.description')} /></div></div><Button type="button" size="sm" variant="outline" onclick={refresh}>{$t('securityOperations.refresh')}</Button></div>
  {#if error}<p role="alert" class="break-words text-sm text-destructive">{error}</p>{/if}
  {#if health}
   <p class="text-xs text-muted-foreground">{$t('securityOperations.counts',{pending:health.pending_jobs,failed:health.failed_confirmations})}</p>

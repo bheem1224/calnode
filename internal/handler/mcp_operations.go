@@ -121,7 +121,7 @@ func operationPermission(spec agentOperationSpec) string {
 		return "settings.read"
 	case "createAgentIntegrationDraft":
 		return "settings.update"
-	case "agentApplicationLogs", "ListSecurityAudit":
+	case "agentApplicationLogs":
 		return "logs.read"
 	}
 	return handlerPermissions[handlerName(spec.handler)]
@@ -273,6 +273,9 @@ func (h *Handler) checkAgentOperation(ctx context.Context, u AuthUser, op agentO
 		return spec, err
 	}
 	p := operationPermission(spec)
+	if handlerName(spec.handler) == "ListEventTypes" {
+		p = access.EventListPermission(u.Permissions)
+	}
 	if strings.HasPrefix(p, "event_types.") {
 		var target string
 		name := handlerName(spec.handler)
@@ -306,7 +309,7 @@ func (h *Handler) callAgentOperation(ctx context.Context, u AuthUser, op agentOp
 	}
 	w := httptest.NewRecorder()
 	switch handlerName(spec.handler) {
-	case "ListIdentityProviders", "createAgentIntegrationDraft", "agentApplicationLogs", "ListSecurityAudit", "importAgentEventType":
+	case "ListIdentityProviders", "createAgentIntegrationDraft", "agentApplicationLogs", "importAgentEventType":
 		spec.handler(w, r.WithContext(context.WithValue(ctx, ctxKeyUser, u)))
 	default:
 		h.authorizedCall(w, r, u, spec.handler)

@@ -337,3 +337,23 @@ func TestWorker_reminderEmailCarriesAbsoluteBranding(t *testing.T) {
 		t.Error("reminder HTML still contains a relative branding asset path")
 	}
 }
+
+func TestWorker_reminderUsesSavedHTMLAndReplyTo(t *testing.T) {
+	database, svc := setup(t)
+	ctx := context.Background()
+	for _, q := range []string{
+		`INSERT INTO event_types(id,user_id,slug,name,duration_minutes,html_reminder,reply_to)VALUES('html-reminder','host-01','html-reminder','Reminder meeting',30,'<p>Library reminder for {Scheduler}</p>','support@example.test')`,
+		`INSERT INTO bookings(id,event_type_id,host_id,start_at,end_at,status)VALUES('html-booking','html-reminder','host-01','2030-01-01T10:00:00Z','2030-01-01T10:30:00Z','confirmed')`,
+		`INSERT INTO booking_attendees(id,booking_id,name,email,iana_timezone,is_organizer)VALUES('html-attendee','html-booking','Alice','alice@example.test','UTC',1)`,
+		`INSERT INTO jobs(id,type,payload,run_at)VALUES('html-reminder-job','reminder.send','{"booking_id":"html-booking"}','2020-01-01T00:00:00Z')`,
+	} {
+		if _, err := database.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	capture := &captureMailer{}
+	worker.New(database, svc, slog.Default(), worker.WithMailer(capture)).Poll(ctx)
+	if len(capture.sent) != 1 || !strings.Contains(capture.sent[0].HTML, "Library reminder for Alice") || capture.sent[0].ReplyTo != "support@example.test" {
+		t.Fatalf("HTML reminder settings ignored: %+v", capture.sent)
+	}
+}

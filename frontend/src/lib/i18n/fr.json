@@ -2,6 +2,7 @@
 	"common": {
 		"loading": "Chargement…",
 		"saving": "Enregistrement…",
+		"helpFor": "Aide : {label}",
 		"save": "Enregistrer",
 		"cancel": "Annuler",
 		"close": "Fermer",
@@ -52,7 +53,8 @@
 		"undo": "Défaire",
 		"uploading": "Téléversement…",
 		"sending": "Envoi…",
-		"testing": "Test…"
+		"testing": "Test…",
+		"edit": "Modifier"
 	},
 	"layout": {
 		"bookingPage": "Ma page de réservation",
@@ -2119,7 +2121,7 @@
 	"permissions": {
 		"groups": {
 			"profile": "Profil",
-			"event_types": "Types d’événement",
+			"event_types": "Types de rendez-vous personnels",
 			"bookings": "Réservations",
 			"availability": "Disponibilités",
 			"members": "Membres",
@@ -2230,7 +2232,7 @@
 			},
 			"impersonation": {
 				"use": "Accéder en tant qu’utilisateur",
-				"audit": "Consulter le journal de sécurité"
+				"audit": "Voir l’historique des usurpations"
 			},
 			"dynamic_links": {
 				"create": "Créer des liens de groupe à usage unique"
@@ -2254,6 +2256,8 @@
 			"all": "Toute l’instance"
 		},
 		"presets": {
+			"event_manager": "Gestion des rendez-vous",
+			"workspace_operator": "Administration de l’espace",
 			"assistant": "Assistant de planification",
 			"reporting": "Rapports en lecture seule",
 			"invitations": "Automatisation des invitations",
@@ -2266,6 +2270,7 @@
 		"clear": "Effacer la sélection",
 		"search": "Rechercher des permissions",
 		"loadError": "Impossible de charger les permissions.",
+		"teamConfigurationHint": "La configuration des rendez-vous d’équipe réutilisables exige les droits actuels de responsable d’équipe ou d’administration de l’instance, ainsi que ces autorisations. Les membres autorisés peuvent consulter les rendez-vous, générer des liens uniques et proposer des créneaux personnalisés.",
 		"roleHint": "Choisissez chaque action et son périmètre. Les actions non sélectionnées sont refusées. Chaque utilisateur conserve l’accès à son propre profil.",
 		"credentialHint": "Cet accès est limité aux permissions sélectionnées et à votre rôle actuel. Les opérations sensibles du compte ne peuvent pas être déléguées.",
 		"customRole": "Rôle personnalisé",
@@ -2361,6 +2366,7 @@
 		"qrAlt": "Scannez ce code QR avec votre application d’authentification",
 		"confirmAuthenticator": "Confirmer l’application",
 		"addAuthenticator": "Configurer l’application",
+		"codesRemaining": "{count} codes restants",
 		"recoveryCodes": "Codes de récupération",
 		"recoveryHint": "{count} codes restants. Chaque code est à usage unique. Les nouveaux codes remplacent les anciens.",
 		"generateCodes": "Générer des codes de récupération",
@@ -2506,8 +2512,7 @@
 		"phone": "Appel téléphonique",
 		"attendeePhone": "Téléphone du participant",
 		"loadError": "Impossible de charger les préférences. Réessayez avant de créer le lien."
-	}
-,
+	},
 	"agentReview": {
 		"companyTitle": "Exiger la validation des modifications sensibles des agents",
 		"companyHint": "Si activé, chacun doit valider dans Calnode les modifications de configuration et d’administration. Sinon, chaque personne choisit. La planification courante reste inchangée.",
@@ -2535,5 +2540,41 @@
 			"partial": "Partiellement terminé",
 			"rejected": "Refusé"
 		}
+	},
+	"templateLibrary": {
+		"title": "Modèles d’e-mail enregistrés",
+		"hint": "Créez et gérez des modèles réutilisables. Les modèles par défaut s’appliquent aux nouveaux types d’événements ; les e-mails existants conservent leur copie.",
+		"create": "Nouveau modèle",
+		"search": "Rechercher des modèles",
+		"empty": "Aucun modèle correspondant.",
+		"save": "Enregistrer le modèle",
+		"default": "Par défaut pour les nouveaux événements",
+		"note": "Note mise en forme",
+		"deleteTitle": "Supprimer ce modèle d’e-mail ?",
+		"deleteHint": "Le modèle enregistré sera supprimé. Les e-mails des événements existants restent inchangés.",
+		"kinds": {
+			"confirmation": "Confirmation de réservation",
+			"cancellation": "Avis d’annulation",
+			"reschedule": "Avis de replanification",
+			"reminder": "E-mail de rappel"
+		}
+	},
+	"webhookScopes": {
+		"mine": "Toutes mes réunions",
+		"instance": "Toutes les réunions de l’instance",
+		"select": "Sélectionner les périmètres du webhook",
+		"selected": "{count} périmètres sélectionnés",
+		"search": "Rechercher des personnes, équipes ou événements",
+		"empty": "Aucun périmètre autorisé correspondant.",
+		"edit": "Modifier les périmètres du webhook",
+		"hint": "Choisissez un ou plusieurs périmètres. Les sélections qui se recoupent créent une seule notification. Les nouvelles tentatives peuvent la transmettre plusieurs fois. Seules les données autorisées par votre rôle actuel et les permissions enregistrées de ce webhook sont envoyées.",
+		"types": {
+			"user": "Personne",
+			"team": "Toutes les réunions d’équipe",
+			"event": "Type d’événement",
+			"instance": "Instance"
+		},
+		"account": "Réunions de ce compte",
+		"required": "Choisissez au moins un périmètre."
 	}
 }

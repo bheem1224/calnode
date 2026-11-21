@@ -39,6 +39,7 @@
 	// Admins can switch to every event type on the instance (?scope=all), the same way
 	// the bookings page offers "All bookings". Their default list stays their own.
 	const isAdmin = $derived($currentUser?.is_admin ?? false);
+	const canViewAll = $derived(isAdmin || $currentUser?.permissions?.['event_types.read'] === 'all' || !!$currentUser?.permissions?.['team_event_types.read']);
 	let scope = $state<'mine' | 'all' | string>('mine');
 
 	let filter = $state<'active' | 'archived'>('active');
@@ -49,7 +50,7 @@
 	});
 	const activeTeam = $derived(teams.find((t) => t.id === scope));
 	const canCreateInScope = $derived(
-		scope === 'mine' || scope === 'all' || isAdmin || activeTeam?.my_role === 'owner'
+		(scope === 'mine' || scope === 'all') ? !!$currentUser?.permissions?.['event_types.create'] : !!$currentUser?.permissions?.['team_event_types.create'] && (isAdmin || activeTeam?.my_role === 'owner')
 	);
 	const visible = $derived(scopedItems.filter((et) => (filter === 'archived' ? !!et.archived : !et.archived)));
 	const archivedCount = $derived(scopedItems.filter((et) => et.archived).length);
@@ -63,8 +64,9 @@
 
 	async function load() {
 		try {
+			if ($currentUser?.permissions && !$currentUser.permissions['event_types.read'] && $currentUser.permissions['team_event_types.read'] && scope === 'mine') scope = 'all';
 			const [res, teamsRes] = await Promise.all([
-				api.get<{ items: EventType[] }>(scope === 'all' && isAdmin ? '/v1/event-types?scope=all' : '/v1/event-types'),
+				api.get<{ items: EventType[] }>(scope === 'all' ? '/v1/event-types?scope=all' : '/v1/event-types'),
 				api.get<{ items: Team[] }>('/v1/teams').catch(() => ({ items: [] as Team[] })),
 			]);
 			items = res.items;
@@ -334,7 +336,7 @@
 	</div>
 </div>
 
-{#if teams.length > 0 || isAdmin}
+{#if teams.length > 0 || canViewAll}
 	<div class="mb-4 inline-flex flex-wrap rounded-md border p-0.5">
 		<button
 			class="rounded px-3 py-1.5 text-sm font-medium transition-colors {scope === 'mine' ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}"
@@ -346,7 +348,7 @@
 				onclick={() => setScope(tm.id)}
 			>{tm.name}</button>
 		{/each}
-		{#if isAdmin}
+		{#if canViewAll}
 			<button
 				class="rounded px-3 py-1.5 text-sm font-medium transition-colors {scope === 'all' ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}"
 				onclick={() => setScope('all')}

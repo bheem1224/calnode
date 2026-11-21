@@ -12,7 +12,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); currentUser.set(originalUser)
 describe('scoped credential controls', () => {
  test('only shows delegable permissions within the current role ceiling', async () => {
   currentUser.set({id:'reader',email:'reader@example.com',name:'Reader',booking_accent:'neutral',timezone:'UTC',time_format:'12h',week_start:1,date_format:'mdy',is_admin:false,is_owner:false,role:'member',notify_confirmation:true,notify_cancellation:true,notify_reschedule:true,notify_reminder:true,notify_host_booking:true,notify_host_cancel:true,notify_host_reschedule:true,permissions: { 'bookings.read':'own', 'api_keys.create':'own' }} satisfies User);
-  vi.spyOn(api, 'get').mockResolvedValue({items:[
+  vi.spyOn(api, 'get').mockResolvedValue({permissions:{'bookings.read':'own','api_keys.create':'own'},delegable:{'bookings.read':'own'},presets:{},items:[
    { id:'bookings.read',group:'bookings',scopes:['own','team','all'],delegable:true },
    { id:'api_keys.create',group:'api_keys',scopes:['own'],delegable:false },
    { id:'webhooks.create',group:'webhooks',scopes:['own'],delegable:true }

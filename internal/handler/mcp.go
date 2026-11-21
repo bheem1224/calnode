@@ -11,6 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/booking"
 	"github.com/calnode/calnode/internal/buildinfo"
 )
@@ -117,17 +118,12 @@ func (h *Handler) mcpListEventTypes(ctx context.Context, _ *mcp.CallToolRequest,
 	}
 	ctx = authorizedCtx
 
-	scope, teamScope, userID := "all", "all", ""
+	grants, userID := access.Full(), ""
 	if c, ok := mcpCallerFromContext(ctx); ok && c.Permissions != nil {
-		scope = c.Permissions["event_types.read"]
-		teamScope = c.Permissions["team_event_types.read"]
-		userID = c.UserID
+		grants, userID = c.Permissions, c.UserID
 	}
-	rows, err := h.db.QueryContext(ctx, `
-		SELECT slug, name, duration_minutes, location_type, COALESCE(description, ''), max_per_day, max_per_week
-		FROM event_types
-		WHERE is_active=1 AND is_public=1 AND ((COALESCE(team_id,'')='' AND (?='all' OR (?<>'' AND (user_id=? OR id IN(SELECT event_type_id FROM event_type_hosts WHERE user_id=?))))) OR (COALESCE(team_id,'')<>'' AND (?='all' OR (?='team' AND team_id IN(SELECT team_id FROM team_members WHERE user_id=?)))))
-		ORDER BY name`, scope, scope, userID, userID, teamScope, teamScope, userID)
+	filter, args := access.EventReadFilter(userID, grants, true)
+	rows, err := h.db.QueryContext(ctx, `SELECT slug, name, duration_minutes, location_type, COALESCE(description, ''), max_per_day, max_per_week FROM event_types WHERE is_active=1 AND is_public=1 AND `+filter+` ORDER BY name`, args...)
 	if err != nil {
 		return nil, listEventTypesOut{}, fmt.Errorf("list event types: %w", err)
 	}

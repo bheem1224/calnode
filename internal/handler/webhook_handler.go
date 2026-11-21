@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,10 +72,11 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 
 	var req struct {
-		URL         string   `json:"url"`
-		Events      []string `json:"events"`
-		Fields      []string `json:"fields"` // optional payload field selection; nil = default set
-		EventTypeID *string  `json:"event_type_id"`
+		URL         string           `json:"url"`
+		Events      []string         `json:"events"`
+		Fields      []string         `json:"fields"` // optional payload field selection; nil = default set
+		EventTypeID *string          `json:"event_type_id"`
+		Scopes      *[]webhook.Scope `json:"scopes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -116,34 +118,21 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wh, secret, err := h.webhookSvc.Create(r.Context(), user.ID, req.URL, req.Events)
+	if req.Scopes != nil && req.EventTypeID != nil && *req.EventTypeID != "" {
+		h.writeError(w, 400, "use scopes or event_type_id, not both")
+		return
+	}
+	if err := h.validateWebhookScopes(r.Context(), user, req.Scopes, webhookScopeEvents(req.Events, req.Fields)); err != nil {
+		h.writeError(w, 403, err.Error())
+		return
+	}
+	wh, secret, err := h.webhookSvc.CreateConfigured(r.Context(), user.ID, req.URL, req.Events, webhook.Options{Fields: req.Fields, EventTypeID: req.EventTypeID, Scopes: req.Scopes, Permissions: user.Permissions})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "create webhook", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if _, policyErr := h.db.ExecContext(r.Context(), `UPDATE webhooks SET permissions_json=? WHERE id=?`, user.Permissions.JSON(), wh.ID); policyErr != nil {
-		_ = h.webhookSvc.Delete(r.Context(), user.ID, wh.ID)
-		h.writeError(w, 500, "could not save webhook permissions")
-		return
-	}
 	h.securityAudit(r.Context(), user.ID, "webhook.create", wh.ID, map[string]any{"events": req.Events})
-	if req.EventTypeID != nil && *req.EventTypeID != "" {
-		if err := h.webhookSvc.SetEventTypeID(r.Context(), user.ID, wh.ID, req.EventTypeID); err != nil {
-			h.logger.ErrorContext(r.Context(), "create webhook: set event_type_id", "error", err)
-		} else {
-			wh.EventTypeID = req.EventTypeID
-		}
-	}
-	// Apply the field selection (if any) as a follow-up update so Create keeps its
-	// stable signature; unknown keys are filtered out.
-	if req.Fields != nil {
-		if err := h.webhookSvc.Update(r.Context(), user.ID, wh.ID, nil, &req.Fields); err != nil {
-			h.logger.ErrorContext(r.Context(), "create webhook: set fields", "error", err)
-		} else {
-			wh.Fields = webhook.ValidFields(req.Fields)
-		}
-	}
 
 	h.writeJSON(w, http.StatusCreated, map[string]any{
 		"id":            wh.ID,
@@ -151,6 +140,7 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 		"events":        wh.Events,
 		"fields":        wh.Fields,
 		"event_type_id": wh.EventTypeID,
+		"scopes":        wh.Scopes,
 		"secret":        secret,
 		"is_active":     wh.IsActive,
 		"created_at":    wh.CreatedAt.UTC().Format(time.RFC3339),
@@ -175,9 +165,10 @@ func (h *Handler) PatchWebhook(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 
 	var req struct {
-		Events      *[]string `json:"events"`
-		Fields      *[]string `json:"fields"`
-		EventTypeID *string   `json:"event_type_id"`
+		Events      *[]string        `json:"events"`
+		Fields      *[]string        `json:"fields"`
+		EventTypeID *string          `json:"event_type_id"`
+		Scopes      *[]webhook.Scope `json:"scopes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -217,26 +208,64 @@ func (h *Handler) PatchWebhook(w http.ResponseWriter, r *http.Request) {
 	if !h.validateWebhookDataGrants(w, user, events, fields) {
 		return
 	}
-	if err := h.webhookSvc.Update(r.Context(), resourceOwner, id, req.Events, req.Fields); err != nil {
-		if errors.Is(err, webhook.ErrNotFound) {
-			h.writeError(w, http.StatusNotFound, "webhook not found")
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "update webhook", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
+
+	if req.Scopes != nil && req.EventTypeID != nil && *req.EventTypeID != "" {
+		h.writeError(w, 400, "use scopes or event_type_id, not both")
 		return
 	}
-	if req.EventTypeID != nil {
-		if err := h.webhookSvc.SetEventTypeID(r.Context(), resourceOwner, id, req.EventTypeID); err != nil {
-			if errors.Is(err, webhook.ErrNotFound) {
-				h.writeError(w, http.StatusNotFound, "webhook not found")
-				return
-			}
-			h.logger.ErrorContext(r.Context(), "update webhook: set event_type_id", "error", err)
-			h.writeError(w, http.StatusInternalServerError, "internal error")
+	// Validate against the owner's saved ceiling as well as the current editor.
+	var raw string
+	if h.db.QueryRowContext(r.Context(), `SELECT permissions_json FROM webhooks WHERE id=?`, id).Scan(&raw) != nil {
+		h.writeError(w, 500, "could not load webhook permissions")
+		return
+	}
+	current, err := access.Load(r.Context(), h.db, resourceOwner)
+	if err != nil {
+		h.writeError(w, 403, "webhook owner is unavailable")
+		return
+	}
+	effective := access.Intersect(current, access.Parse(raw))
+	owner := AuthUser{ID: resourceOwner, Permissions: effective}
+
+	var existingEvents, existingFields, existingScopes sql.NullString
+	if h.db.QueryRowContext(r.Context(), `SELECT events,fields,scopes_json FROM webhooks WHERE id=?`, id).Scan(&existingEvents, &existingFields, &existingScopes) != nil {
+		h.writeError(w, 500, "could not load subscription")
+		return
+	}
+	if req.Events == nil {
+		_ = json.Unmarshal([]byte(existingEvents.String), &events)
+	}
+	if req.Fields == nil {
+		_ = json.Unmarshal([]byte(existingFields.String), &fields)
+	}
+	validatedScopes := req.Scopes
+	if validatedScopes == nil && req.EventTypeID == nil && existingScopes.Valid {
+		var saved []webhook.Scope
+		if json.Unmarshal([]byte(existingScopes.String), &saved) != nil {
+			h.writeError(w, 500, "invalid saved scopes")
+			return
+		}
+		validatedScopes = &saved
+	}
+	if !h.validateWebhookDataGrants(w, user, events, fields) || !h.validateWebhookDataGrants(w, owner, events, fields) {
+		return
+	}
+	for _, principal := range []AuthUser{user, owner} {
+		if err = h.validateWebhookScopes(r.Context(), principal, validatedScopes, webhookScopeEvents(events, fields)); err != nil {
+			h.writeError(w, 403, err.Error())
 			return
 		}
 	}
+
+	if err := h.webhookSvc.UpdateConfig(r.Context(), resourceOwner, id, req.Events, req.Fields, req.EventTypeID, req.Scopes); err != nil {
+		if errors.Is(err, webhook.ErrNotFound) {
+			h.writeError(w, 404, "webhook not found")
+		} else {
+			h.writeError(w, 500, "could not update webhook")
+		}
+		return
+	}
+
 	h.securityAudit(r.Context(), user.ID, "webhook.update", id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -267,6 +296,7 @@ func (h *Handler) ListWebhooks(w http.ResponseWriter, r *http.Request) {
 			"events":        wh.Events,
 			"fields":        wh.Fields,
 			"event_type_id": wh.EventTypeID,
+			"scopes":        wh.Scopes,
 			"is_active":     wh.IsActive,
 			"created_at":    wh.CreatedAt.UTC().Format(time.RFC3339),
 		}
@@ -376,7 +406,7 @@ func (h *Handler) validateWebhookDataGrants(w http.ResponseWriter, u AuthUser, e
 		case strings.HasPrefix(event, "single_use_link."):
 			permission = "event_types.links"
 		}
-		if !u.Permissions.Has(permission) {
+		if !u.Permissions.Has(permission) && !(permission == "event_types.links" && u.Permissions.Has("team_event_types.links")) {
 			h.writeError(w, 403, "permission required for webhook data: "+permission)
 			return false
 		}

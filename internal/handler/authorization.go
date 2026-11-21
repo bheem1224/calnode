@@ -21,10 +21,10 @@ import (
 // handlers fail closed; the server contract test keeps the inventory complete.
 var handlerPermissions = func() map[string]string {
 	groups := map[string]string{
-		"profile.read":          "GetMCPPreferences GetMCPChangeRequest ListMCPChangeRequests GetMCPIntegrationDraft GetMe ListDirectoryUsers GetMeetingDefaults GetAuthSecurity ListMyIdentities",
+		"profile.read":          "ListEmailTemplates PreviewSavedEmailTemplate GetMCPPreferences GetMCPChangeRequest ListMCPChangeRequests GetMCPIntegrationDraft GetMe ListDirectoryUsers GetMeetingDefaults GetAuthSecurity ListMyIdentities",
 		"dynamic_links.create":  "CreateDynamicLink DynamicLinkOptions",
 		"members.reset_mfa":     "ResetUserMFA",
-		"profile.update":        "PutMCPPreferences DecideMCPChangeRequest PutMeetingDefaults BeginTOTP ConfirmTOTP DeleteAuthFactor GenerateRecoveryCodes BeginPasskeyRegistration FinishPasskeyRegistration PatchMe UploadAvatar DeleteAvatar ChangePassword RevokeAllSessions StopImpersonation",
+		"profile.update":        "CreateEmailTemplate UpdateEmailTemplate DeleteEmailTemplate PutMCPPreferences DecideMCPChangeRequest PutMeetingDefaults BeginTOTP ConfirmTOTP DeleteAuthFactor GenerateRecoveryCodes BeginPasskeyRegistration FinishPasskeyRegistration PatchMe UploadAvatar DeleteAvatar ChangePassword RevokeAllSessions StopImpersonation",
 		"members.password":      "AdminSetPassword",
 		"members.invite_member": "CreateInvite ListInvites RevokeInvite ResendInvite",
 		"members.read":          "ListUsers ListUserUpcomingBookings",
@@ -33,7 +33,8 @@ var handlerPermissions = func() map[string]string {
 		"roles.manage":          "CreateRole UpdateRole DeleteRole",
 		"roles.read":            "ListRoles",
 		"impersonation.use":     "StartImpersonation",
-		"impersonation.audit":   "ListImpersonationLogs ListSecurityAudit",
+		"impersonation.audit":   "ListImpersonationLogs",
+		"logs.read":             "ListSecurityAudit",
 		"settings.security":     "TransferOwnership ClaimOwnership Reauthenticate GetSigninPolicy PutSigninPolicy GetSecurityOperations RetrySecurityJob ListIdentityProviders SaveIdentityProvider",
 		"teams.read":            "ListTeams GetTeam",
 		"teams.create":          "CreateTeam",
@@ -44,11 +45,11 @@ var handlerPermissions = func() map[string]string {
 		"settings.update":       "PatchEmailSettings TestEmailConnection SetupRSVPWebhook PatchGoogleSettings PutMicrosoftSettings PatchZoomSettings PatchLiveKitSettings PatchStorageSettings PatchNotetakerSettings PatchStripeSettings PatchTrackingSettings PatchLLMSettings TestLLMSettings",
 		"branding.read":         "GetBranding",
 		"branding.update":       "PatchBranding UploadBrandingLogo DeleteBrandingLogo UploadBrandingBanner DeleteBrandingBanner",
-		"event_types.read":      "ListEventTypes GetEventType ListEventTypeHosts ListQuestionsAdmin ListEmailTemplates ListSingleUseLinks PreviewBookingPage PreviewBookingSlots PreviewEmailTemplate",
+		"event_types.read":      "ListEventTypes GetEventType ListEventTypeHosts ListQuestionsAdmin PreviewBookingPage PreviewBookingSlots PreviewEmailTemplate",
 		"event_types.create":    "CreateEventType DuplicateEventType",
-		"event_types.update":    "PatchEventType TransferEventType SetEventTypeHosts SendTestEmail CreateEmailTemplate DeleteEmailTemplate CreateQuestion UpdateQuestion DeleteQuestion",
+		"event_types.update":    "PatchEventType TransferEventType SetEventTypeHosts SendTestEmail CreateQuestion UpdateQuestion DeleteQuestion",
 		"event_types.delete":    "DeleteEventType",
-		"event_types.links":     "CreateSingleUseLink RevokeSingleUseLink",
+		"event_types.links":     "CreateSingleUseLink ListSingleUseLinks RevokeSingleUseLink",
 		"availability.read":     "ListAvailabilityRules ListAvailabilityOverrides ListAvailabilitySchedules ListOOOEntries",
 		"availability.update":   "CreateAvailabilityRule UpdateAvailabilityRule DeleteAvailabilityRule CreateAvailabilityOverride UpdateAvailabilityOverride DeleteAvailabilityOverride DeleteAvailabilityOverrideGroup CreateAvailabilitySchedule PatchAvailabilitySchedule DeleteAvailabilitySchedule CreateOOOEntry UpdateOOOEntry DeleteOOOEntry",
 		"bookings.read":         "ListBookings GetBookingPrivate",
@@ -63,7 +64,7 @@ var handlerPermissions = func() map[string]string {
 		"notes.read":            "GetBookingNotes",
 		"notes.update":          "RegenerateBookingNotes",
 		"transcripts.read":      "GetBookingTranscript",
-		"webhooks.read":         "ListWebhooks",
+		"webhooks.read":         "ListWebhooks WebhookScopeOptions",
 		"webhooks.create":       "CreateWebhook",
 		"webhooks.update":       "PatchWebhook",
 		"webhooks.delete":       "DeleteWebhook",
@@ -98,8 +99,8 @@ func (h *Handler) authorizedCall(w http.ResponseWriter, r *http.Request, u AuthU
 		return
 	}
 	p, known := handlerPermissions[name]
-	if name == "ListEventTypes" && !u.Permissions.Has(p) && u.Permissions.Has("team_event_types.read") {
-		p = "team_event_types.read"
+	if name == "ListEventTypes" {
+		p = access.EventListPermission(u.Permissions)
 	}
 	var eventTarget string
 	if known && strings.HasPrefix(p, "event_types.") {
@@ -135,7 +136,6 @@ func (h *Handler) authorizedCall(w http.ResponseWriter, r *http.Request, u AuthU
 		}
 		scope := u.Permissions[p]
 		id := r.PathValue("id")
-		slug := r.PathValue("slug")
 		if strings.HasPrefix(p, "event_types.") || strings.HasPrefix(p, "team_event_types.") {
 			if eventTarget != "" && !access.EventActionAllowed(r.Context(), h.db, u.ID, u.Permissions, strings.TrimPrefix(strings.TrimPrefix(p, "team_event_types."), "event_types."), eventTarget) {
 				h.writeError(w, 404, "event type not found")
@@ -196,7 +196,7 @@ func (h *Handler) authorizedCall(w http.ResponseWriter, r *http.Request, u AuthU
 		if p != "profile.read" && p != "profile.update" {
 			u.IsAdmin = scope == "all"
 		}
-		if (strings.HasPrefix(p, "team_event_types.") && (eventTarget != "" || p == "team_event_types.create")) || ((p == "event_types.links" || p == "event_types.custom_times") && eventTarget != "") || (strings.HasPrefix(p, "teams.") && scope == "team" && id != "") || strings.HasPrefix(p, "recordings.") || (strings.HasPrefix(p, "event_types.") && scope == "team" && (slug != "" || name == "CreateSingleUseLink")) {
+		if (strings.HasPrefix(p, "team_event_types.") && (eventTarget != "" || p == "team_event_types.create")) || ((p == "event_types.links" || p == "event_types.custom_times") && eventTarget != "") || (strings.HasPrefix(p, "teams.") && scope == "team" && id != "") || strings.HasPrefix(p, "recordings.") {
 			u.IsAdmin = true
 		}
 	}
@@ -269,7 +269,7 @@ func (h *Handler) securityAudit(ctx context.Context, actor, action, target strin
 }
 func (h *Handler) GetPermissionCatalog(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
-	h.writeJSON(w, 200, map[string]any{"items": access.Catalog, "presets": map[string]access.Grants{"admin": access.Full(), "member": access.Member(false)}, "permissions": u.Permissions, "delegable": access.Delegable(u.Permissions)})
+	h.writeJSON(w, 200, map[string]any{"items": access.Catalog, "presets": access.Presets(u.Permissions), "permissions": u.Permissions, "delegable": access.Delegable(u.Permissions)})
 }
 func (h *Handler) ListSecurityAudit(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.QueryContext(r.Context(), `SELECT actor_user_id,action,target_id,details,created_at FROM security_audit_logs ORDER BY created_at DESC LIMIT 200`)

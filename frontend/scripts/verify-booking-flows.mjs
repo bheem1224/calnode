@@ -132,7 +132,16 @@ try {
                     root = surface === 'hosted' ? page : page.locator('calnode-booking');
                     await root.locator('.cd.available').first().waitFor();
                 }
-                async function choose() { await root.locator('.cd.available').first().click(); await root.locator('.slot-btn:not(.taken)').first().click(); }
+                async function choose() {
+                    // Tomorrow has both halves of the day regardless of the runner clock.
+                    await root.locator('.cd.available').nth(1).click();
+                    await root.locator('.slot-btn:not(.taken)').first().waitFor();
+                    const periods=root.locator('[data-period]');
+                    assert.ok(await periods.count()<=2,'Booking slots regressed to three periods');
+                    assert.ok(!(await periods.allTextContents()).some(label=>label.includes('Afternoon')),'Unexpected third period');
+                    await page.screenshot({path:join(screenshots,`calendar-${surface}-${width}-${theme}.png`),fullPage:true,animations:'disabled'});
+                    await root.locator('.slot-btn:not(.taken)').first().click();
+                }
                 async function identity(prefix) { await root.locator('#f-name').fill('Booking Test'); const email = `${prefix}-${bookings++}@example.test`; await root.locator('#f-email').fill(email); return email; }
                 async function submit() { const result = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/v1/bookings')); await root.locator('button[type="submit"]').click(); const response = await result; assert.equal(response.status(), 201, await response.text()); return { body: await response.json(), sent: response.request().postDataJSON() }; }
                 await open('matrix-advanced');
@@ -220,6 +229,22 @@ try {
                 assert.equal(verified.body.status, 'confirmed');
                 await context.close();
             }
+
+    assert.ok(lastCompleted.manage_url,'Completed booking omitted its manage URL');
+    for(const width of [1440,390])for(const theme of ['light','dark']){
+        const context=await browser.newContext({viewport:{width,height:900},colorScheme:theme,timezoneId:'UTC'});
+        await context.addInitScript(theme=>localStorage.setItem('fp-theme',theme),theme);
+        const page=await context.newPage();page.on('pageerror',error=>errors.push('manage: '+error.message));
+        await page.goto(lastCompleted.manage_url);await page.locator('#reschedule-btn').click();
+        // The preceding 24 bookings consume tomorrow's morning; choose a fresh day.
+        await page.locator('.cd.available').nth(2).click();await page.locator('.slot-btn:not(.taken)').first().waitFor();
+        assert.deepEqual(await page.locator('[data-period]').allTextContents(),['Morning','Evening']);
+        await page.locator('[data-period="1"]').click();await page.locator('.slot-btn:not(.taken)').first().waitFor();
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Manage page overflows horizontally');
+        await page.screenshot({path:join(screenshots,`calendar-manage-${width}-${theme}.png`),fullPage:true,animations:'disabled'});
+        await page.locator('.slot-btn:not(.taken)').first().click();await page.locator('#confirm-reschedule-btn').waitFor();
+        await context.close();
+    }
     // Real navigation honors the configured redirect, on both booking surfaces.
     for (const surface of ['hosted', 'embed']) {
         const page = await browser.newPage();
@@ -252,7 +277,7 @@ try {
     assert.ok(polls >= 2, 'Checkout skipped durable confirmation polling');
     await paid.close();
     assert.deepEqual(errors, []);
-    console.log(`Verified 24 configured booking flows, redirects and checkout failure handling across hosted/embed, light/dark, desktop/mobile. Screenshots: ${screenshots}`);
+    console.log(`Verified 24 configured booking flows, redirects and checkout failure handling across hosted/embed plus manage rescheduling, light/dark, desktop/mobile. Screenshots: ${screenshots}`);
 }
 catch (error) {
     console.error(logs);

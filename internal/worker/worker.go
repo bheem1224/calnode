@@ -159,6 +159,7 @@ func (w *Worker) Poll(ctx context.Context) {
 			w.logger.Error("worker: purge abuse counters and unused OAuth clients", "error", err)
 		}
 	}
+	w.sweepBookedSingleUseLinks(ctx)
 	w.sweepExpiredSingleUseLinks(ctx, now)
 	w.sweepScheduledTimezones(ctx, now)
 	w.sweepExpiredOOOEntries(ctx, now)
@@ -326,18 +327,18 @@ func (w *Worker) sendReminder(ctx context.Context, payload string) error {
 	var d mailer.BookingData
 	d.BookingID = p.BookingID
 	var startAt, endAt, status string
-	var locVal, msgReminder, subjReminder sql.NullString
+	var locVal, msgReminder, subjReminder, htmlReminder, replyTo sql.NullString
 	var notifyReminder int
 	err := w.db.QueryRowContext(ctx, `
 		SELECT b.status, b.start_at, b.end_at, b.location_value,
-		       et.name, et.slug, et.msg_reminder, et.subj_reminder,
+		       et.name, et.slug, et.msg_reminder, et.subj_reminder, et.html_reminder, et.reply_to,
 		       u.name, u.email, COALESCE(u.notify_reminder, 1)
 		FROM bookings b
 		JOIN event_types et ON et.id = b.event_type_id
 		JOIN users u ON u.id = b.host_id
 		WHERE b.id = ?`, p.BookingID).
 		Scan(&status, &startAt, &endAt, &locVal,
-			&d.EventTypeName, &d.EventTypeSlug, &msgReminder, &subjReminder,
+			&d.EventTypeName, &d.EventTypeSlug, &msgReminder, &subjReminder, &htmlReminder, &replyTo,
 			&d.HostName, &d.HostEmail, &notifyReminder)
 	if err == sql.ErrNoRows {
 		return nil // booking deleted; skip silently
@@ -367,6 +368,13 @@ func (w *Worker) sendReminder(ctx context.Context, payload string) error {
 	}
 	if subjReminder.Valid {
 		d.SubjectOverride = subjReminder.String
+	}
+
+	if htmlReminder.Valid {
+		d.CustomHTML = htmlReminder.String
+	}
+	if replyTo.Valid {
+		d.ReplyTo = replyTo.String
 	}
 
 	// Load organizer attendee.
@@ -427,6 +435,7 @@ func (w *Worker) deliverWebhook(ctx context.Context, jobPayload string) error {
 
 	var envelope struct {
 		Data struct {
+			ID            string          `json:"id"`
 			EventTypeID   string          `json:"event_type_id"`
 			EventTypeSlug string          `json:"event_type_slug"`
 			Answers       json.RawMessage `json:"answers"`
@@ -437,7 +446,7 @@ func (w *Worker) deliverWebhook(ctx context.Context, jobPayload string) error {
 	if eventID == "" {
 		eventID = envelope.Data.EventTypeSlug
 	}
-	if !w.svc.DeliveryAuthorized(ctx, webhookID, bookingID.String, eventID, event) || (len(envelope.Data.Answers) > 0 && !w.svc.DeliveryAuthorized(ctx, webhookID, bookingID.String, eventID, "booking.answers")) {
+	if !w.svc.DeliveryAuthorized(ctx, webhookID, bookingID.String, eventID, event, envelope.Data.ID) || (len(envelope.Data.Answers) > 0 && !w.svc.DeliveryAuthorized(ctx, webhookID, bookingID.String, eventID, "booking.answers")) {
 		_, _ = w.db.ExecContext(ctx, `UPDATE webhook_deliveries SET status='failed',last_attempted_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339), p.WebhookDeliveryID)
 		return nil
 	}
@@ -549,18 +558,8 @@ func (w *Worker) sweepExpiredSingleUseLinks(ctx context.Context, now string) {
 		return
 	}
 	for _, p := range expired {
-		res, err := w.db.ExecContext(ctx, `
-			UPDATE single_use_tokens SET expired_notified_at = ?
-			WHERE id = ? AND used_at IS NULL AND expired_notified_at IS NULL`, now, p.ID)
-		if err != nil {
-			w.logger.Error("worker: mark expired single-use link", "error", err, "token_id", p.ID)
-			continue
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			continue
-		}
-		if err := w.svc.EnqueueSingleUse(ctx, "single_use_link.expired", p); err != nil {
-			w.logger.Error("worker: enqueue single_use_link.expired", "error", err, "token_id", p.ID)
+		if err := w.svc.EnqueueSingleUseOnce(ctx, "single_use_link.expired", p); err != nil {
+			w.logger.Error("worker: enqueue expired single-use link", "error", err, "token_id", p.ID)
 		}
 	}
 }
@@ -609,5 +608,35 @@ func (w *Worker) sweepExpiredOOOEntries(ctx context.Context, now string) {
 	rows.Close() // #nosec G104
 	for _, id := range toDelete {
 		_, _ = w.db.ExecContext(ctx, `DELETE FROM ooo_entries WHERE id = ?`, id)
+	}
+}
+
+func (w *Worker) sweepBookedSingleUseLinks(ctx context.Context) {
+	if w.svc == nil {
+		return
+	}
+	rows, err := w.db.QueryContext(ctx, `SELECT s.id,s.token,s.event_type_id,e.slug,e.name,s.created_by_user_id,COALESCE(s.booking_id,''),COALESCE(s.expires_at,''),s.used_at FROM single_use_tokens s JOIN event_types e ON e.id=s.event_type_id WHERE s.used_at IS NOT NULL AND s.booked_notified_at IS NULL LIMIT 100`)
+	if err != nil {
+		w.logger.Error("worker: scan booked single-use links", "error", err)
+		return
+	}
+	pending := []webhook.SingleUsePayload{}
+	for rows.Next() {
+		var p webhook.SingleUsePayload
+		if err = rows.Scan(&p.ID, &p.Token, &p.EventTypeID, &p.EventTypeSlug, &p.EventTypeName, &p.HostID, &p.BookingID, &p.ExpiresAt, &p.UsedAt); err != nil {
+			rows.Close()
+			return
+		}
+		pending = append(pending, p)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return
+	}
+	for _, p := range pending {
+		if err = w.svc.EnqueueSingleUseOnce(ctx, "single_use_link.booked", p); err != nil {
+			w.logger.Error("worker: recover booked single-use notification", "error", err, "token_id", p.ID)
+		}
 	}
 }

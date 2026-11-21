@@ -366,24 +366,13 @@ const etOwnerColumns = `, user_id,
 	COALESCE((SELECT name FROM teams WHERE id = event_types.team_id), '') AS team_name,
 	COALESCE((SELECT role FROM team_members WHERE team_id = event_types.team_id AND user_id = ?), '') AS caller_team_role`
 
-// listEventTypesQuery returns every event type the user owns, is an assigned host on,
-// or belongs to via team membership. The first parameter after user.ID widens it to
-// every event type on the instance for ?scope=all.
-const listEventTypesQuery = "SELECT " + etColumns + etOwnerColumns + `
-FROM event_types
-WHERE ? = 1
-   OR user_id = ?
-   OR id IN (SELECT event_type_id FROM event_type_hosts WHERE user_id = ?)
-   OR team_id IN (SELECT team_id FROM team_members WHERE user_id = ?)
-ORDER BY created_at`
-
 // getEventTypeQuery fetches one event type by slug if the user owns it, hosts it,
 // belongs to its team, or is an admin.
 const getEventTypeQuery = "SELECT " + etColumns + etOwnerColumns + `
 FROM event_types
 WHERE slug = ? AND (? = 1 OR user_id = ? OR id IN (SELECT event_type_id FROM event_type_hosts WHERE user_id = ?) OR team_id IN (SELECT team_id FROM team_members WHERE user_id = ?))`
 
-// scanEventTypeWithOwner scans a row of listEventTypesQuery or getEventTypeQuery and
+// scanEventTypeWithOwner scans a row of an event list or get query and
 // fills the fields that describe the event type relative to the caller.
 func scanEventTypeWithOwner(s rowScanner, user AuthUser) (*eventTypeJSON, error) {
 	var ownerID, ownerName, ownerEmail, teamName, callerTeamRole string
@@ -696,9 +685,18 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 // silently ignored for anyone else, so a member cannot use it to escalate.
 func (h *Handler) ListEventTypes(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
-	all := r.URL.Query().Get("scope") == "all" && user.IsAdmin
-
-	rows, err := h.db.QueryContext(r.Context(), listEventTypesQuery, user.ID, boolArg(all), user.ID, user.ID, user.ID)
+	grants := user.Permissions
+	if grants == nil { // Direct internal callers still use their authenticated role.
+		var err error
+		grants, err = access.Load(r.Context(), h.db, user.ID)
+		if err != nil {
+			h.writeError(w, http.StatusForbidden, "permission required")
+			return
+		}
+	}
+	filter, args := access.EventReadFilter(user.ID, grants, r.URL.Query().Get("scope") == "all")
+	args = append([]any{user.ID}, args...)
+	rows, err := h.db.QueryContext(r.Context(), "SELECT "+etColumns+etOwnerColumns+" FROM event_types WHERE "+filter+" ORDER BY created_at", args...)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list event types", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")

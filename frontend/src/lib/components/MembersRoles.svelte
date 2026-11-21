@@ -752,6 +752,6 @@
 	{/if}
 {/if}
 
-{#if can('impersonation.audit')}<SecurityAudit />{/if}
+{#if can('logs.read')}<SecurityAudit />{/if}
 
 <MemberRecoveryDialog bind:open={recoveryDialog} userID={recoveryUser} passwordMode={passwordRecovery} />

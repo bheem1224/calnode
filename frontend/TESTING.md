@@ -159,3 +159,15 @@ creation and replay rejection. The runner refuses claimed or non-localhost
 instances. Optional `CALNODE_SCREENSHOT_DIR` retains light/dark screenshots;
 screenshots select the actual stored theme and wait for its text colors to settle.
 See `docs/mcp-agents.md` for policy and import limitations.
+
+The same real-server run imports `scripts/verify-notification-settings.mjs` to
+create/edit/delete saved templates through Notifications, check sanitized HTML and
+new-event defaults, and create/edit a webhook with multiple scopes. Light/dark
+screenshots include both settings pages. `notification-settings.visual.test.ts`
+checks the shared template builder and multi-select picker in both themes.
+
+The booking matrix asserts at most two visitor-local time periods on hosted and
+embedded pages and exercises the manage/reschedule picker at desktop/mobile sizes
+in both themes. Backend lifecycle tests simulate queue failures, restart recovery,
+signed retries, backoff, changed scopes and overlapping selections. Mail capture
+tests check saved HTML and reply-to on cancellation, reschedule and reminder emails.

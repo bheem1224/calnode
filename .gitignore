@@ -72,3 +72,4 @@ calnode.key
 #AI agent config and working documentation files
 FUTURE_FEATURES.md
 .agents/
+.tmp-rbac-fix/

@@ -84,23 +84,22 @@ func (h *Handler) PreviewEmailTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var ownerID, ownerName, ownerEmail, etName string
-	var durationMinutes int
+	ownerID, ownerName, ownerEmail, etName := user.ID, user.Name, user.Email, "Sample meeting"
+	durationMinutes := 30
 	var locVal sql.NullString
-	err := h.db.QueryRowContext(r.Context(), `
-		SELECT et.user_id, u.name, u.email, et.name, et.duration_minutes, et.location_value
-		FROM event_types et
-		JOIN users u ON u.id = et.user_id
-		WHERE et.slug = ?`, slug).
-		Scan(&ownerID, &ownerName, &ownerEmail, &etName, &durationMinutes, &locVal)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && !canManageEventType(user, ownerID)) {
-		h.writeError(w, http.StatusNotFound, "event type not found")
-		return
-	}
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "email preview: load event type", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
-		return
+	if slug != "" {
+		err := h.db.QueryRowContext(r.Context(), `
+ SELECT et.user_id,u.name,u.email,et.name,et.duration_minutes,et.location_value
+ FROM event_types et JOIN users u ON u.id=et.user_id WHERE et.slug=?`, slug).
+			Scan(&ownerID, &ownerName, &ownerEmail, &etName, &durationMinutes, &locVal)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && !canManageEventType(user, ownerID)) {
+			h.writeError(w, 404, "event type not found")
+			return
+		}
+		if err != nil {
+			h.writeError(w, 500, "could not load event type")
+			return
+		}
 	}
 
 	if durationMinutes < 1 {
@@ -304,4 +303,65 @@ func (h *Handler) DeleteEmailTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// PreviewSavedEmailTemplate uses the same renderer and sanitizer without an event dependency.
+func (h *Handler) PreviewSavedEmailTemplate(w http.ResponseWriter, r *http.Request) {
+	h.PreviewEmailTemplate(w, r)
+}
+
+func (h *Handler) UpdateEmailTemplate(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	var req struct {
+		Name      string `json:"name"`
+		Kind      string `json:"kind"`
+		IsDefault bool   `json:"is_default"`
+		Mode      string `json:"mode"`
+		Subject   string `json:"subject"`
+		Body      string `json:"body"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10)).Decode(&req) != nil {
+		h.writeError(w, 400, "invalid JSON")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" || len(req.Name) > 120 || !validEmailTemplateKind(req.Kind) || (req.Mode != "note" && req.Mode != "html") {
+		h.writeError(w, 400, "valid name, kind and mode are required")
+		return
+	}
+	if req.Mode == "html" {
+		clean, err := mailer.SanitizeAndValidateEmailHTML(req.Body)
+		if err != nil {
+			h.writeError(w, 400, err.Error())
+			return
+		}
+		req.Body = clean
+	}
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		h.writeError(w, 500, "could not save template")
+		return
+	}
+	defer tx.Rollback()
+	var created string
+	if tx.QueryRowContext(r.Context(), `SELECT created_at FROM email_templates WHERE id=? AND user_id=?`, r.PathValue("id"), user.ID).Scan(&created) != nil {
+		h.writeError(w, 404, "template not found")
+		return
+	}
+	if req.IsDefault {
+		if _, err = tx.ExecContext(r.Context(), `UPDATE email_templates SET is_default=0 WHERE user_id=? AND kind=?`, user.ID, req.Kind); err != nil {
+			h.writeError(w, 500, "could not update default")
+			return
+		}
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err = tx.ExecContext(r.Context(), `UPDATE email_templates SET name=?,kind=?,is_default=?,mode=?,subject=?,body=?,updated_at=? WHERE id=? AND user_id=?`, req.Name, req.Kind, req.IsDefault, req.Mode, strings.TrimSpace(req.Subject), req.Body, now, r.PathValue("id"), user.ID); err != nil {
+		h.writeError(w, 500, "could not update template")
+		return
+	}
+	if tx.Commit() != nil {
+		h.writeError(w, 500, "could not save template")
+		return
+	}
+	h.writeJSON(w, 200, emailTemplateJSON{ID: r.PathValue("id"), Name: req.Name, Kind: req.Kind, IsDefault: req.IsDefault, Mode: req.Mode, Subject: strings.TrimSpace(req.Subject), Body: req.Body, CreatedAt: created, UpdatedAt: now})
 }

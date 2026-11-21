@@ -1822,7 +1822,7 @@ func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConf
 				in.SingleUseToken).Scan(&sup.ID, &sup.HostID, &expAt, &usedAt); err == nil {
 				sup.ExpiresAt = expAt.String
 				sup.UsedAt = usedAt.String
-				if err := h.webhookSvc.EnqueueSingleUse(context.WithoutCancel(ctx), "single_use_link.booked", sup); err != nil {
+				if err := h.webhookSvc.EnqueueSingleUseOnce(context.WithoutCancel(ctx), "single_use_link.booked", sup); err != nil {
 					h.logger.Error("enqueue single_use_link.booked webhook", "error", err, "booking_id", b.ID)
 				}
 			}
@@ -2371,14 +2371,21 @@ func (h *Handler) cancelSideEffects(b booking.Booking) {
 	}
 	d.BaseURL = h.publicURL()
 	h.applyBranding(ctx, &d)
-	var msgNote, subjNote sql.NullString
-	_ = h.db.QueryRowContext(ctx, `SELECT msg_cancellation, subj_cancellation FROM event_types WHERE id = ?`, b.EventTypeID).
-		Scan(&msgNote, &subjNote)
+	var msgNote, subjNote, htmlNote, replyTo sql.NullString
+	_ = h.db.QueryRowContext(ctx, `SELECT msg_cancellation, subj_cancellation, html_cancellation, reply_to FROM event_types WHERE id = ?`, b.EventTypeID).
+		Scan(&msgNote, &subjNote, &htmlNote, &replyTo)
 	if msgNote.Valid {
 		d.CustomNote = msgNote.String
 	}
 	if subjNote.Valid {
 		d.SubjectOverride = subjNote.String
+	}
+
+	if htmlNote.Valid {
+		d.CustomHTML = htmlNote.String
+	}
+	if replyTo.Valid {
+		d.ReplyTo = replyTo.String
 	}
 
 	// Cancel each assigned host's calendar event and notify each host. Group

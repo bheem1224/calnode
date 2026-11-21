@@ -29,7 +29,8 @@ type Webhook struct {
 	URL         string
 	Events      []string
 	Fields      []string // payload field keys; nil means the default set
-	EventTypeID *string  // nil = global (all event types); non-nil = scoped to one event type
+	EventTypeID *string  // legacy account/single-event selector; ignored when Scopes is configured
+	Scopes      []Scope
 	IsActive    bool
 	CreatedAt   time.Time
 }
@@ -177,7 +178,20 @@ func New(db *sql.DB, encKeyHex string) (*Service, error) {
 // signing secret (shown only once; stored encrypted).
 // Create registers a webhook (fields default to the unset/original-payload set;
 // callers set field selection via Update).
+type Options struct {
+	Fields      []string
+	EventTypeID *string
+	Scopes      *[]Scope
+	Permissions access.Grants
+}
+
 func (s *Service) Create(ctx context.Context, userID, url string, events []string) (*Webhook, string, error) {
+	return s.CreateConfigured(ctx, userID, url, events, Options{})
+}
+func (s *Service) CreateConfigured(ctx context.Context, userID, url string, events []string, options Options) (*Webhook, string, error) {
+	if options.EventTypeID != nil && *options.EventTypeID == "" {
+		options.EventTypeID = nil // legacy clients use an empty string for account scope
+	}
 	rawSecret := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, rawSecret); err != nil {
 		return nil, "", fmt.Errorf("webhook: generate secret: %w", err)
@@ -198,11 +212,23 @@ func (s *Service) Create(ctx context.Context, userID, url string, events []strin
 	if grantErr != nil {
 		return nil, "", grantErr
 	}
+	if options.Permissions != nil {
+		grants = access.Intersect(grants, options.Permissions)
+	}
+	var fields, scopes any
+	if options.Fields != nil {
+		raw, _ := json.Marshal(ValidFields(options.Fields))
+		fields = string(raw)
+	}
+	if options.Scopes != nil {
+		raw, _ := json.Marshal(*options.Scopes)
+		scopes = string(raw)
+	}
 	id := uid.New()
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO webhooks (id, user_id, url, events, secret_enc,permissions_json)
-		VALUES (?, ?, ?, ?, ?,?)`,
-		id, userID, url, string(eventsJSON), encSecret, grants.JSON())
+		INSERT INTO webhooks (id, user_id, url, events, secret_enc,permissions_json,fields,event_type_id,scopes_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, userID, url, string(eventsJSON), encSecret, grants.JSON(), fields, options.EventTypeID, scopes)
 	if err != nil {
 		return nil, "", fmt.Errorf("webhook: insert: %w", err)
 	}
@@ -215,12 +241,20 @@ func (s *Service) Create(ctx context.Context, userID, url string, events []strin
 		IsActive:  true,
 		CreatedAt: time.Now().UTC(),
 	}
+	wh.Fields = options.Fields
+	wh.EventTypeID = options.EventTypeID
+	if options.Scopes != nil {
+		wh.Scopes = *options.Scopes
+	}
 	return wh, plainSecret, nil
 }
 
 // Update applies partial changes to a webhook owned by userID. Nil pointers are
 // left unchanged. Returns ErrNotFound if no such webhook exists for the user.
 func (s *Service) Update(ctx context.Context, userID, id string, events, fields *[]string) error {
+	return s.UpdateConfig(ctx, userID, id, events, fields, nil, nil)
+}
+func (s *Service) UpdateConfig(ctx context.Context, userID, id string, events, fields *[]string, legacy *string, scopes *[]Scope) error {
 	var set []string
 	var args []any
 	if events != nil {
@@ -232,6 +266,18 @@ func (s *Service) Update(ctx context.Context, userID, id string, events, fields 
 		fb, _ := json.Marshal(ValidFields(*fields))
 		set = append(set, "fields = ?")
 		args = append(args, string(fb))
+	}
+	if scopes != nil {
+		raw, _ := json.Marshal(*scopes)
+		set = append(set, "scopes_json = ?", "event_type_id = NULL")
+		args = append(args, string(raw))
+	} else if legacy != nil {
+		var value any
+		if *legacy != "" {
+			value = *legacy
+		}
+		set = append(set, "event_type_id = ?", "scopes_json = NULL")
+		args = append(args, value)
 	}
 	if len(set) == 0 {
 		return nil
@@ -269,7 +315,7 @@ func (s *Service) SetEventTypeID(ctx context.Context, userID, id string, eventTy
 // List returns all webhooks for a user, most recent first.
 func (s *Service) List(ctx context.Context, userID string) ([]Webhook, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, url, events, fields, is_active, created_at, event_type_id
+		SELECT id, url, events, fields, is_active, created_at, event_type_id, scopes_json
 		FROM webhooks WHERE user_id = ? ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("webhook: list: %w", err)
@@ -280,11 +326,14 @@ func (s *Service) List(ctx context.Context, userID string) ([]Webhook, error) {
 	for rows.Next() {
 		var wh Webhook
 		var eventsJSON string
-		var fieldsJSON, eventTypeID sql.NullString
+		var fieldsJSON, eventTypeID, scopesJSON sql.NullString
 		var isActive int
 		var createdAt string
-		if err := rows.Scan(&wh.ID, &wh.URL, &eventsJSON, &fieldsJSON, &isActive, &createdAt, &eventTypeID); err != nil {
+		if err := rows.Scan(&wh.ID, &wh.URL, &eventsJSON, &fieldsJSON, &isActive, &createdAt, &eventTypeID, &scopesJSON); err != nil {
 			return nil, fmt.Errorf("webhook: scan: %w", err)
+		}
+		if scopesJSON.Valid {
+			_ = json.Unmarshal([]byte(scopesJSON.String), &wh.Scopes)
 		}
 		wh.UserID = userID
 		wh.IsActive = isActive == 1
@@ -414,7 +463,7 @@ func buildData(bd enrichedBooking, fields []string) map[string]any {
 	return out
 }
 
-// Enqueue finds all active webhooks for p.HostID that subscribe to event,
+// Enqueue finds active legacy-account or multi-scope webhooks subscribed to event,
 // and creates a webhook_deliveries + jobs row pair for each. Failures are
 // soft-errors (caller logs; a booking is already committed).
 func (s *Service) Enqueue(ctx context.Context, event string, p BookingPayload) error {
@@ -427,8 +476,8 @@ func (s *Service) Enqueue(ctx context.Context, event string, p BookingPayload) e
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, events, fields FROM webhooks
-		WHERE is_active = 1 AND (user_id = ? OR event_type_id IS NOT NULL)
-		  AND (event_type_id IS NULL OR (? != '' AND event_type_id = ?))`,
+		WHERE is_active = 1 AND (scopes_json IS NOT NULL OR ((user_id = ? OR event_type_id IS NOT NULL)
+		  AND (event_type_id IS NULL OR (? != '' AND event_type_id = ?))))`,
 		p.HostID, eventTypeID, eventTypeID)
 	if err != nil {
 		return fmt.Errorf("webhook: list for enqueue: %w", err)
@@ -554,10 +603,18 @@ type SingleUsePayload struct {
 // p.EventTypeID) subscribed to event ("single_use_link.booked" or
 // "single_use_link.expired") and enqueues delivery jobs.
 func (s *Service) EnqueueSingleUse(ctx context.Context, event string, p SingleUsePayload) error {
+	return s.enqueueSingleUse(ctx, event, p, false)
+}
+
+// EnqueueSingleUseOnce commits the lifecycle marker and durable jobs together.
+func (s *Service) EnqueueSingleUseOnce(ctx context.Context, event string, p SingleUsePayload) error {
+	return s.enqueueSingleUse(ctx, event, p, true)
+}
+func (s *Service) enqueueSingleUse(ctx context.Context, event string, p SingleUsePayload, once bool) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, events FROM webhooks
-		WHERE is_active = 1 AND (user_id = ? OR event_type_id IS NOT NULL)
-		  AND (event_type_id IS NULL OR (? != '' AND event_type_id = ?))`,
+		WHERE is_active = 1 AND (scopes_json IS NOT NULL OR ((user_id = ? OR event_type_id IS NOT NULL)
+		  AND (event_type_id IS NULL OR (? != '' AND event_type_id = ?))))`,
 		p.HostID, p.EventTypeID, p.EventTypeID)
 	if err != nil {
 		return fmt.Errorf("webhook: list single-use for enqueue: %w", err)
@@ -585,14 +642,11 @@ func (s *Service) EnqueueSingleUse(ctx context.Context, event string, p SingleUs
 	}
 	allowed := matching[:0]
 	for _, id := range matching {
-		if s.DeliveryAuthorized(ctx, id, p.BookingID, p.EventTypeID, event) {
+		if s.DeliveryAuthorized(ctx, id, p.BookingID, p.EventTypeID, event, p.ID) {
 			allowed = append(allowed, id)
 		}
 	}
 	matching = allowed
-	if len(matching) == 0 {
-		return nil
-	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	envelope := map[string]any{
@@ -615,6 +669,23 @@ func (s *Service) EnqueueSingleUse(ctx context.Context, event string, p SingleUs
 		return fmt.Errorf("webhook: begin single-use tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
+	if once {
+		marker, condition := "booked_notified_at", "used_at IS NOT NULL"
+		if event == "single_use_link.expired" {
+			marker = "expired_notified_at"
+			condition = "used_at IS NULL AND expires_at IS NOT NULL AND datetime(expires_at)<=datetime('now')"
+		} else if event != "single_use_link.booked" {
+			return errors.New("unknown single-use lifecycle event")
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE single_use_tokens SET `+marker+`=? WHERE id=? AND `+marker+` IS NULL AND `+condition, now, p.ID)
+		if err != nil {
+			return err
+		}
+		n, _ := result.RowsAffected()
+		if n == 0 {
+			return nil
+		}
+	}
 
 	for _, whID := range matching {
 		deliveryID := uid.New()

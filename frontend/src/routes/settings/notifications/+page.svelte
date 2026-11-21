@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import EmailTemplateLibrary from '$lib/components/EmailTemplateLibrary.svelte';
 	import { api, type User } from '$lib/api';
 	import { currentUser } from '$lib/stores';
 	import { Button } from '$lib/components/ui/button';
@@ -102,3 +103,5 @@
 		</Button>
 	</div>
 {/if}
+
+<EmailTemplateLibrary />

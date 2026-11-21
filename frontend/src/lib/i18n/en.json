@@ -2,6 +2,7 @@
 	"common": {
 		"loading": "Loading…",
 		"saving": "Saving…",
+		"helpFor": "Help: {label}",
 		"save": "Save",
 		"cancel": "Cancel",
 		"close": "Close",
@@ -52,7 +53,8 @@
 		"undo": "Undo",
 		"uploading": "Uploading…",
 		"sending": "Sending…",
-		"testing": "Testing…"
+		"testing": "Testing…",
+		"edit": "Edit"
 	},
 	"layout": {
 		"bookingPage": "My booking page",
@@ -2119,7 +2121,7 @@
 	"permissions": {
 		"groups": {
 			"profile": "Profile",
-			"event_types": "Event types",
+			"event_types": "Personal event types",
 			"bookings": "Bookings",
 			"availability": "Availability",
 			"members": "Members",
@@ -2230,7 +2232,7 @@
 			},
 			"impersonation": {
 				"use": "Impersonate users",
-				"audit": "View security audit"
+				"audit": "View impersonation history"
 			},
 			"dynamic_links": {
 				"create": "Create one-time group scheduling links"
@@ -2254,6 +2256,8 @@
 			"all": "Entire instance"
 		},
 		"presets": {
+			"event_manager": "Event manager",
+			"workspace_operator": "Workspace operator",
 			"assistant": "Scheduling assistant",
 			"reporting": "Read-only reporting",
 			"invitations": "Invitation automation",
@@ -2266,6 +2270,7 @@
 		"clear": "Clear selection",
 		"search": "Search permissions",
 		"loadError": "Could not load permissions.",
+		"teamConfigurationHint": "Configuring reusable team events requires current Team Head or instance Admin access as well as these grants. Members can view events, generate one-time links and offer custom times when allowed.",
 		"roleHint": "Choose each action and its resource boundary. Unselected actions are denied. Every user keeps access to their own profile.",
 		"credentialHint": "This credential is limited to the selected permissions and your current role. Sensitive account operations cannot be delegated.",
 		"customRole": "Custom role",
@@ -2361,6 +2366,7 @@
 		"qrAlt": "Scan this QR code with your authenticator app",
 		"confirmAuthenticator": "Confirm authenticator",
 		"addAuthenticator": "Set up authenticator",
+		"codesRemaining": "{count} codes remaining",
 		"recoveryCodes": "Recovery codes",
 		"recoveryHint": "{count} codes remaining. Each code works once. Generating new codes invalidates the previous set.",
 		"generateCodes": "Generate recovery codes",
@@ -2506,8 +2512,7 @@
 		"phone": "Phone call",
 		"attendeePhone": "Attendee’s phone number",
 		"loadError": "Could not load meeting defaults. Try again before creating the link."
-	}
-,
+	},
 	"agentReview": {
 		"companyTitle": "Require review for sensitive agent changes",
 		"companyHint": "When enabled, everyone must approve event configuration and administration changes in Calnode. When disabled, each person chooses their review preference. Routine scheduling is unaffected.",
@@ -2535,5 +2540,41 @@
 			"partial": "Partially completed",
 			"rejected": "Rejected"
 		}
+	},
+	"templateLibrary": {
+		"title": "Saved email templates",
+		"hint": "Create and manage reusable templates. Defaults apply to new event types; existing event emails keep their saved copy.",
+		"create": "New template",
+		"search": "Search templates",
+		"empty": "No matching templates.",
+		"save": "Save template",
+		"default": "Default for new events",
+		"note": "Styled note",
+		"deleteTitle": "Delete email template?",
+		"deleteHint": "This removes the saved template. Existing event emails stay unchanged.",
+		"kinds": {
+			"confirmation": "Booking confirmation",
+			"cancellation": "Cancellation notice",
+			"reschedule": "Reschedule notice",
+			"reminder": "Reminder email"
+		}
+	},
+	"webhookScopes": {
+		"mine": "All my meetings",
+		"instance": "All instance meetings",
+		"select": "Select webhook scopes",
+		"selected": "{count} scopes selected",
+		"search": "Search people, teams or events",
+		"empty": "No matching authorized scopes.",
+		"edit": "Edit webhook scopes",
+		"hint": "Choose one or more scopes. Overlapping selections create one notification. Retries may deliver it more than once. Only data allowed by your current role and this webhook’s saved permissions is sent.",
+		"types": {
+			"user": "Person",
+			"team": "All team meetings",
+			"event": "Event type",
+			"instance": "Instance"
+		},
+		"account": "This account’s meetings",
+		"required": "Choose at least one scope."
 	}
 }

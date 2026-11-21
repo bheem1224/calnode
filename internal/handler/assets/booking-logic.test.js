@@ -111,3 +111,12 @@ test('formatTime honors explicit clock format', () => {
   assert.match(B.formatTime('2026-06-15T14:05:00Z', 'UTC', 'en-US', '12h'), /2:05.*PM/);
   assert.match(B.formatTime('2026-06-15T14:05:00Z', 'UTC', 'en-US', '24h'), /14:05/);
 });
+
+test('slotPeriod has exactly two visitor-local buckets, including afternoon and evening', () => {
+  for(const [iso,zone,expected] of [
+    ['2026-11-25T11:59:00Z','UTC',0],['2026-11-25T12:00:00Z','UTC',1],
+    ['2026-11-25T16:30:00Z','UTC',1],['2026-11-25T23:59:00Z','UTC',1],
+    ['2026-11-25T16:59:00Z','America/New_York',0],['2026-11-25T17:00:00Z','America/New_York',1],
+    ['2026-11-25T06:30:00Z','Asia/Kolkata',1]
+  ]) assert.equal(B.slotPeriod(iso,zone),expected);
+});

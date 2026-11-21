@@ -18,7 +18,8 @@
     "check:i18n": "node scripts/check-i18n.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "test:visual": "vitest run"
+    "test:visual": "vitest run",
+    "test:flows": "node scripts/verify-feature-suite.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

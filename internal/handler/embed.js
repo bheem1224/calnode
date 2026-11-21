@@ -546,13 +546,14 @@
         listEl.appendChild(clock);
         var periodFor = function (slot) {
           var hour = Number(new Intl.DateTimeFormat('en-GB', {timeZone: TZ, hour: 'numeric', hourCycle: 'h23'}).format(new Date(slot.start)));
-          return hour < 12 ? 0 : hour < 17 ? 1 : 2;
+          // Mirrors the shared slotPeriod helper: two visitor-local halves of the day.
+          return hour < 12 ? 0 : 1;
         };
         var periods = Array.from(new Set(list.map(periodFor))).sort();
         if (periods.indexOf(st.period) === -1) st.period = periods[0];
         var choices = el('div', { class: 'time-periods', role: 'group', 'aria-label': t(this.i18n, 'time_period') });
         periods.forEach(function (period) {
-          var button = el('button', { type: 'button', 'data-period': String(period), 'aria-pressed': String(period === st.period), text: t(self.i18n, ['time_morning', 'time_afternoon', 'time_evening'][period]) });
+          var button = el('button', { type: 'button', 'data-period': String(period), 'aria-pressed': String(period === st.period), text: t(self.i18n, ['time_morning', 'time_evening'][period]) });
           button.addEventListener('click', function () {
             st.period = period;
             self.render();

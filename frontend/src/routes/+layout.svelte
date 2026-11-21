@@ -164,7 +164,7 @@
 	]);
 
 	const navPermissions:Record<string,string>={'event-types':'event_types.read',availability:'availability.read',bookings:'bookings.read',members:'members.read',teams:'teams.read','api-keys':'api_keys.read',connections:'mcp.manage',webhooks:'webhooks.read',recordings:'recordings.read'};
- const navAllowed=(id:string,adminOnly?:boolean)=>{const permissions=$currentUser?.permissions;const permission=navPermissions[id];if(permissions&&permission)return !!permissions[permission];return !adminOnly||!!$currentUser?.is_admin;};
+ const navAllowed=(id:string,adminOnly?:boolean)=>{const permissions=$currentUser?.permissions;const permission=navPermissions[id];if(id==='event-types'&&permissions)return !!(permissions['event_types.read']||permissions['team_event_types.read']);if(permissions&&permission)return !!permissions[permission];return !adminOnly||!!$currentUser?.is_admin;};
  const visibleNavItems = $derived(
 		navItems.filter(
 			(item) =>

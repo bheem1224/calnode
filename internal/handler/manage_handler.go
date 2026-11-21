@@ -359,14 +359,17 @@ func (h *Handler) rescheduleSideEffects(bCopy booking.Booking, capturedEtID stri
 	d.ICSSequence = int(bCopy.UpdatedAt.Unix())
 
 	prefs := h.hostPrefsOrDefault(ctx, bCopy.ID, bCopy.HostID)
-	var msgNote, subjNote, replyTo sql.NullString
-	_ = h.db.QueryRowContext(ctx, `SELECT msg_reschedule, subj_reschedule, reply_to FROM event_types WHERE id = ?`, capturedEtID).
-		Scan(&msgNote, &subjNote, &replyTo)
+	var msgNote, subjNote, htmlNote, replyTo sql.NullString
+	_ = h.db.QueryRowContext(ctx, `SELECT msg_reschedule, subj_reschedule, html_reschedule, reply_to FROM event_types WHERE id = ?`, capturedEtID).
+		Scan(&msgNote, &subjNote, &htmlNote, &replyTo)
 	if msgNote.Valid {
 		d.CustomNote = msgNote.String
 	}
 	if subjNote.Valid {
 		d.SubjectOverride = subjNote.String
+	}
+	if htmlNote.Valid {
+		d.CustomHTML = htmlNote.String
 	}
 	if replyTo.Valid {
 		d.ReplyTo = replyTo.String

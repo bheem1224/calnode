@@ -9,25 +9,32 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Select from '$lib/components/ui/select';
 	import { toast } from 'svelte-sonner';
+	import { t } from '$lib/i18n';
 
 	type Kind = 'confirmation' | 'cancellation' | 'reschedule' | 'reminder';
 
 	let {
 		open = $bindable(false),
-		slug,
+		slug = '',
+		libraryMode = false,
+		libraryTemplate = null,
+		onLibrarySaved,
 		kind,
 		subject = '',
 		noteBody = '',
 		htmlBody = '',
-		onApply,
+		onApply = () => {},
 	}: {
 		open: boolean;
-		slug: string;
+		slug?: string;
+		libraryMode?: boolean;
+		libraryTemplate?: EmailTemplate | null;
+		onLibrarySaved?: () => void;
 		kind: Kind;
 		subject: string;
 		noteBody: string;
 		htmlBody: string;
-		onApply: (res: { subject: string; noteBody: string; htmlBody: string }) => void;
+		onApply?: (res: { subject: string; noteBody: string; htmlBody: string }) => void;
 	} = $props();
 
 	let mode = $state<'note' | 'html'>('note');
@@ -71,7 +78,9 @@
 	$effect(() => {
 		if (open) {
 			untrack(() => {
-				mode = htmlBody.trim() ? 'html' : 'note';
+				mode = libraryTemplate?.mode ?? (htmlBody.trim() ? 'html' : 'note');
+				libName = libraryTemplate?.name ?? '';
+				libDefault = libraryTemplate?.is_default ?? false;
 				draftSubject = subject;
 				draftNote = noteBody;
 				draftHtml = htmlBody;
@@ -96,14 +105,13 @@
 	}
 
 	async function runPreview(): Promise<boolean> {
-		if (!slug) return false;
 		const version = ++previewVersion;
 		loadingPreview = true;
 		previewError = '';
 		try {
 			const body = mode === 'html' ? draftHtml : draftNote;
 			const res = await api.post<{ subject: string; html: string; default_html: string }>(
-				`/v1/event-types/${slug}/email-preview`,
+				slug ? `/v1/event-types/${slug}/email-preview` : '/v1/email-templates/preview',
 				{ type: kind, mode, subject: draftSubject, body }
 			);
 			if (version !== previewVersion) return false;
@@ -180,14 +188,18 @@
 		}
 		savingLib = true;
 		try {
-			await api.post('/v1/email-templates', {
+			const payload = {
 				name: libName.trim(),
 				kind,
 				is_default: libDefault,
 				mode,
 				subject: draftSubject.trim(),
 				body: mode === 'html' ? draftHtml : draftNote,
-			});
+			};
+			if (libraryMode && libraryTemplate) await api.patch('/v1/email-templates/'+libraryTemplate.id, payload);
+			else await api.post('/v1/email-templates', payload);
+			onLibrarySaved?.();
+			if (libraryMode) open = false;
 			toast.success('Saved to your email templates');
 			libName = '';
 			libDefault = false;
@@ -237,7 +249,7 @@
 						Edit in Styled Note mode or customize full HTML with live preview and reusable templates.
 					</Dialog.Description>
 				</div>
-				<div class="flex flex-wrap items-center gap-2">
+				{#if !libraryMode}<div class="flex flex-wrap items-center gap-2">
 					<Select.Root type="single" value="" onValueChange={(v) => { if (v) applySavedTemplate(v); }}>
 						<Select.Trigger aria-label="Load saved template" class="h-8 w-48 justify-between text-xs">Load template...</Select.Trigger>
 						<Select.Content class="w-(--bits-select-anchor-width) min-w-[var(--bits-select-anchor-width)]">
@@ -250,20 +262,20 @@
 					<Button type="button" size="sm" variant="outline" class="h-8 text-xs" onclick={() => (saveLibOpen = !saveLibOpen)}>
 						Save to library
 					</Button>
-				</div>
+				</div>{/if}
 			</div>
 		</Dialog.Header>
 
-		{#if saveLibOpen}
+		{#if libraryMode || saveLibOpen}
 			<div class="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 p-3">
 				<Input bind:value={libName} placeholder="Template name (e.g. Founder Intro)" class="h-8 w-56 text-xs" />
 				<label class="flex cursor-pointer items-center gap-1.5 text-xs">
 					<Checkbox bind:checked={libDefault} />
 					Set as default for new event types
 				</label>
-				<Button type="button" size="sm" class="h-8 text-xs" disabled={savingLib} onclick={saveToLibrary}>
+				{#if !libraryMode}<Button type="button" size="sm" class="h-8 text-xs" disabled={savingLib} onclick={saveToLibrary}>
 					{savingLib ? 'Saving...' : 'Save template'}
-				</Button>
+				</Button>{/if}
 			</div>
 		{/if}
 
@@ -372,12 +384,12 @@
 		</div>
 
 		<Dialog.Footer class="flex flex-wrap items-center justify-between gap-2 sm:justify-between">
-			<Button type="button" variant="outline" size="sm" disabled={sendingTest} onclick={sendTest}>
+			{#if !libraryMode}<Button type="button" variant="outline" size="sm" disabled={sendingTest} onclick={sendTest}>
 				{sendingTest ? 'Sending...' : 'Send test email (saved state)'}
-			</Button>
+			</Button>{/if}
 			<div class="flex items-center gap-2">
 				<Button type="button" variant="ghost" onclick={() => (open = false)}>Cancel</Button>
-				<Button type="button" onclick={handleApply}>Apply to event</Button>
+				<Button type="button" disabled={savingLib} onclick={libraryMode ? saveToLibrary : handleApply}>{libraryMode ? $t('templateLibrary.save') : 'Apply to event'}</Button>
 			</div>
 		</Dialog.Footer>
 	</Dialog.Content>

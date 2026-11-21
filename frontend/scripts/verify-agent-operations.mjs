@@ -4,6 +4,8 @@ import { randomBytes,createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { verifyNotificationSettings } from './verify-notification-settings.mjs';
+import { verifyPermissionSettings } from './verify-permission-settings.mjs';
 const origin=process.env.CALNODE_AGENT_TEST_URL;
 if(!origin||new URL(origin).hostname!=='localhost')throw Error('A fresh disposable localhost instance is required');
 const browser=await chromium.launch({headless:true});
@@ -13,6 +15,8 @@ try{
  const password=randomBytes(24).toString('base64url');
  const claim=await context.request.post(origin+'/v1/auth/claim',{headers:{Origin:origin},data:{name:'Agent Test Owner',email:'agent-owner@example.test',password,timezone:'UTC'}});assert.ok(claim.ok(),await claim.text());
  const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await verifyNotificationSettings(context,page,origin,process.env.CALNODE_SCREENSHOT_DIR);
+ await verifyPermissionSettings(context,page,origin,process.env.CALNODE_SCREENSHOT_DIR);
  const redirect=origin+'/test-agent-callback';
  const registration=await context.request.post(origin+'/oauth/register',{data:{client_name:'Agent verification',redirect_uris:[redirect]}});assert.ok(registration.ok());const {client_id}=await registration.json();
  const verifier=randomBytes(32).toString('base64url');const challenge=createHash('sha256').update(verifier).digest('base64url');

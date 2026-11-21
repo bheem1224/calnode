@@ -575,6 +575,8 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("POST /v1/event-types/{slug}/preview/slots", h.RequireAuth(h.PreviewBookingSlots))
 	mux.HandleFunc("GET /v1/email-templates", h.RequireAuth(h.ListEmailTemplates))
 	mux.HandleFunc("POST /v1/email-templates", h.RequireAuth(h.CreateEmailTemplate))
+	mux.HandleFunc("POST /v1/email-templates/preview", h.RequireAuth(h.PreviewSavedEmailTemplate))
+	mux.HandleFunc("PATCH /v1/email-templates/{id}", h.RequireAuth(h.UpdateEmailTemplate))
 	mux.HandleFunc("DELETE /v1/email-templates/{id}", h.RequireAuth(h.DeleteEmailTemplate))
 	mux.HandleFunc("POST /v1/event-types/{id}/single-use-links", h.RequireAuth(h.CreateSingleUseLink))
 	mux.HandleFunc("GET /v1/event-types/{id}/single-use-links", h.RequireAuth(h.ListSingleUseLinks))
@@ -711,6 +713,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	// Webhooks
 	mux.HandleFunc("POST /v1/webhooks", h.RequireAuth(h.CreateWebhook))
 	mux.HandleFunc("POST /v1/webhooks/{id}/rotate", h.RequireAuth(h.RotateWebhookSecret))
+	mux.HandleFunc("GET /v1/webhooks/scopes", h.RequireAuth(h.WebhookScopeOptions))
 	mux.HandleFunc("GET /v1/webhooks", h.RequireAuth(h.ListWebhooks))
 	mux.HandleFunc("PATCH /v1/webhooks/{id}", h.RequireAuth(h.PatchWebhook))
 	mux.HandleFunc("DELETE /v1/webhooks/{id}", h.RequireAuth(h.DeleteWebhook))
