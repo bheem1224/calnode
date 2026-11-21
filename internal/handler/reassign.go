@@ -12,7 +12,6 @@ import (
 	"github.com/calnode/calnode/internal/calendar"
 	"github.com/calnode/calnode/internal/i18n"
 	"github.com/calnode/calnode/internal/mailer"
-	"github.com/calnode/calnode/internal/webhook"
 )
 
 // ListUserUpcomingBookings handles GET /v1/users/{id}/upcoming-bookings (admin).
@@ -228,19 +227,5 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if h.webhookSvc != nil {
-			if err := h.webhookSvc.Enqueue(ctx, "booking.rescheduled", webhook.BookingPayload{
-				ID:            bCopy.ID,
-				EventTypeSlug: d.EventTypeSlug,
-				HostID:        newHostID,
-				StartAt:       bCopy.StartAt.UTC().Format(time.RFC3339),
-				EndAt:         bCopy.EndAt.UTC().Format(time.RFC3339),
-				Status:        bCopy.Status,
-				LocationValue: bCopy.LocationValue,
-				CreatedAt:     bCopy.CreatedAt.UTC().Format(time.RFC3339),
-			}); err != nil {
-				h.logger.Error("reassign: enqueue webhook", "error", err, "booking_id", bCopy.ID)
-			}
-		}
 	}()
 }

@@ -109,9 +109,18 @@
 			pii: true,
 			fields: [{ key: 'answers', label: $t('webhooks.fields.intake.answers'), pii: true }]
 		}
+        ,{group:$t('webhooks.lifecycleFields.title'),fields:[
+          {key:'single_use_link_id',label:$t('webhooks.lifecycleFields.linkId')},
+ {key:'token',label:$t('webhooks.lifecycleFields.token')},
+          {key:'event_type_id',label:$t('webhooks.lifecycleFields.eventTypeId')},
+          {key:'booking_id',label:$t('webhooks.lifecycleFields.bookingId')},
+          {key:'expires_at',label:$t('webhooks.lifecycleFields.expiresAt')},
+          {key:'used_at',label:$t('webhooks.lifecycleFields.usedAt')}
+        ]}
 	]);
 	// Keys are stable identifiers; only the labels above follow the locale.
 	const allFieldKeys = [
+ 'single_use_link_id','token','event_type_id','booking_id','expires_at','used_at',
 		'id', 'status', 'start_at', 'end_at', 'created_at', 'location_value',
 		'cancellation_reason', 'previous_start_at', 'previous_end_at', 'rsvp_status', 'invite_delivery',
 		'payment_status', 'amount_paid_cents', 'amount_paid_currency',
@@ -120,11 +129,13 @@
 		'attendee_name', 'attendee_email', 'attendee_timezone',
 		'answers'
 	];
+	// A booking token is a bearer capability; sending it requires explicit opt-in.
+	const defaultFieldKeys = allFieldKeys.filter((key) => key !== 'token');
 
 	let form = $state<{ url: string; events: string[]; fields: string[]; scopes: WebhookScope[] }>({
 		url: '',
 		events: ['booking.created', 'booking.cancelled'],
-		fields: [...allFieldKeys],
+		fields: [...defaultFieldKeys],
 		scopes: []
 	});
 
@@ -134,6 +145,8 @@
 	let deliveriesLoading = $state(false);
 	let creating = $state(false);
 	let createError = $state('');
+	let retryOpen=$state(false),retryHook=$state(''),retryDelivery=$state('');
+ async function retryFailed(){try{await api.post(`/v1/webhooks/${retryHook}/deliveries/${retryDelivery}/retry`,{});openDeliveries=null;await toggleDeliveries(retryHook)}catch(e:any){error=e.message}}
 	let deleteOpen = $state(false);
 	let deleteId = $state('');
  let revealedSecret=$state('');
@@ -187,7 +200,7 @@
 			form = {
 				url: '',
 				events: ['booking.created', 'booking.cancelled'],
-				fields: [...allFieldKeys],
+				fields: [...defaultFieldKeys],
 				scopes: []
 			};
 			showCreate = false;
@@ -247,6 +260,7 @@
 	}
 </script>
 
+<ConfirmDialog bind:open={retryOpen} title={$t('webhooks.retryTitle')} description={$t('webhooks.retryHint')} confirmText={$t('webhooks.retry')} onConfirm={retryFailed} />
 <ConfirmDialog bind:open={rotateOpen} title={$t('permissions.rotateTitle')} description={$t('permissions.rotateHint')} confirmText={$t('permissions.rotate')} onConfirm={rotateSecret} />
 
 {#if revealedSecret}<div role="status" class="mb-4 rounded-lg border bg-card p-4 space-y-2"><p class="text-sm">{$t('permissions.secretOnce')}</p><code class="block break-all rounded-md bg-muted p-3 text-xs">{revealedSecret}</code><Button type="button" variant="outline" size="sm" onclick={() => navigator.clipboard.writeText(revealedSecret)}>{$t('common.copy')}</Button></div>{/if}
@@ -352,7 +366,7 @@
 	</div>
 {:else}
 	<div class="rounded-lg border bg-card overflow-hidden">
-		<table class="w-full text-sm">
+		<table class="webhook-table w-full text-sm">
 			<thead>
 				<tr class="border-b">
 					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('webhooks.table.url')}</th>
@@ -388,7 +402,7 @@
 								{#if can('webhooks.update') && !credentialOwner}<Tooltip.Root><Tooltip.Trigger class={buttonVariants({variant:'ghost',size:'icon'})} aria-label={$t('webhookScopes.edit')} onclick={()=>{scopeEditError='';scopeEditId=wh.id;scopeEditValue=wh.scopes?.length?structuredClone($state.snapshot(wh.scopes)):wh.event_type_id?[{type:'event',id:wh.event_type_id}]:[{type:'user',id:$currentUser?.id}];scopeEditOpen=true;}}><Pencil class="size-4" /></Tooltip.Trigger><Tooltip.Content>{$t('webhookScopes.edit')}</Tooltip.Content></Tooltip.Root>{/if}
                                 {#if can('webhooks.rotate')}<Button type="button" size="sm" variant="ghost" onclick={() => {rotateTarget=wh.id;rotateOpen=true;}}>{$t('permissions.rotate')}</Button>{/if}
 <Tooltip.Root>
-									<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} disabled={!can('webhooks.deliveries')} onclick={() => toggleDeliveries(wh.id)}>
+									<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} aria-label={$t('webhooks.tooltip.deliveries')} disabled={!can('webhooks.deliveries')} onclick={() => toggleDeliveries(wh.id)}>
 										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
 									</Tooltip.Trigger>
 									<Tooltip.Content>{openDeliveries === wh.id ? $t('webhooks.tooltip.hideDeliveries') : $t('webhooks.tooltip.deliveries')}</Tooltip.Content>
@@ -409,7 +423,7 @@
 									{:else if deliveries.length === 0}
 										<p class="text-xs text-muted-foreground">{$t('webhooks.deliveries.empty')}</p>
 									{:else}
-										<table class="w-full text-xs">
+										<table class="delivery-table w-full text-xs">
 											<thead>
 												<tr class="text-left text-muted-foreground">
 													<th class="py-1 pr-4 font-medium">{$t('webhooks.deliveries.event')}</th>
@@ -422,13 +436,17 @@
 											<tbody class="divide-y divide-border/50">
 												{#each deliveries as d}
 													<tr>
-														<td class="py-1 pr-4 font-mono">{d.event}</td>
-														<td class="py-1 pr-4">
-															<span class={d.status === 'delivered' ? 'text-green-700' : d.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}>{d.status}</span>
+														<td class="py-1 pr-4 font-mono" data-label={$t('webhooks.deliveries.event')}>{d.event}</td>
+														<td class="py-1 pr-4" data-label={$t('webhooks.deliveries.status')}>
+															{#if d.last_error}
+ <Tooltip.Root><Tooltip.Trigger class="text-destructive underline decoration-dotted underline-offset-4" aria-label={$t('webhooks.failureDetails')}>{d.status}</Tooltip.Trigger><Tooltip.Content><p class="max-w-xs break-words">{d.last_error}</p></Tooltip.Content></Tooltip.Root>
+ {:else}<span class={d.status === 'success' ? 'text-green-700' : 'text-muted-foreground'}>{d.status}</span>{/if}
 														</td>
-														<td class="py-1 pr-4">{d.response_status ?? $t('common.emDash')}</td>
-														<td class="py-1 pr-4">{d.attempt_count}</td>
-														<td class="py-1 text-muted-foreground">{d.last_attempted_at ? new Date(d.last_attempted_at).toLocaleString(localeTag()) : $t('common.emDash')}</td>
+														<td class="py-1 pr-4" data-label={$t('webhooks.deliveries.http')}>{d.response_status ?? $t('common.emDash')}</td>
+														<td class="py-1 pr-4" data-label={$t('webhooks.deliveries.attempts')}>{d.attempt_count}</td>
+														<td class="py-1 text-muted-foreground" data-label={$t('webhooks.deliveries.lastAttempt')}>{d.last_attempted_at ? new Date(d.last_attempted_at).toLocaleString(localeTag()) : $t('common.emDash')}
+ {#if d.next_attempt_at}<p>{$t('webhooks.nextAttempt')}: {new Date(d.next_attempt_at).toLocaleString(localeTag())}</p>{/if}
+ {#if d.status==='failed' && can('webhooks.update')}<Button type="button" size="sm" variant="outline" class="mt-2 min-h-11 sm:mt-0 sm:min-h-8" onclick={()=>{retryHook=wh.id;retryDelivery=d.id;retryOpen=true}}>{$t('webhooks.retry')}</Button>{/if}</td>
 													</tr>
 												{/each}
 											</tbody>
@@ -445,3 +463,17 @@
 {/if}
 
 <Dialog.Root bind:open={scopeEditOpen}><Dialog.Content class="sm:max-w-lg"><Dialog.Header><Dialog.Title>{$t('webhookScopes.edit')}</Dialog.Title><Dialog.Description>{$t('webhookScopes.hint')}</Dialog.Description></Dialog.Header>{#if scopeEditError}<p role="alert" class="text-sm text-destructive">{scopeEditError}</p>{/if}<WebhookScopePicker id="wh-edit-scope" items={scopeOptions} bind:value={scopeEditValue} /><Dialog.Footer><Button type="button" variant="ghost" onclick={()=>scopeEditOpen=false}>{$t('common.cancel')}</Button><Button type="button" disabled={scopeSaving||!scopeEditValue.length} onclick={saveScope}>{$t('common.save')}</Button></Dialog.Footer></Dialog.Content></Dialog.Root>
+
+<style>
+ @media(max-width:639px){
+ .webhook-table,.webhook-table>tbody,.webhook-table>tbody>tr,.webhook-table>tbody>tr>td{display:block;min-width:0;width:100%}
+ .webhook-table>thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+ .webhook-table>tbody>tr{padding:.5rem 0}
+ .webhook-table>tbody>tr>td{padding:.5rem 1rem;max-width:none;white-space:normal;overflow-wrap:anywhere}
+ .delivery-table,.delivery-table tbody,.delivery-table tr,.delivery-table td{display:block;min-width:0;width:100%}
+ .delivery-table thead{display:none}
+ .delivery-table tr{padding:.75rem 0}
+ .delivery-table td{padding:.25rem 0;overflow-wrap:anywhere}
+ .delivery-table td[data-label]::before{content:attr(data-label);display:block;color:var(--muted-foreground);font-family:var(--font-sans);font-size:.75rem;margin-bottom:.125rem}
+ }
+</style>

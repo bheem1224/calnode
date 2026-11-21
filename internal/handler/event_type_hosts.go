@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/calnode/calnode/internal/access"
 	"net/http"
+	"sort"
 
 	"github.com/calnode/calnode/internal/uid"
 )
@@ -40,7 +41,15 @@ func (h *Handler) resolveEventTypeHosts(ctx context.Context, eventTypeID string)
 		}
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if err = h.orderEventTypeHosts(ctx, eventTypeID, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // canManageEventType is the one rule for who may change an event type: its owner, or
@@ -293,4 +302,39 @@ func canPublishForHost(ctx context.Context, q access.Querier, u AuthUser, eventI
 	var n int
 	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM team_members head JOIN team_members host ON host.team_id=head.team_id WHERE head.team_id=? AND head.user_id=? AND head.role='owner' AND host.user_id=?`, team.String, u.ID, hostID).Scan(&n)
 	return err == nil && n > 0
+}
+
+// Team defaults rank first; the event host order breaks equal-priority ties.
+// Personal events have no team defaults, so their ordering remains unchanged.
+func (h *Handler) orderEventTypeHosts(ctx context.Context, eventID string, hosts []EventHost) error {
+	rows, err := h.db.QueryContext(ctx, `SELECT tm.user_id,tm.routing_priority FROM team_members tm JOIN event_types et ON et.team_id=tm.team_id WHERE et.id=?`, eventID)
+	if err != nil {
+		return err
+	}
+	priorities := map[string]int{}
+	for rows.Next() {
+		var id string
+		var priority int
+		if err = rows.Scan(&id, &priority); err != nil {
+			rows.Close()
+			return err
+		}
+		priorities[id] = priority
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	sort.SliceStable(hosts, func(i, j int) bool {
+		a, b := hosts[i], hosts[j]
+		if priorities[a.UserID] != priorities[b.UserID] {
+			return priorities[a.UserID] < priorities[b.UserID]
+		}
+		if a.Priority != b.Priority {
+			return a.Priority < b.Priority
+		}
+		return a.UserID < b.UserID
+	})
+	return nil
 }

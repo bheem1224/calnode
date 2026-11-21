@@ -5,6 +5,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { ConfirmDialog } from '$lib/components/ui/confirm-dialog';
 	import { Input } from '$lib/components/ui/input';
+	import HelpTooltip from '$lib/components/HelpTooltip.svelte';
 	import { Label } from '$lib/components/ui/label';
 	import { Combobox } from '$lib/components/ui/combobox';
 	import { Switch } from '$lib/components/ui/switch';
@@ -173,6 +174,21 @@
 	}
 
 
+	async function savePriority(teamId: string, userId: string, value: string) {
+		const priority = Number(value);
+		if (!value.trim() || !Number.isSafeInteger(priority)) {
+			toast.error(tr('teams.priorityInvalid'));
+			await refreshTeam(teamId);
+			return;
+		}
+		try {
+			await api.patch(`/v1/teams/${teamId}/members/${userId}`, { routing_priority: priority });
+		} catch (e: any) {
+			toast.error(e.message || tr('common.failed'));
+		}
+		await refreshTeam(teamId);
+	}
+
 	async function saveRole(teamId: string, userId: string, role: 'owner' | 'member') {
 		try {
 			await api.patch(`/v1/teams/${teamId}/members/${userId}`, { role });
@@ -319,7 +335,14 @@
 														<Select.Item value="owner" label={$t('teams.head')}>{$t('teams.head')}</Select.Item>
 													</Select.Content>
 												</Select.Root>
-												<Button size="sm" variant="outline" class="text-destructive hover:text-destructive" aria-label={$t('teams.removeNamedMember', { name: m.name })} onclick={() => removeMember(team.id, m.id)}>{$t('teams.members.remove')}</Button>
+												<div class="space-y-1">
+													<div class="flex items-center gap-1">
+														<Label for={`priority-${team.id}-${m.id}`} class="text-xs">{$t('teams.members.routingPriority')}</Label>
+														<HelpTooltip label={$t('teams.members.routingPriority')} text={$t('teams.priorityHint')} />
+													</div>
+													<Input id={`priority-${team.id}-${m.id}`} type="number" aria-label={$t('teams.priorityFor', { name: m.name })} value={m.routing_priority ?? 0} class="w-24" onchange={(e) => savePriority(team.id, m.id, e.currentTarget.value)} />
+												</div>
+            <Button size="sm" variant="outline" class="text-destructive hover:text-destructive" aria-label={$t('teams.removeNamedMember', { name: m.name })} onclick={() => removeMember(team.id, m.id)}>{$t('teams.members.remove')}</Button>
 											{:else}
 												<span class="text-sm text-muted-foreground">{m.role === 'owner' ? $t('teams.head') : $t('teams.member')}</span>
 											{/if}

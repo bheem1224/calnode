@@ -569,7 +569,10 @@
 			"logo": "Logo URL",
 			"location": "Location",
 			"showMembers": "Show team members on public page"
-		}
+		},
+		"priorityFor": "Routing priority for {name}",
+		"priorityInvalid": "Enter a whole-number routing priority.",
+		"priorityHint": "Lower numbers are preferred for priority routing. Event host order breaks ties. Equal numbers keep even routing balanced."
 	},
 	"eventTypes": {
 		"headTitle": "Event Types — Calnode",
@@ -849,7 +852,21 @@
 		},
 		"badge": {
 			"personalData": "· personal data"
-		}
+		},
+		"retry": "Retry delivery",
+		"retryTitle": "Retry failed delivery?",
+		"retryHint": "Resend the original signed payload with the same delivery ID. The receiver should ignore duplicates. Current access is checked again.",
+		"nextAttempt": "Next attempt",
+		"lifecycleFields": {
+			"title": "One-time links",
+			"token": "Link token (grants booking access)",
+			"eventTypeId": "Event type ID",
+			"bookingId": "Booking ID",
+			"expiresAt": "Link expiry",
+			"usedAt": "Link used at",
+			"linkId": "One-time link ID"
+		},
+		"failureDetails": "Delivery failure details"
 	},
 	"connections": {
 		"headTitle": "Connected apps — Calnode",

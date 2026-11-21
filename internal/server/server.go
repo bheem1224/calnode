@@ -718,6 +718,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("PATCH /v1/webhooks/{id}", h.RequireAuth(h.PatchWebhook))
 	mux.HandleFunc("DELETE /v1/webhooks/{id}", h.RequireAuth(h.DeleteWebhook))
 	mux.HandleFunc("GET /v1/webhooks/{id}/deliveries", h.RequireAuth(h.ListWebhookDeliveries))
+	mux.HandleFunc("POST /v1/webhooks/{id}/deliveries/{deliveryId}/retry", settingsRL(h.RequireAuth(h.RetryWebhookDelivery)))
 
 	// Google Calendar — connect/callback/status/disconnect
 	mux.HandleFunc("GET /v1/calendar/connect", h.RequireAuth(h.ConnectCalendar))

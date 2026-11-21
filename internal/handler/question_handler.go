@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/calnode/calnode/internal/access"
 	"github.com/calnode/calnode/internal/booking"
 	"github.com/calnode/calnode/internal/i18n"
 	"github.com/calnode/calnode/internal/uid"
@@ -413,7 +414,7 @@ func (h *Handler) GetBookingAnswers(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 	id := r.PathValue("id")
 
-	// Verify caller owns the booking.
+	// Apply the same booking-answer resource scope as other authenticated surfaces.
 	var hostID string
 	err := h.db.QueryRowContext(r.Context(),
 		`SELECT host_id FROM bookings WHERE id = ?`, id).Scan(&hostID)
@@ -426,7 +427,7 @@ func (h *Handler) GetBookingAnswers(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if hostID != user.ID {
+	if !access.BookingAllowed(r.Context(), h.db, user.ID, user.Permissions["bookings.answers"], id) {
 		h.writeError(w, http.StatusNotFound, "booking not found")
 		return
 	}

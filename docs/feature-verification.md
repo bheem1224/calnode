@@ -37,11 +37,22 @@ search-and-add flow at 390px, populated member administration, mobile custom-tim
 dialogs, and mobile/desktop editor navigation. Regression tests cover both themes.
 The automated feature suite also passed its 24 hosted/embed/manage booking flows.
 
-One compatibility cleanup remains: `team_members.routing_priority` is accepted and
-returned by the team membership API, but booking assignment uses the priority/order
-in `event_type_hosts`. Configure routing in each event's Hosts panel. The legacy
-team field should be explicitly deprecated or connected under a documented
-precedence rule; it must not be presented as an effective routing policy meanwhile.
+Team routing priority is now effective: lower team-member numbers rank first;
+event host order breaks ties. Personal event ordering is unchanged. The same
+ordering helper feeds availability, actual assignment and unsaved previews.
+Administrators can edit priority in the team member controls; this does not grant
+ordinary members or credentials additional membership-management authority.
+
+Webhook reliability regressions now cover explicit empty payload selections,
+filtered single-use events, separate authorization metadata, atomic booking/outbox
+rollback, failed fan-out recovery after confirmation completes, stable delivery
+identity, exhausted-crash status, retry windows/Retry-After, and scoped manual
+replay. See `internal/webhook/reliability_test.go`,
+`internal/worker/reliability_outbox_test.go`, `internal/worker/retry_test.go`,
+`internal/handler/webhook_retry_internal_test.go`,
+`internal/handler/routing_priority_internal_test.go`,
+`internal/handler/routing_priority_booking_test.go` and
+`frontend/src/webhook-reliability.visual.test.ts`.
 
 Local tests and dependency scans do not verify the deployed environment. Before
 opening production traffic, verify the actual Entra tenant/group restrictions,

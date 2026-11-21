@@ -70,8 +70,9 @@ func New(db *sql.DB, svc *webhook.Service, logger *slog.Logger, opts ...func(*Wo
 		logger:   logger,
 		handlers: map[string]func(context.Context, string) error{},
 		httpClient: &http.Client{
-			Timeout:   10 * time.Second,
-			Transport: netutil.SafeTransport(logger, "worker: webhook SSRF block"),
+			Timeout:       10 * time.Second,
+			Transport:     netutil.SafeTransport(logger, "worker: webhook SSRF block"),
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 		},
 		done: make(chan struct{}),
 	}
@@ -215,8 +216,13 @@ func (w *Worker) Poll(ctx context.Context) {
 		w.logger.Error("worker: reaper: fail exhausted", "error", err)
 	}
 
+	// Keep the visible delivery log consistent even after a last-attempt process crash.
+	if _, err := w.db.ExecContext(ctx, `UPDATE webhook_deliveries SET status='failed',last_error='delivery worker exhausted retries after crash',last_attempted_at=COALESCE(last_attempted_at,?) WHERE status='pending' AND id IN (SELECT json_extract(payload,'$.webhook_delivery_id') FROM jobs WHERE type='webhook.deliver' AND status='failed')`, now); err != nil {
+		w.logger.Error("worker: reconcile failed delivery", "error", err)
+	}
+
 	rows, err := w.db.QueryContext(ctx, `
-		SELECT id, type, payload, attempts, max_attempts
+		SELECT id, type, payload, attempts, max_attempts, created_at
 		FROM jobs
 		WHERE status = 'pending' AND run_at <= ?
 		ORDER BY run_at ASC, id ASC
@@ -227,13 +233,13 @@ func (w *Worker) Poll(ctx context.Context) {
 	}
 
 	type job struct {
-		id, typ, payload      string
-		attempts, maxAttempts int
+		id, typ, payload, created string
+		attempts, maxAttempts     int
 	}
 	var jobs []job
 	for rows.Next() {
 		var j job
-		if err := rows.Scan(&j.id, &j.typ, &j.payload, &j.attempts, &j.maxAttempts); err != nil {
+		if err := rows.Scan(&j.id, &j.typ, &j.payload, &j.attempts, &j.maxAttempts, &j.created); err != nil {
 			w.logger.Error("worker: scan job", "error", err)
 			continue
 		}
@@ -256,23 +262,25 @@ func (w *Worker) Poll(ctx context.Context) {
 		}
 		j.attempts++
 
-		if err := w.processJob(ctx, j.typ, j.payload); err != nil {
+		var processErr error
+		if webhookJob(j.typ) && webhookExpired(j.created, time.Now().UTC()) {
+			processErr = fmt.Errorf("webhook retry window expired")
+		} else {
+			processErr = w.processJob(ctx, j.typ, j.payload)
+		}
+		if err := processErr; err != nil {
 			w.logger.Error("worker: process job", "error", err, "job_id", j.id, "type", j.typ)
 			finishedAt := time.Now().UTC().Format(time.RFC3339Nano)
-			if j.attempts >= j.maxAttempts {
-				if _, uerr := w.db.ExecContext(ctx,
-					`UPDATE jobs SET status = 'failed', last_error = ?, finished_at = ? WHERE id = ?`,
-					err.Error(), finishedAt, j.id); uerr != nil {
+			next, terminal := retryAt(j.typ, j.created, j.attempts, err, time.Now().UTC())
+			if j.attempts >= j.maxAttempts || terminal {
+				if uerr := w.failJob(ctx, j.id, lockedUntil, j.typ, j.payload, err.Error(), finishedAt); uerr != nil {
 					w.logger.Error("worker: mark job failed", "error", uerr, "job_id", j.id)
 				}
-				if j.typ == "webhook.deliver" {
-					w.markDeliveryFailed(ctx, j.payload)
-				}
 			} else {
-				runAt := time.Now().UTC().Add(backoff(j.attempts)).Format(time.RFC3339)
+				runAt := next.Format(time.RFC3339)
 				if _, uerr := w.db.ExecContext(ctx,
-					`UPDATE jobs SET status = 'pending', last_error = ?, run_at = ? WHERE id = ?`,
-					err.Error(), runAt, j.id); uerr != nil {
+					`UPDATE jobs SET status = 'pending', last_error = ?, run_at = ? WHERE id = ? AND status='running' AND locked_until=?`,
+					err.Error(), runAt, j.id, lockedUntil); uerr != nil {
 					w.logger.Error("worker: requeue job", "error", uerr, "job_id", j.id)
 				}
 			}
@@ -281,8 +289,8 @@ func (w *Worker) Poll(ctx context.Context) {
 			// may have reset this row to pending and another pass may already own
 			// the retry — a stale completion must not overwrite that state.
 			res, uerr := w.db.ExecContext(ctx,
-				`UPDATE jobs SET status = 'done', finished_at = ? WHERE id = ? AND status = 'running'`,
-				time.Now().UTC().Format(time.RFC3339Nano), j.id)
+				`UPDATE jobs SET status = 'done', finished_at = ? WHERE id = ? AND status = 'running' AND locked_until=?`,
+				time.Now().UTC().Format(time.RFC3339Nano), j.id, lockedUntil)
 			if uerr != nil {
 				w.logger.Error("worker: mark job done", "error", uerr, "job_id", j.id)
 			} else if n, _ := res.RowsAffected(); n == 0 {
@@ -304,6 +312,22 @@ func (w *Worker) processJob(ctx context.Context, typ, payload string) error {
 		return fn(ctx, payload)
 	}
 	switch typ {
+	case "webhook.enqueue":
+		var p struct {
+			Event    string                 `json:"event"`
+			SourceID string                 `json:"source_event_id"`
+			Booking  webhook.BookingPayload `json:"booking"`
+		}
+		if err := json.Unmarshal([]byte(payload), &p); err != nil {
+			return err
+		}
+		if p.SourceID == "" || p.Booking.ID == "" {
+			return fmt.Errorf("invalid webhook outbox event")
+		}
+		if w.svc == nil {
+			return fmt.Errorf("webhook service unavailable")
+		}
+		return w.svc.EnqueueEvent(ctx, p.Event, p.Booking, p.SourceID)
 	case "webhook.deliver":
 		return w.deliverWebhook(ctx, payload)
 	case "reminder.send":
@@ -413,19 +437,20 @@ func (w *Worker) deliverWebhook(ctx context.Context, jobPayload string) error {
 	}
 
 	var (
-		deliveryPayload string
-		event           string
-		webhookURL      string
-		secretEnc       string
-		webhookID       string
-		bookingID       sql.NullString
+		deliveryPayload         string
+		event                   string
+		webhookURL              string
+		secretEnc               string
+		webhookID               string
+		bookingID               sql.NullString
+		resourceID, eventTypeID sql.NullString
 	)
 	err := w.db.QueryRowContext(ctx, `
-		SELECT d.payload, d.event, wh.url, wh.secret_enc,wh.id,d.booking_id
+		SELECT d.payload, d.event, wh.url, wh.secret_enc,wh.id,d.booking_id,d.resource_id,d.event_type_id
 		FROM webhook_deliveries d
 		JOIN webhooks wh ON wh.id = d.webhook_id
 		WHERE d.id = ?`, p.WebhookDeliveryID).
-		Scan(&deliveryPayload, &event, &webhookURL, &secretEnc, &webhookID, &bookingID)
+		Scan(&deliveryPayload, &event, &webhookURL, &secretEnc, &webhookID, &bookingID, &resourceID, &eventTypeID)
 	if err == sql.ErrNoRows {
 		return nil // delivery or webhook deleted; skip silently
 	}
@@ -442,12 +467,19 @@ func (w *Worker) deliverWebhook(ctx context.Context, jobPayload string) error {
 		} `json:"data"`
 	}
 	_ = json.Unmarshal([]byte(deliveryPayload), &envelope)
-	eventID := envelope.Data.EventTypeID
+	eventID := eventTypeID.String
+	if eventID == "" {
+		eventID = envelope.Data.EventTypeID
+	}
 	if eventID == "" {
 		eventID = envelope.Data.EventTypeSlug
 	}
-	if !w.svc.DeliveryAuthorized(ctx, webhookID, bookingID.String, eventID, event, envelope.Data.ID) || (len(envelope.Data.Answers) > 0 && !w.svc.DeliveryAuthorized(ctx, webhookID, bookingID.String, eventID, "booking.answers")) {
-		_, _ = w.db.ExecContext(ctx, `UPDATE webhook_deliveries SET status='failed',last_attempted_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339), p.WebhookDeliveryID)
+	linkID := resourceID.String
+	if linkID == "" {
+		linkID = envelope.Data.ID
+	}
+	if !w.svc.DeliveryAuthorized(ctx, webhookID, bookingID.String, eventID, event, linkID) || (len(envelope.Data.Answers) > 0 && !w.svc.DeliveryAuthorized(ctx, webhookID, bookingID.String, eventID, "booking.answers")) {
+		_, _ = w.db.ExecContext(ctx, `UPDATE webhook_deliveries SET status='failed',last_error='subscription disabled or permissions/scope revoked',last_attempted_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339), p.WebhookDeliveryID)
 		return nil
 	}
 	secret, err := w.svc.DecryptSecret(secretEnc)
@@ -473,11 +505,11 @@ func (w *Worker) deliverWebhook(ctx context.Context, jobPayload string) error {
 	if err != nil {
 		// Transient transport failure: the job retries, so the delivery is
 		// still in flight — record it as pending, not failed. Terminal state
-		// is set by markDeliveryFailed when the job exhausts its attempts.
+		// is set by failJob when the job exhausts its attempts.
 		if _, uerr := w.db.ExecContext(ctx, `
 			UPDATE webhook_deliveries
-			SET status = 'pending', attempt_count = attempt_count + 1, last_attempted_at = ?
-			WHERE id = ?`, now, p.WebhookDeliveryID); uerr != nil {
+			SET status = 'pending', attempt_count = attempt_count + 1, last_attempted_at = ?,last_error=?
+			WHERE id = ?`, now, err.Error(), p.WebhookDeliveryID); uerr != nil {
 			w.logger.Error("worker: mark webhook delivery pending", "error", uerr, "delivery_id", p.WebhookDeliveryID)
 		}
 		return fmt.Errorf("worker: http post: %w", err)
@@ -494,35 +526,39 @@ func (w *Worker) deliverWebhook(ctx context.Context, jobPayload string) error {
 	}
 	if _, uerr := w.db.ExecContext(ctx, `
 		UPDATE webhook_deliveries
-		SET status = ?, response_status = ?, attempt_count = attempt_count + 1, last_attempted_at = ?
-		WHERE id = ?`, status, resp.StatusCode, now, p.WebhookDeliveryID); uerr != nil {
+		SET status = ?, response_status = ?, attempt_count = attempt_count + 1, last_attempted_at = ?,last_error=?
+		WHERE id = ?`, status, resp.StatusCode, now, responseError(resp.StatusCode), p.WebhookDeliveryID); uerr != nil {
 		w.logger.Error("worker: record webhook delivery result", "error", uerr, "delivery_id", p.WebhookDeliveryID)
 	}
 
 	if status == "pending" && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
-		return fmt.Errorf("worker: endpoint returned HTTP %d", resp.StatusCode)
+		return &deliveryFailure{status: resp.StatusCode, after: retryAfter(resp.Header.Get("Retry-After"), time.Now().UTC())}
 	}
 	return nil
 }
 
-// markDeliveryFailed flips a webhook delivery to terminal 'failed' when its job
-// exhausts all attempts. Per-attempt failures stay 'pending' (still in flight),
-// so the deliveries UI only shows failure when retries are done.
-func (w *Worker) markDeliveryFailed(ctx context.Context, jobPayload string) {
-	var p struct {
-		WebhookDeliveryID string `json:"webhook_delivery_id"`
+// Persist terminal job and delivery states together, only while this worker still
+// owns the lease. A stale worker must not fail a newly claimed or manually retried job.
+func (w *Worker) failJob(ctx context.Context, id, lease, typ, payload, reason, finishedAt string) error {
+	tx, err := w.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	if err := json.Unmarshal([]byte(jobPayload), &p); err != nil {
-		return
+	defer tx.Rollback() //nolint:errcheck
+	res, err := tx.ExecContext(ctx,
+		`UPDATE jobs SET status='failed',last_error=?,finished_at=? WHERE id=? AND status='running' AND locked_until=?`,
+		reason, finishedAt, id, lease)
+	if err != nil {
+		return err
 	}
-	if p.WebhookDeliveryID == "" {
-		return
+	if n, _ := res.RowsAffected(); n > 0 && typ == "webhook.deliver" {
+		if _, err = tx.ExecContext(ctx,
+			`UPDATE webhook_deliveries SET status='failed',last_error=? WHERE id=json_extract(?,'$.webhook_delivery_id') AND status!='success'`,
+			reason, payload); err != nil {
+			return err
+		}
 	}
-	if _, err := w.db.ExecContext(ctx,
-		`UPDATE webhook_deliveries SET status = 'failed' WHERE id = ? AND status != 'success'`,
-		p.WebhookDeliveryID); err != nil {
-		w.logger.Error("worker: mark webhook delivery failed", "error", err, "delivery_id", p.WebhookDeliveryID)
-	}
+	return tx.Commit()
 }
 
 func (w *Worker) sweepExpiredSingleUseLinks(ctx context.Context, now string) {

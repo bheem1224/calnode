@@ -6,7 +6,6 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -139,7 +138,10 @@ func (h *Handler) readBookingPreview(w http.ResponseWriter, r *http.Request) (*b
 			seen[host.UserID] = true
 			hosts = append(hosts, EventHost{UserID: host.UserID, Role: host.Role, Priority: host.Priority})
 		}
-		sort.SliceStable(hosts, func(i, j int) bool { return hosts[i].Priority < hosts[j].Priority })
+		if err := h.orderEventTypeHosts(r.Context(), etID, hosts); err != nil {
+			h.writeError(w, 500, "could not order preview hosts")
+			return nil, false
+		}
 	}
 	if req.Mode == "" {
 		req.Mode = "calendar"

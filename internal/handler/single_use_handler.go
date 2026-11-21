@@ -83,8 +83,9 @@ func (h *Handler) CreateSingleUseLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		ExpiresInHours *int            `json:"expires_in_hours"`
-		CustomSlots    json.RawMessage `json:"custom_slots"`
+		ExpiresInHours   *int            `json:"expires_in_hours"`
+		ExpiresInSeconds *int            `json:"expires_in_seconds"`
+		CustomSlots      json.RawMessage `json:"custom_slots"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -120,6 +121,14 @@ func (h *Handler) CreateSingleUseLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	expHours := defaultSingleUseExpiryHours
+	if req.ExpiresInSeconds != nil && req.ExpiresInHours != nil {
+		h.writeError(w, http.StatusBadRequest, "use expires_in_hours or expires_in_seconds, not both")
+		return
+	}
+	if req.ExpiresInSeconds != nil && (*req.ExpiresInSeconds < 1 || *req.ExpiresInSeconds > 604800) {
+		h.writeError(w, http.StatusBadRequest, "expires_in_seconds must be between 1 and 604800")
+		return
+	}
 	if req.ExpiresInHours != nil {
 		if *req.ExpiresInHours < 0 {
 			h.writeError(w, http.StatusBadRequest, "expires_in_hours cannot be negative")
@@ -140,8 +149,12 @@ func (h *Handler) CreateSingleUseLink(w http.ResponseWriter, r *http.Request) {
 	nowStr := nowT.Format(time.RFC3339Nano)
 	var expiresAtSQL sql.NullString
 	var expiresAtPtr *string
-	if expHours > 0 {
-		expStr := nowT.Add(time.Duration(expHours) * time.Hour).Format(time.RFC3339Nano)
+	expiry := time.Duration(expHours) * time.Hour
+	if req.ExpiresInSeconds != nil {
+		expiry = time.Duration(*req.ExpiresInSeconds) * time.Second
+	}
+	if expiry > 0 {
+		expStr := nowT.Add(expiry).Format(time.RFC3339Nano)
 		expiresAtSQL = sql.NullString{String: expStr, Valid: true}
 		expiresAtPtr = &expStr
 	}

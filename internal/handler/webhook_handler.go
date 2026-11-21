@@ -357,11 +357,13 @@ func (h *Handler) ListWebhookDeliveries(w http.ResponseWriter, r *http.Request) 
 	items := make([]map[string]any, len(deliveries))
 	for i, d := range deliveries {
 		item := map[string]any{
-			"id":            d.ID,
-			"webhook_id":    d.WebhookID,
-			"event":         d.Event,
-			"status":        d.Status,
-			"attempt_count": d.AttemptCount,
+			"id":              d.ID,
+			"webhook_id":      d.WebhookID,
+			"event":           d.Event,
+			"status":          d.Status,
+			"attempt_count":   d.AttemptCount,
+			"last_error":      d.LastError,
+			"next_attempt_at": d.NextAttemptAt,
 		}
 		if d.BookingID != "" {
 			item["booking_id"] = d.BookingID
@@ -416,4 +418,30 @@ func (h *Handler) validateWebhookDataGrants(w http.ResponseWriter, u AuthUser, e
 		return false
 	}
 	return true
+}
+
+func (h *Handler) RetryWebhookDelivery(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	id := r.PathValue("id")
+	deliveryID := r.PathValue("deliveryId")
+	var owner, bookingID, eventID, event, resource string
+	err := h.db.QueryRowContext(r.Context(), `SELECT wh.user_id,COALESCE(d.booking_id,''),COALESCE(d.event_type_id,''),d.event,COALESCE(d.resource_id,'') FROM webhook_deliveries d JOIN webhooks wh ON wh.id=d.webhook_id WHERE wh.id=? AND d.id=?`, id, deliveryID).Scan(&owner, &bookingID, &eventID, &event, &resource)
+	if err != nil {
+		h.writeError(w, 404, "webhook delivery not found")
+		return
+	}
+	if !user.Permissions.Has("webhooks.deliveries") || !h.canAccessUser(r.Context(), user, "webhooks.update", owner) || !h.canAccessUser(r.Context(), user, "webhooks.deliveries", owner) {
+		h.writeError(w, 403, "webhook access denied")
+		return
+	}
+	if !h.webhookSvc.DeliveryAuthorized(r.Context(), id, bookingID, eventID, event, resource) {
+		h.writeError(w, 403, "delivery is no longer authorized")
+		return
+	}
+	if err = h.webhookSvc.RetryDelivery(r.Context(), owner, id, deliveryID); err != nil {
+		h.writeError(w, 409, err.Error())
+		return
+	}
+	h.securityAudit(r.Context(), user.ID, "webhook.retry", deliveryID, nil)
+	h.writeJSON(w, 200, map[string]string{"status": "pending"})
 }

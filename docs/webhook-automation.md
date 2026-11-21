@@ -17,6 +17,12 @@ is **168 hours**, not three days; zero means no expiry. Persist the returned lin
 as private. Link listings return `expires_at`, `used_at`, `booking_id` and any
 `custom_slots`. Renewal creates a **new** link; there is no in-place expiry editor.
 
+For shorter windows, `{"expires_in_seconds":30}` creates a genuinely short-lived
+link. Seconds must be an integer from 1 to 604800 (seven days), and cannot be
+combined with `expires_in_hours`. This uses the same authoritative expiry checked
+by the public booking API and expiry worker. Deploy an image supporting this field
+before using it: an older image may ignore unknown fields and use its default.
+
 Subscribe to `single_use_link.booked` and `single_use_link.expired`. Their `data.id`
 is the link ID, and a booked notification includes `booking_id`. These events
 describe consumption or expiry of the link; inspect the booking if your workflow
@@ -65,10 +71,27 @@ nonempty multi-scopes. Legacy global hooks retain their account-level behavior.
 
 Webhook jobs and deliveries are persisted in SQLite. The worker polls about every
 five seconds. Requests have a ten-second timeout and use SSRF-safe outbound
-networking. A non-2xx response or transport failure is retried with a one-minute
-delay, then a five-minute delay: **three total attempts** by default. Exhausted
-deliveries become failed and remain inspectable in the webhook delivery log/API.
-This is bounded retry, not an indefinite delivery guarantee.
+networking. Redirects are not followed; configure the final receiver URL.
+Transport failures and retryable HTTP errors receive up to **24 attempts within
+72 hours**. Backoff is approximately 1 minute, 5 minutes, 15 minutes, 30 minutes,
+1 hour, 2 hours, 4 hours, then 6 hours, with jitter. `Retry-After` can postpone a
+retry, bounded by the retry window. HTTP 4xx errors other than 408, 425 and 429
+are terminal so incorrect URLs, credentials or payloads do not retry endlessly.
+
+Booking creation/confirmation, cancellation, rescheduling and host reassignment
+persist their notification source atomically with the state change. The outbox
+worker retries fan-out failures independently of calendar/email confirmation.
+An expansion replay preserves one logical delivery per subscriber/source event.
+Booking events include a stable `event_id` and the transition's `occurred_at`.
+Delivery order is not guaranteed across independent retries.
+
+Exhausted deliveries become failed, including a crash during the final attempt.
+The delivery log exposes the failure reason and next pending attempt time.
+`POST /v1/webhooks/{id}/deliveries/{deliveryId}/retry` deliberately restarts a
+failed delivery with the original ID and signed payload. It requires both
+`webhooks.update` and `webhooks.deliveries` for the owner/resource scope. The UI
+reviews the replay before submitting it; subscription state and current access
+are checked again. Manual retry starts a new bounded retry window.
 
 The single-use lifecycle marker and its delivery jobs commit in one transaction.
 The worker also recovers consumed links whose booking process stopped before
@@ -83,7 +106,9 @@ Your receiver should:
    with the hex-decoded signing secret. The header is `sha256=<hex digest>`.
 2. Persist the request durably and return a 2xx promptly; process it asynchronously.
 3. Deduplicate by `X-Calnode-Delivery`. That ID, payload and signature remain
-   stable across retries. Also make campaign actions idempotent by link ID.
+   stable across retries. For durable booking transitions, `event_id` identifies
+   the source across subscriptions. Lifecycle actions can additionally use the
+   signed `(event, data.id)` pair. Make campaign actions idempotent by link ID.
 4. Reconcile outstanding links on a schedule so a prolonged receiver outage or
    exhausted retry does not leave the campaign waiting forever.
 
@@ -91,6 +116,20 @@ A crash after a receiver accepted a request but before the sender recorded succe
 can cause another attempt. The contract is at-least-once processing with bounded
 retries, not exactly-once processing. Do not equate absence of a webhook with
 proof that nobody booked.
+
+## Payload field selection
+
+Omitting `fields` retains the legacy default payload. Explicit `fields: []` sends
+an empty `data` object; it never falls back to defaults. Field selection applies
+to single-use lifecycle events as well as booking events. Authorization metadata
+is stored separately, so filtering out identifiers does not disable access checks.
+
+Selectable correlation fields include `event_type_id`, `single_use_link_id`,
+`booking_id`, `token`, `expires_at` and `used_at`. On lifecycle events, `data.id`
+is the link ID; on booking events, it is the booking ID. Select `single_use_link_id`
+on booking events to join the booking to an issued invitation without matching
+untrusted names or email text. Only fields relevant to a given event are populated.
+The token/URL is a bearer capability and should not be written to routine logs.
 
 ## Saved email templates
 

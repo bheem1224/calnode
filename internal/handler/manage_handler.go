@@ -14,7 +14,6 @@ import (
 	"github.com/calnode/calnode/internal/booking"
 	"github.com/calnode/calnode/internal/i18n"
 	"github.com/calnode/calnode/internal/mailer"
-	"github.com/calnode/calnode/internal/webhook"
 )
 
 //go:embed templates/manage.html
@@ -384,23 +383,6 @@ func (h *Handler) rescheduleSideEffects(bCopy booking.Booking, capturedEtID stri
 		h.applyHostInvite(ctx, &hd, bCopy.InviteDelivery, bCopy.HostID)
 		if err := mailer.SendRescheduleToHost(ctx, h.mailer, hd); err != nil {
 			h.logger.Error("reschedule email (host)", "error", err, "booking_id", bCopy.ID)
-		}
-	}
-
-	if h.webhookSvc != nil {
-		if err := h.webhookSvc.Enqueue(ctx, "booking.rescheduled", webhook.BookingPayload{
-			ID:              bCopy.ID,
-			EventTypeSlug:   d.EventTypeSlug,
-			HostID:          bCopy.HostID,
-			StartAt:         bCopy.StartAt.UTC().Format(time.RFC3339),
-			EndAt:           bCopy.EndAt.UTC().Format(time.RFC3339),
-			Status:          bCopy.Status,
-			LocationValue:   bCopy.LocationValue,
-			CreatedAt:       bCopy.CreatedAt.UTC().Format(time.RFC3339),
-			PreviousStartAt: previousStart.UTC().Format(time.RFC3339),
-			PreviousEndAt:   previousEnd.UTC().Format(time.RFC3339),
-		}); err != nil {
-			h.logger.Error("enqueue booking.rescheduled webhook", "error", err, "booking_id", bCopy.ID)
 		}
 	}
 

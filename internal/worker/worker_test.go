@@ -152,6 +152,8 @@ func TestWorker_marksJobFailedAfterExhaustingRetries(t *testing.T) {
 		Status: "confirmed",
 	})
 
+	// Explicit small budget exercises exhaustion independently of the production policy.
+	database.Exec(`UPDATE jobs SET max_attempts=3 WHERE type='webhook.deliver'`)
 	w := newWorker(t, database, svc)
 	past := time.Now().UTC().Add(-time.Second).Format(time.RFC3339)
 

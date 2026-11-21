@@ -66,7 +66,7 @@ var handlerPermissions = func() map[string]string {
 		"transcripts.read":      "GetBookingTranscript",
 		"webhooks.read":         "ListWebhooks WebhookScopeOptions",
 		"webhooks.create":       "CreateWebhook",
-		"webhooks.update":       "PatchWebhook",
+		"webhooks.update":       "PatchWebhook RetryWebhookDelivery",
 		"webhooks.delete":       "DeleteWebhook",
 		"webhooks.deliveries":   "ListWebhookDeliveries",
 		"webhooks.rotate":       "RotateWebhookSecret",

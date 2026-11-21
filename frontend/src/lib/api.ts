@@ -176,6 +176,7 @@ export type SingleUseLink = {
 
 export type CreateSingleUseLinkPayload = {
 	expires_in_hours?: number;
+	expires_in_seconds?: number;
 };
 
 export type QuestionType =
@@ -267,6 +268,8 @@ export type WebhookDelivery = {
 	response_status?: number;
 	attempt_count: number;
 	last_attempted_at?: string;
+ last_error?: string;
+ next_attempt_at?: string;
 };
 
 export type CalendarConnection = {

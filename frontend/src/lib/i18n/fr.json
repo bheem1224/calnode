@@ -569,7 +569,10 @@
 			"logo": "URL du logo",
 			"location": "Lieu",
 			"showMembers": "Afficher les membres sur la page publique"
-		}
+		},
+		"priorityFor": "Priorité de routage de {name}",
+		"priorityInvalid": "Saisissez une priorité entière.",
+		"priorityHint": "Les nombres inférieurs sont prioritaires. L’ordre des hôtes départage les égalités. Des priorités identiques préservent la répartition équilibrée."
 	},
 	"eventTypes": {
 		"headTitle": "Types de rendez-vous — Calnode",
@@ -849,7 +852,21 @@
 		},
 		"badge": {
 			"personalData": "· données personnelles"
-		}
+		},
+		"retry": "Réessayer",
+		"retryTitle": "Réessayer la livraison ?",
+		"retryHint": "Renvoie le contenu signé original avec le même identifiant de livraison. Le destinataire doit ignorer les doublons. Les droits sont vérifiés à nouveau.",
+		"nextAttempt": "Prochaine tentative",
+		"lifecycleFields": {
+			"title": "Liens à usage unique",
+			"token": "Jeton du lien (autorise la réservation)",
+			"eventTypeId": "ID du type d’événement",
+			"bookingId": "ID de réservation",
+			"expiresAt": "Expiration du lien",
+			"usedAt": "Date d’utilisation",
+			"linkId": "ID du lien à usage unique"
+		},
+		"failureDetails": "Détails de l’échec de livraison"
 	},
 	"connections": {
 		"headTitle": "Applications connectées — Calnode",

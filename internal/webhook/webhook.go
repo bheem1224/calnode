@@ -60,6 +60,12 @@ const (
 	FieldCurrency        = "amount_paid_currency"
 	FieldRSVPStatus      = "rsvp_status"
 	FieldInviteDelivery  = "invite_delivery"
+	FieldToken           = "token"
+	FieldEventTypeID     = "event_type_id"
+	FieldBookingID       = "booking_id"
+	FieldExpiresAt       = "expires_at"
+	FieldUsedAt          = "used_at"
+	FieldSingleUseLinkID = "single_use_link_id"
 )
 
 // AllFields is every selectable field, in payload order. Used to validate config
@@ -71,7 +77,7 @@ var AllFields = []string{
 	FieldHostID, FieldHostName, FieldHostEmail,
 	FieldAttendeeName, FieldAttendeeEmail, FieldAttendeeTZ, FieldAnswers,
 	FieldPaymentStatus, FieldAmountPaid, FieldCurrency, FieldRSVPStatus,
-	FieldInviteDelivery,
+	FieldInviteDelivery, FieldToken, FieldEventTypeID, FieldBookingID, FieldExpiresAt, FieldUsedAt, FieldSingleUseLinkID,
 }
 
 // defaultFields reproduces the original payload (no PII, no answers) so a webhook with no
@@ -114,6 +120,8 @@ type Delivery struct {
 	Status          string
 	ResponseStatus  *int
 	AttemptCount    int
+	LastError       string
+	NextAttemptAt   *string
 	LastAttemptedAt *string
 }
 
@@ -126,6 +134,7 @@ type BookingAnswerPayload struct {
 
 // BookingPayload is the "data" object inside every webhook envelope.
 type BookingPayload struct {
+	OccurredAt         string                 `json:"occurred_at,omitempty"`
 	ID                 string                 `json:"id"`
 	EventTypeSlug      string                 `json:"event_type_slug"`
 	HostID             string                 `json:"host_id"`
@@ -371,11 +380,13 @@ func (s *Service) Delete(ctx context.Context, userID, id string) error {
 // enrichedBooking is the full set of values available to a webhook payload,
 // gathered once per Enqueue and then filtered per-webhook by its field list.
 type enrichedBooking struct {
-	core                                    BookingPayload
-	eventTypeName                           string
-	hostName, hostEmail                     string
-	attendeeName, attendeeEmail, attendeeTZ string
-	answers                                 []map[string]string
+	eventTypeID                              string
+	linkID, linkToken, linkExpires, linkUsed string
+	core                                     BookingPayload
+	eventTypeName                            string
+	hostName, hostEmail                      string
+	attendeeName, attendeeEmail, attendeeTZ  string
+	answers                                  []map[string]string
 	// inviteDelivery is who sent the booker's invite (calendar, calnode or none), read
 	// from the booking row so every event carries it without each caller passing it.
 	inviteDelivery string
@@ -387,16 +398,21 @@ type enrichedBooking struct {
 // safe on the single-connection pool, and run before Enqueue opens its tx.
 func (s *Service) enrich(ctx context.Context, p BookingPayload) enrichedBooking {
 	bd := enrichedBooking{core: p, answers: []map[string]string{}}
+	var currentLocation string
 	if p.ID == "" {
 		return bd
 	}
 	_ = s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(et.name,''), COALESCE(u.name,''), COALESCE(u.email,''), b.invite_delivery
+		SELECT et.id,COALESCE(et.name,''), COALESCE(u.name,''), COALESCE(u.email,''), b.invite_delivery,COALESCE(b.location_value,'')
 		FROM bookings b
 		JOIN event_types et ON et.id = b.event_type_id
 		JOIN users u ON u.id = b.host_id
-		WHERE b.id = ?`, p.ID).Scan(&bd.eventTypeName, &bd.hostName, &bd.hostEmail, &bd.inviteDelivery)
+		WHERE b.id = ?`, p.ID).Scan(&bd.eventTypeID, &bd.eventTypeName, &bd.hostName, &bd.hostEmail, &bd.inviteDelivery, &currentLocation)
 
+	_ = s.db.QueryRowContext(ctx, `SELECT id,token,COALESCE(expires_at,''),COALESCE(used_at,'') FROM single_use_tokens WHERE booking_id=?`, p.ID).Scan(&bd.linkID, &bd.linkToken, &bd.linkExpires, &bd.linkUsed)
+	if bd.core.LocationValue == "" {
+		bd.core.LocationValue = currentLocation
+	}
 	_ = s.db.QueryRowContext(ctx, `
 		SELECT COALESCE(name,''), COALESCE(email,''), COALESCE(iana_timezone,'')
 		FROM booking_attendees WHERE booking_id = ? AND is_organizer = 1`, p.ID).
@@ -431,6 +447,8 @@ func buildData(bd enrichedBooking, fields []string) map[string]any {
 		FieldEndAt:         bd.core.EndAt,
 		FieldCreatedAt:     bd.core.CreatedAt,
 		FieldEventTypeSlug: bd.core.EventTypeSlug,
+		FieldEventTypeID:   bd.eventTypeID,
+		FieldBookingID:     bd.core.ID,
 		FieldEventTypeName: bd.eventTypeName,
 		FieldHostID:        bd.core.HostID,
 		FieldHostName:      bd.hostName,
@@ -449,6 +467,7 @@ func buildData(bd enrichedBooking, fields []string) map[string]any {
 		FieldCurrency:        bd.core.AmountPaidCurrency,
 		FieldRSVPStatus:      bd.core.RSVPStatus,
 		FieldInviteDelivery:  bd.inviteDelivery,
+		FieldSingleUseLinkID: bd.linkID, FieldToken: bd.linkToken, FieldExpiresAt: bd.linkExpires, FieldUsedAt: bd.linkUsed,
 	}
 	out := make(map[string]any, len(fields))
 	for _, f := range fields {
@@ -465,8 +484,14 @@ func buildData(bd enrichedBooking, fields []string) map[string]any {
 
 // Enqueue finds active legacy-account or multi-scope webhooks subscribed to event,
 // and creates a webhook_deliveries + jobs row pair for each. Failures are
-// soft-errors (caller logs; a booking is already committed).
+// errors returned to the durable outbox worker for retry.
 func (s *Service) Enqueue(ctx context.Context, event string, p BookingPayload) error {
+	return s.EnqueueEvent(ctx, event, p, "")
+}
+
+// EnqueueEvent keeps one delivery identity per webhook and durable source event.
+// Retrying an outbox expansion cannot emit a second logical notification.
+func (s *Service) EnqueueEvent(ctx context.Context, event string, p BookingPayload, sourceID string) error {
 	var eventTypeID string
 	if p.EventTypeSlug != "" {
 		_ = s.db.QueryRowContext(ctx, `SELECT id FROM event_types WHERE slug = ?`, p.EventTypeSlug).Scan(&eventTypeID)
@@ -551,16 +576,26 @@ func (s *Service) Enqueue(ctx context.Context, event string, p BookingPayload) e
 		return fmt.Errorf("webhook: begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
+	retryStartedAt := now
+	if sourceID != "" {
+		if _, err := time.Parse(time.RFC3339Nano, p.OccurredAt); err == nil {
+			retryStartedAt = p.OccurredAt
+		}
+	}
 
 	for _, wh := range matching {
 		fieldset := wh.fields
-		if len(fieldset) == 0 {
+		if fieldset == nil {
 			fieldset = defaultFields
 		}
 		envelope := map[string]any{
 			"event":      event,
 			"created_at": createdAt,
 			"data":       buildData(bd, fieldset),
+		}
+		if sourceID != "" {
+			envelope["event_id"] = sourceID
+			envelope["occurred_at"] = p.OccurredAt
 		}
 		payloadBytes, err := json.Marshal(envelope)
 		if err != nil {
@@ -569,17 +604,24 @@ func (s *Service) Enqueue(ctx context.Context, event string, p BookingPayload) e
 
 		deliveryID := uid.New()
 		jobID := uid.New()
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO webhook_deliveries (id, webhook_id, booking_id, event, payload, status)
-			VALUES (?, ?, ?, ?, ?, 'pending')`,
-			deliveryID, wh.id, bookingIDArg, event, string(payloadBytes)); err != nil {
+		var source any
+		if sourceID != "" {
+			source = sourceID
+		}
+		res, err := tx.ExecContext(ctx, `
+		 INSERT INTO webhook_deliveries(id,webhook_id,booking_id,event,payload,status,source_event_id,event_type_id,resource_id)
+		 VALUES(?,?,?,?,?,'pending',?,?,?) ON CONFLICT(webhook_id,source_event_id) DO NOTHING`, deliveryID, wh.id, bookingIDArg, event, string(payloadBytes), source, eventTypeID, p.ID)
+		if err != nil {
 			return fmt.Errorf("webhook: insert delivery: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			continue
 		}
 		jobPayload, _ := json.Marshal(map[string]string{"webhook_delivery_id": deliveryID})
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO jobs (id, type, payload, run_at)
-			VALUES (?, 'webhook.deliver', ?, ?)`,
-			jobID, string(jobPayload), now); err != nil {
+			INSERT INTO jobs (id, type, payload, run_at, max_attempts,created_at)
+			VALUES (?, 'webhook.deliver', ?, ?, 24,?)`,
+			jobID, string(jobPayload), now, retryStartedAt); err != nil {
 			return fmt.Errorf("webhook: insert job: %w", err)
 		}
 	}
@@ -612,7 +654,7 @@ func (s *Service) EnqueueSingleUseOnce(ctx context.Context, event string, p Sing
 }
 func (s *Service) enqueueSingleUse(ctx context.Context, event string, p SingleUsePayload, once bool) error {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, events FROM webhooks
+		SELECT id, events, fields FROM webhooks
 		WHERE is_active = 1 AND (scopes_json IS NOT NULL OR ((user_id = ? OR event_type_id IS NOT NULL)
 		  AND (event_type_id IS NULL OR (? != '' AND event_type_id = ?))))`,
 		p.HostID, p.EventTypeID, p.EventTypeID)
@@ -620,10 +662,15 @@ func (s *Service) enqueueSingleUse(ctx context.Context, event string, p SingleUs
 		return fmt.Errorf("webhook: list single-use for enqueue: %w", err)
 	}
 
-	var matching []string
+	type target struct {
+		id     string
+		fields []string
+	}
+	var matching []target
 	for rows.Next() {
 		var id, eventsJSON string
-		if err := rows.Scan(&id, &eventsJSON); err != nil {
+		var fieldsJSON sql.NullString
+		if err := rows.Scan(&id, &eventsJSON, &fieldsJSON); err != nil {
 			rows.Close() // #nosec G104 -- already returning scan error
 			return fmt.Errorf("webhook: scan single-use: %w", err)
 		}
@@ -631,7 +678,13 @@ func (s *Service) enqueueSingleUse(ctx context.Context, event string, p SingleUs
 		_ = json.Unmarshal([]byte(eventsJSON), &events)
 		for _, e := range events {
 			if e == event {
-				matching = append(matching, id)
+				var fields []string
+				if fieldsJSON.Valid {
+					if err := json.Unmarshal([]byte(fieldsJSON.String), &fields); err != nil {
+						return err
+					}
+				}
+				matching = append(matching, target{id, fields})
 				break
 			}
 		}
@@ -642,22 +695,13 @@ func (s *Service) enqueueSingleUse(ctx context.Context, event string, p SingleUs
 	}
 	allowed := matching[:0]
 	for _, id := range matching {
-		if s.DeliveryAuthorized(ctx, id, p.BookingID, p.EventTypeID, event, p.ID) {
+		if s.DeliveryAuthorized(ctx, id.id, p.BookingID, p.EventTypeID, event, p.ID) {
 			allowed = append(allowed, id)
 		}
 	}
 	matching = allowed
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	envelope := map[string]any{
-		"event":      event,
-		"created_at": now,
-		"data":       p,
-	}
-	payloadBytes, err := json.Marshal(envelope)
-	if err != nil {
-		return fmt.Errorf("webhook: marshal single-use payload: %w", err)
-	}
 
 	var bookingIDArg any
 	if p.BookingID != "" {
@@ -687,19 +731,25 @@ func (s *Service) enqueueSingleUse(ctx context.Context, event string, p SingleUs
 		}
 	}
 
-	for _, whID := range matching {
+	for _, wh := range matching {
+		data := singleUseData(p, wh.fields)
+		payloadBytes, err := json.Marshal(map[string]any{"event": event, "created_at": now, "data": data})
+		if err != nil {
+			return err
+		}
+		whID := wh.id
 		deliveryID := uid.New()
 		jobID := uid.New()
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO webhook_deliveries (id, webhook_id, booking_id, event, payload, status)
-			VALUES (?, ?, ?, ?, ?, 'pending')`,
-			deliveryID, whID, bookingIDArg, event, string(payloadBytes)); err != nil {
+			INSERT INTO webhook_deliveries (id, webhook_id, booking_id, event, payload, status,event_type_id,resource_id)
+			VALUES (?, ?, ?, ?, ?, 'pending',?,?)`,
+			deliveryID, whID, bookingIDArg, event, string(payloadBytes), p.EventTypeID, p.ID); err != nil {
 			return fmt.Errorf("webhook: insert single-use delivery: %w", err)
 		}
 		jobPayload, _ := json.Marshal(map[string]string{"webhook_delivery_id": deliveryID})
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO jobs (id, type, payload, run_at)
-			VALUES (?, 'webhook.deliver', ?, ?)`,
+			INSERT INTO jobs (id, type, payload, run_at, max_attempts)
+			VALUES (?, 'webhook.deliver', ?, ?, 24)`,
 			jobID, string(jobPayload), now); err != nil {
 			return fmt.Errorf("webhook: insert single-use job: %w", err)
 		}
@@ -720,7 +770,8 @@ func (s *Service) ListDeliveries(ctx context.Context, userID, webhookID string) 
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, COALESCE(booking_id,''), event, status,
-		       response_status, attempt_count, last_attempted_at
+		       response_status, attempt_count, last_attempted_at,COALESCE(last_error,''),
+ (SELECT j.run_at FROM jobs j WHERE j.type='webhook.deliver' AND j.status='pending' AND json_extract(j.payload,'$.webhook_delivery_id')=webhook_deliveries.id LIMIT 1)
 		FROM webhook_deliveries WHERE webhook_id = ?
 		ORDER BY rowid DESC LIMIT 50`, webhookID)
 	if err != nil {
@@ -732,10 +783,14 @@ func (s *Service) ListDeliveries(ctx context.Context, userID, webhookID string) 
 	for rows.Next() {
 		var d Delivery
 		var respStatus sql.NullInt64
-		var lastAt sql.NullString
+		var lastAt, nextAt sql.NullString
 		if err := rows.Scan(&d.ID, &d.BookingID, &d.Event, &d.Status,
-			&respStatus, &d.AttemptCount, &lastAt); err != nil {
+			&respStatus, &d.AttemptCount, &lastAt, &d.LastError, &nextAt); err != nil {
 			return nil, fmt.Errorf("webhook: scan delivery: %w", err)
+		}
+		if nextAt.Valid {
+			v := nextAt.String
+			d.NextAttemptAt = &v
 		}
 		d.WebhookID = webhookID
 		if respStatus.Valid {
@@ -802,4 +857,51 @@ func (s *Service) decrypt(encoded string) ([]byte, error) {
 		return nil, fmt.Errorf("webhook: decrypt: %w", err)
 	}
 	return plain, nil
+}
+
+// nil preserves the historical lifecycle schema; [] means send no data.
+func singleUseData(p SingleUsePayload, fields []string) map[string]any {
+	raw, _ := json.Marshal(p)
+	var data map[string]any
+	_ = json.Unmarshal(raw, &data)
+	if fields == nil {
+		return data
+	}
+	data[FieldSingleUseLinkID] = p.ID
+	out := map[string]any{}
+	for _, field := range fields {
+		if v, ok := data[field]; ok {
+			out[field] = v
+		}
+	}
+	return out
+}
+
+// RetryDelivery resets a failed delivery without changing its id or signed body.
+func (s *Service) RetryDelivery(ctx context.Context, owner, id, deliveryID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status string
+	if err = tx.QueryRowContext(ctx, `SELECT d.status FROM webhook_deliveries d JOIN webhooks w ON w.id=d.webhook_id WHERE d.id=? AND w.id=? AND w.user_id=?`, deliveryID, id, owner).Scan(&status); err != nil {
+		return ErrNotFound
+	}
+	if status != "failed" {
+		return fmt.Errorf("only failed deliveries can be retried")
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := tx.ExecContext(ctx, `UPDATE jobs SET status='pending',attempts=0,max_attempts=24,run_at=?,created_at=?,finished_at=NULL,locked_until=NULL,last_error=NULL WHERE type='webhook.deliver' AND json_extract(payload,'$.webhook_delivery_id')=? AND status IN ('failed','done')`, now, now, deliveryID)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n != 1 {
+		return fmt.Errorf("delivery job is unavailable or already running")
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE webhook_deliveries SET status='pending',last_error=NULL WHERE id=?`, deliveryID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

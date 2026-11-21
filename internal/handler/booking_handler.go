@@ -59,15 +59,6 @@ func normalizeBookerEmail(raw string) (string, error) {
 // rate limit, for the openly-public booking page.
 const maxBookingsPerEmailPerHour = 10
 
-// paymentStatusForWebhook maps the internal payment_status to the webhook value, treating
-// the free-booking sentinel "none" as empty so the omitempty field is dropped for free bookings.
-func paymentStatusForWebhook(s string) string {
-	if s == "none" {
-		return ""
-	}
-	return s
-}
-
 // onlineMeetingLocation reports whether an event-type location is a native online
 // meeting type (Google Meet or Microsoft Teams) that may be auto-generated.
 func onlineMeetingLocation(locType string) bool {
@@ -1769,45 +1760,9 @@ func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConf
 
 	meetURL, autoGenMeet, livekitHostURL := h.mintMeetingLink(ctx, b, in, &bData, hosts)
 	h.createHostEvents(ctx, b, in, &bData, hosts, meetURL, autoGenMeet, livekitHostURL)
-	// After the calendar phase, so the payload carries a minted Meet/Teams link. Not
-	// bound to ctx: the calendar phase may have spent it, and this is one local insert.
+	// Booking transitions use the durable outbox. Record the one-time link lifecycle
+	// here as well; the worker sweep recovers it if confirmation stops before this point.
 	if h.webhookSvc != nil {
-		var whAnswers []webhook.BookingAnswerPayload
-		if ansRows, ansErr := h.db.QueryContext(context.WithoutCancel(ctx), `
-			SELECT a.question_id, q.label, a.value
-			FROM booking_answers a
-			JOIN event_type_questions q ON q.id = a.question_id
-			WHERE a.booking_id = ?
-			ORDER BY q.position, q.id`, b.ID); ansErr == nil {
-			for ansRows.Next() {
-				var a webhook.BookingAnswerPayload
-				if ansRows.Scan(&a.QuestionID, &a.Label, &a.Value) == nil {
-					whAnswers = append(whAnswers, a)
-				}
-			}
-			_ = ansRows.Close()
-		}
-		if err := h.webhookSvc.Enqueue(context.WithoutCancel(ctx), "booking.created", webhook.BookingPayload{
-			ID:                 b.ID,
-			EventTypeSlug:      in.EventTypeSlug,
-			HostID:             b.HostID,
-			StartAt:            b.StartAt.UTC().Format(time.RFC3339),
-			EndAt:              b.EndAt.UTC().Format(time.RFC3339),
-			Status:             b.Status,
-			LocationValue:      bData.LocationValue,
-			CreatedAt:          b.CreatedAt.UTC().Format(time.RFC3339),
-			PaymentStatus:      paymentStatusForWebhook(b.PaymentStatus),
-			AmountPaidCents:    b.AmountPaidCents,
-			AmountPaidCurrency: b.AmountPaidCurrency,
-			AttendeeName:       in.OrganizerName,
-			AttendeeEmail:      in.OrganizerEmail,
-			ContactPhone:       b.ContactPhone,
-			Notes:              b.Notes,
-			Guests:             b.Guests,
-			Answers:            whAnswers,
-		}); err != nil {
-			h.logger.Error("enqueue booking.created webhook", "error", err, "booking_id", b.ID)
-		}
 		if in.SingleUseToken != "" {
 			var sup webhook.SingleUsePayload
 			sup.Token = in.SingleUseToken
@@ -1883,7 +1838,6 @@ func (h *Handler) GetBooking(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.writeJSON(w, 200, map[string]any{"id": b.ID, "status": b.Status, "payment_status": b.PaymentStatus, "pending_approval": b.PendingApproval})
-
 }
 
 // Bookings are paginated. The list used to be unbounded: it loaded every booking the
@@ -2443,30 +2397,7 @@ func (h *Handler) cancelSideEffects(b booking.Booking) {
 			h.logger.Error("booking cancellation email (attendee)", "error", err, "booking_id", b.ID)
 		}
 	}
-	// Re-read payment state — refundBookingPayment above may have flipped it to 'refunded'.
-	var payStatus, payCur string
-	var payAmt int
-	_ = h.db.QueryRowContext(ctx,
-		`SELECT payment_status, amount_paid_cents, amount_paid_currency FROM bookings WHERE id = ?`, b.ID).
-		Scan(&payStatus, &payAmt, &payCur)
-	if h.webhookSvc != nil {
-		if err := h.webhookSvc.Enqueue(ctx, "booking.cancelled", webhook.BookingPayload{
-			ID:                 b.ID,
-			EventTypeSlug:      d.EventTypeSlug,
-			HostID:             b.HostID,
-			StartAt:            b.StartAt.UTC().Format(time.RFC3339),
-			EndAt:              b.EndAt.UTC().Format(time.RFC3339),
-			Status:             b.Status,
-			CancellationReason: b.CancellationReason,
-			LocationValue:      b.LocationValue,
-			CreatedAt:          b.CreatedAt.UTC().Format(time.RFC3339),
-			PaymentStatus:      paymentStatusForWebhook(payStatus),
-			AmountPaidCents:    payAmt,
-			AmountPaidCurrency: payCur,
-		}); err != nil {
-			h.logger.Error("enqueue booking.cancelled webhook", "error", err, "booking_id", b.ID)
-		}
-	}
+
 }
 
 // rescheduleZoomMeeting updates the booking's Zoom meeting time after a reschedule (the
