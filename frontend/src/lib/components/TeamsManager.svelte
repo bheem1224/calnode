@@ -6,6 +6,9 @@
 	import { ConfirmDialog } from '$lib/components/ui/confirm-dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
+	import { Combobox } from '$lib/components/ui/combobox';
+	import { Switch } from '$lib/components/ui/switch';
+	import { Textarea } from '$lib/components/ui/textarea';
 	import { Badge } from '$lib/components/ui/badge';
 	import * as Select from '$lib/components/ui/select';
 	import { toast } from 'svelte-sonner';
@@ -25,6 +28,7 @@
 	// Expanded team detail (teamId → full team with members)
 	let expanded = $state<Record<string, Team>>({});
 	// Add-member selection per team (teamId → userId)
+	let addingMember = $state<Record<string, boolean>>({});
 	let addChoice = $state<Record<string, string>>({});
 	// Rename state
 	let renamingId = $state<string | null>(null);
@@ -63,11 +67,13 @@
 	}
 
 	function canManage(team: Team, action = 'teams.update'): boolean {
-        if(action==='teams.members')return Boolean(($currentUser?.is_admin||$currentUser?.is_owner)&&$currentUser?.permissions?.['teams.members']);
-        const scope=$currentUser?.permissions?.[action];
-        if($currentUser?.permissions) return scope==='all' || (scope==='team' && !!team.my_role) || (scope==='own' && team.my_role==='owner');
-        return Boolean($currentUser?.is_admin || team.my_role==='owner');
-    }
+		const admin = Boolean($currentUser?.is_admin || $currentUser?.is_owner);
+		if (action === 'teams.members') return admin && Boolean($currentUser?.permissions?.[action]);
+		if (action === 'teams.update' && !admin && team.my_role !== 'owner') return false;
+		const scope = $currentUser?.permissions?.[action];
+		if ($currentUser?.permissions) return scope === 'all' || (scope === 'team' && !!team.my_role) || (scope === 'own' && team.my_role === 'owner');
+		return admin || team.my_role === 'owner';
+	}
 
 	function copyTeamUrl(slug: string) {
 		const url = `${window.location.origin}/team/${slug}`;
@@ -144,13 +150,16 @@
 
 	async function addMember(teamId: string) {
 		const userId = addChoice[teamId];
-		if (!userId) return;
+		if (!userId || addingMember[teamId]) return;
+		addingMember[teamId] = true;
 		try {
 			await api.post(`/v1/teams/${teamId}/members`, { user_id: userId });
 			addChoice = { ...addChoice, [teamId]: '' };
 			await refreshTeam(teamId);
 		} catch (e: any) {
 			toast.error(e.message || tr('common.failed'));
+		} finally {
+			addingMember[teamId] = false;
 		}
 	}
 
@@ -210,7 +219,7 @@
 
 <svelte:head><title>{$t('teams.headTitle')}</title></svelte:head>
 
-<div class="mb-8 flex items-center justify-between">
+<div class="mb-8 flex flex-wrap items-start justify-between gap-3">
 	<div>
 		<h1 class="text-2xl font-semibold tracking-tight">{$t('teams.title')}</h1>
 		<p class="mt-1 text-sm text-muted-foreground">{$t('teams.subtitle')}</p>
@@ -223,8 +232,8 @@
 {#if showCreate}
 	<div class="mb-6 rounded-lg border bg-card p-6">
 		<h2 class="mb-4 text-sm font-semibold">{$t('teams.newTeamForm.title')}</h2>
-		<div class="flex items-end gap-3">
-			<div class="flex-1 space-y-1.5">
+		<div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+			<div class="min-w-0 flex-1 space-y-1.5">
 				<Label for="team-name">{$t('teams.nameLabel')}</Label>
 				<Input id="team-name" bind:value={newTeamName} placeholder={$t('teams.namePlaceholder')} onkeydown={(e) => e.key === 'Enter' && createTeam()} />
 			</div>
@@ -258,9 +267,9 @@
 							</div>
 						{:else}
 							<div class="flex flex-wrap items-center gap-2">
-								<p class="font-medium">{team.name}</p>
-								<Badge variant="outline" class="font-mono text-xs">
-									<a href={`/team/${team.slug}`} target="_blank" rel="noopener noreferrer" class="hover:underline" onclick={(e) => e.stopPropagation()}>
+								<p class="min-w-0 break-words font-medium">{team.name}</p>
+								<Badge variant="outline" class="max-w-full font-mono text-xs">
+									<a href={`/team/${team.slug}`} target="_blank" rel="noopener noreferrer" class="min-w-0 break-all whitespace-normal hover:underline" onclick={(e) => e.stopPropagation()}>
 										/team/{team.slug}
 									</a>
 								</Badge>
@@ -291,93 +300,49 @@
 						{#if (expanded[team.id].members ?? []).length === 0}
 							<p class="mb-3 text-sm text-muted-foreground">{$t('teams.members.empty')}</p>
 						{:else}
-							<div class="mb-3 overflow-x-auto">
-							<table class="w-full min-w-[460px] text-sm">
-								<thead>
-									<tr class="border-b">
-										<th class="pb-2 text-left text-xs font-medium text-muted-foreground">{$t('teams.members.column')}</th>
-										<th class="pb-2 text-left text-xs font-medium text-muted-foreground">Role</th>
-										<th class="pb-2"></th>
-									</tr>
-								</thead>
-								<tbody class="divide-y">
-									{#each expanded[team.id].members ?? [] as m (m.id)}
-										<tr>
-											<td class="py-2">
-												<div class="flex items-center gap-2">
-													<span class="font-medium">{m.name}</span>
-													<span class="text-xs text-muted-foreground">{m.email}</span>
-													{#if m.archived}<Badge variant="outline" class="text-xs text-muted-foreground">{$t('members.badge.archived')}</Badge>{/if}
-												</div>
-											</td>
-											<td class="py-2">
-												{#if canManage(team,'teams.members')}
-													<Select.Root
-														type="single"
-														value={m.role ?? 'member'}
-														onValueChange={(v) => {
-															if (v === 'owner' || v === 'member') {
-																saveRole(team.id, m.id, v);
-															}
-														}}
-													>
-														<Select.Trigger class="h-7 w-32 text-xs">
-															{(m.role ?? 'member') === 'owner' ? 'Team Head' : 'Member'}
-														</Select.Trigger>
-														<Select.Content>
-															<Select.Item value="member" label="Member">Member</Select.Item>
-															<Select.Item value="owner" label="Team Head">Team Head</Select.Item>
-														</Select.Content>
-													</Select.Root>
-												{:else}
-													<span class="text-xs text-muted-foreground">{m.role === 'owner' ? 'Team Head' : 'Member'}</span>
-												{/if}
-											</td>
-											<td class="py-2 text-right">
-												{#if canManage(team,'teams.members')}
-													<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:text-destructive" onclick={() => removeMember(team.id, m.id)}>{$t('teams.members.remove')}</Button>
-												{/if}
-											</td>
-										</tr>
-									{/each}
-								</tbody>
-							</table>
-							</div>
+							<ul class="mb-4 divide-y" aria-label={$t('teams.members.title')}>
+								{#each expanded[team.id].members ?? [] as m (m.id)}
+									<li class="grid min-w-0 gap-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+										<div class="min-w-0">
+											<p class="break-words text-sm font-medium">{m.name}</p>
+											<p class="break-all text-xs text-muted-foreground">{m.email}</p>
+											{#if m.archived}<Badge variant="outline">{$t('members.badge.archived')}</Badge>{/if}
+										</div>
+										<div class="flex flex-wrap items-center gap-3">
+											{#if canManage(team,'teams.members')}
+												<Select.Root type="single" value={m.role ?? 'member'} onValueChange={(v) => { if (v === 'owner' || v === 'member') saveRole(team.id, m.id, v); }}>
+													<Select.Trigger aria-label={$t('teams.memberRole', { name: m.name })} class="w-36 text-sm">
+														{m.role === 'owner' ? $t('teams.head') : $t('teams.member')}
+													</Select.Trigger>
+													<Select.Content>
+														<Select.Item value="member" label={$t('teams.member')}>{$t('teams.member')}</Select.Item>
+														<Select.Item value="owner" label={$t('teams.head')}>{$t('teams.head')}</Select.Item>
+													</Select.Content>
+												</Select.Root>
+												<Button size="sm" variant="outline" class="text-destructive hover:text-destructive" aria-label={$t('teams.removeNamedMember', { name: m.name })} onclick={() => removeMember(team.id, m.id)}>{$t('teams.members.remove')}</Button>
+											{:else}
+												<span class="text-sm text-muted-foreground">{m.role === 'owner' ? $t('teams.head') : $t('teams.member')}</span>
+											{/if}
+										</div>
+									</li>
+								{/each}
+							</ul>
 						{/if}
 
 						{#if canManage(team,'teams.members') && users.length > 0}
-							<!-- Add a member -->
-							<div class="flex items-center gap-2">
-								<Select.Root
-									type="single"
-									value={addChoice[team.id] ?? ''}
-									onValueChange={(v) => { addChoice = { ...addChoice, [team.id]: v ?? '' }; }}
-									disabled={membersNotIn(team).length === 0}
-								>
-									<Select.Trigger class="w-fit min-w-48">
-										{#if addChoice[team.id]}
-											{@const u = users.find((x) => x.id === addChoice[team.id])}
-											{u ? u.email ? `${u.name} (${u.email})` : u.name : $t('teams.addMember')}
-										{:else}
-											{$t('teams.addMember')}
-										{/if}
-									</Select.Trigger>
-									<Select.Content>
-										{#each membersNotIn(team) as u}
-											<Select.Item value={u.id} label={u.email ? `${u.name} (${u.email})` : u.name}>{u.name}{u.email ? ` (${u.email})` : ''}</Select.Item>
-										{/each}
-									</Select.Content>
-								</Select.Root>
-								<Button size="sm" variant="outline" class="h-8" disabled={!addChoice[team.id]} onclick={() => addMember(team.id)}>{$t('teams.add')}</Button>
-								{#if membersNotIn(team).length === 0}
-									<span class="text-xs text-muted-foreground">{$t('teams.allMembersInTeam')}</span>
-								{/if}
+							<div class="space-y-2">
+								<Label for={`add-member-${team.id}`}>{$t('teams.addMember')}</Label>
+								<div class="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+									<Combobox id={`add-member-${team.id}`} label={$t('teams.addMember')} class="min-w-0 sm:max-w-sm" items={membersNotIn(team).map(u => ({ value: u.id, label: u.name, description: u.email }))} value={addChoice[team.id] ?? ''} onValueChange={(v) => { addChoice[team.id] = v; }} disabled={membersNotIn(team).length === 0 || addingMember[team.id]} placeholder={$t('teams.addMember')} searchPlaceholder={$t('teams.searchMembers')} />
+									<Button size="sm" variant="outline" disabled={!addChoice[team.id] || addingMember[team.id]} onclick={() => addMember(team.id)}>{addingMember[team.id] ? $t('common.loading') : $t('teams.add')}</Button>
+								</div>
+								{#if membersNotIn(team).length === 0}<p class="text-xs text-muted-foreground">{$t('teams.allMembersInTeam')}</p>{/if}
 							</div>
 						{/if}
 
 						{#if canManage(team) && profileEdits[team.id]}
 							<div class="mt-5 border-t pt-4">
-								<div class="mb-3 flex items-center justify-between">
+								<div class="mb-3 flex flex-wrap items-center justify-between gap-3">
 									<h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Team Profile &amp; Branding</h3>
 									<Button size="sm" class="h-7 text-xs" disabled={savingProfile === team.id} onclick={() => saveTeamProfile(team.id)}>
 										{savingProfile === team.id ? 'Saving...' : 'Save profile'}
@@ -385,33 +350,26 @@
 								</div>
 								<div class="grid gap-3 sm:grid-cols-2">
 									<div class="sm:col-span-2 space-y-1">
-										<Label class="text-xs">Description / About</Label>
-										<textarea
-											rows="2"
+										<Label for={`team-description-${team.id}`}>{$t('teams.profile.description')}</Label>
+										<Textarea
+											id={`team-description-${team.id}`} rows={2}
 											bind:value={profileEdits[team.id].description}
 											placeholder="A few sentences about your team for your public team booking page..."
 											class="flex w-full rounded-md border border-input bg-transparent px-3 py-1.5 text-sm shadow-xs outline-none focus-visible:ring-1 focus-visible:ring-ring dark:bg-input/30"
-										></textarea>
-									</div>
-									<div class="space-y-1">
-										<Label class="text-xs">Logo URL</Label>
-										<Input bind:value={profileEdits[team.id].logo_url} placeholder="https://..." class="h-8 text-xs" />
-									</div>
-									<div class="space-y-1">
-										<Label class="text-xs">Location</Label>
-										<Input bind:value={profileEdits[team.id].location} placeholder="e.g. San Francisco, CA / Remote" class="h-8 text-xs" />
-									</div>
-									<label class="sm:col-span-2 flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2">
-										<div>
-											<span class="text-xs font-medium">Show team members on public page</span>
-											<p class="text-[11px] text-muted-foreground">Keep off so visitors book the team directly without picking a specific member.</p>
-										</div>
-										<input
-											type="checkbox"
-											bind:checked={profileEdits[team.id].show_members_publicly}
-											class="h-4 w-4 rounded border-border accent-primary"
 										/>
-									</label>
+									</div>
+									<div class="space-y-1">
+										<Label for={`team-logo-${team.id}`}>{$t('teams.profile.logo')}</Label>
+										<Input id={`team-logo-${team.id}`} bind:value={profileEdits[team.id].logo_url} placeholder="https://..." class="h-8 text-xs" />
+									</div>
+									<div class="space-y-1">
+										<Label for={`team-location-${team.id}`}>{$t('teams.profile.location')}</Label>
+										<Input id={`team-location-${team.id}`} bind:value={profileEdits[team.id].location} placeholder="e.g. San Francisco, CA / Remote" class="h-8 text-xs" />
+									</div>
+									<div class="sm:col-span-2 flex items-center justify-between gap-3 rounded-md border px-3 py-3">
+										<Label for={`team-public-${team.id}`} class="leading-relaxed">{$t('teams.profile.showMembers')}</Label>
+										<Switch id={`team-public-${team.id}`} bind:checked={profileEdits[team.id].show_members_publicly} />
+									</div>
 								</div>
 							</div>
 						{/if}

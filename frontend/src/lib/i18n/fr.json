@@ -558,6 +558,17 @@
 		"toast": {
 			"nameRequired": "Le nom de l'équipe est obligatoire",
 			"nameEmpty": "Le nom ne peut pas être vide"
+		},
+		"head": "Responsable d’équipe",
+		"member": "Membre",
+		"memberRole": "Rôle de {name}",
+		"removeNamedMember": "Retirer {name} de l’équipe",
+		"searchMembers": "Rechercher un nom ou un e-mail…",
+		"profile": {
+			"description": "Description / À propos",
+			"logo": "URL du logo",
+			"location": "Lieu",
+			"showMembers": "Afficher les membres sur la page publique"
 		}
 	},
 	"eventTypes": {
@@ -1589,7 +1600,8 @@
 				"load": "Impossible de charger les paramètres de suivi",
 				"save": "Impossible d'enregistrer les paramètres de suivi"
 			}
-		}
+		},
+		"navigation": "Section des paramètres"
 	},
 	"eventTypeEditor": {
 		"headTitle": "{name} — Type de rendez-vous — Calnode",
@@ -2027,7 +2039,8 @@
 			"loadMembers": "Impossible de charger les membres",
 			"loadTeams": "Impossible de charger les équipes",
 			"loadTeamMembers": "Impossible de charger les membres de l'équipe"
-		}
+		},
+		"sectionNavigation": "Section du type d’événement"
 	},
 	"bookingPreview": {
 		"title": "Aperçu en direct",

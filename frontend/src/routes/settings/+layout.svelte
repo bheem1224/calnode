@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import * as Select from '$lib/components/ui/select';
 	import { page } from '$app/state';
 	import { base } from '$lib/paths';
 	import { currentUser } from '$lib/stores';
@@ -45,7 +47,15 @@
 
 <div class="flex flex-col gap-6 md:flex-row md:gap-8">
 	<nav class="w-full shrink-0 md:w-48">
-		<ul class="flex gap-1 overflow-x-auto pb-2 md:block md:space-y-0.5 md:overflow-visible md:pb-0">
+		<div class="md:hidden">
+			<Select.Root type="single" value={visibleNavItems.find(item => isActive(item.href,item.exact))?.href ?? `${base}/settings`} onValueChange={(href) => { if(href) goto(href); }}>
+				<Select.Trigger aria-label={$t('settings.navigation')} class="w-full">{visibleNavItems.find(item => isActive(item.href,item.exact))?.label ?? $t('settings.title')}</Select.Trigger>
+				<Select.Content class="w-(--bits-select-anchor-width)">
+					{#each visibleNavItems as item}<Select.Item value={item.href} label={item.label}>{item.label}</Select.Item>{/each}
+				</Select.Content>
+			</Select.Root>
+		</div>
+		<ul class="hidden md:block md:space-y-0.5">
 			{#each visibleNavItems as item, i}
 				{#if item.section && item.section !== visibleNavItems[i - 1]?.section}
 					<li class="mb-1 hidden px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground/60 first:mt-0 mt-5 md:block">

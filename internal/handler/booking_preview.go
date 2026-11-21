@@ -114,9 +114,19 @@ func (h *Handler) readBookingPreview(w http.ResponseWriter, r *http.Request) (*b
 		return nil, false
 	}
 	if req.Hosts != nil {
+		// A legacy event may retain hosts its editor can no longer assign. Reading
+		// that saved arrangement is safe; only newly substituted hosts need authority.
+		savedHosts := make(map[string]bool, len(hosts))
+		for _, host := range hosts {
+			savedHosts[host.UserID] = true
+		}
 		hosts = nil
 		seen := map[string]bool{}
 		for _, host := range *req.Hosts {
+			if !savedHosts[host.UserID] && !canPublishForHost(r.Context(), h.db, user, etID, host.UserID) {
+				h.writeError(w, http.StatusForbidden, "preview hosts are outside your event configuration scope")
+				return nil, false
+			}
 			if seen[host.UserID] || (host.Role != "required" && host.Role != "rotation" && host.Role != "optional") {
 				h.writeError(w, http.StatusBadRequest, "invalid preview hosts")
 				return nil, false

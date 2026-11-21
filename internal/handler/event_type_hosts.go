@@ -89,6 +89,20 @@ func (h *Handler) eventTypeForEditor(w http.ResponseWriter, r *http.Request, slu
 	return id, ownerID
 }
 
+// Read endpoints must admit assigned hosts without granting configuration rights.
+// All transports use the same live resource boundary as the main event endpoint.
+func (h *Handler) eventTypeForViewer(w http.ResponseWriter, r *http.Request, slug string, user AuthUser) (id, ownerID string) {
+	if !access.EventActionAllowed(r.Context(), h.db, user.ID, user.Permissions, "read", slug) {
+		h.writeError(w, http.StatusNotFound, "event type not found")
+		return "", ""
+	}
+	if err := h.db.QueryRowContext(r.Context(), `SELECT id,user_id FROM event_types WHERE slug=?`, slug).Scan(&id, &ownerID); err != nil {
+		h.writeError(w, http.StatusNotFound, "event type not found")
+		return "", ""
+	}
+	return id, ownerID
+}
+
 // logForeignEventTypeChange records a change an admin made to an event type they do
 // not own. There is no audit table; this follows TransferEventType, which logs
 // ownership changes the same way, so the line can be found next to it.
@@ -103,11 +117,14 @@ func (h *Handler) logForeignEventTypeChange(ctx context.Context, action, etID, o
 // ListEventTypeHosts handles GET /v1/event-types/{slug}/hosts.
 func (h *Handler) ListEventTypeHosts(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
-	etID, _ := h.eventTypeForEditor(w, r, r.PathValue("slug"), user)
+	etID, _ := h.eventTypeForViewer(w, r, r.PathValue("slug"), user)
 	if etID == "" {
 		return
 	}
+	h.writeEventTypeHosts(w, r, etID)
+}
 
+func (h *Handler) writeEventTypeHosts(w http.ResponseWriter, r *http.Request, etID string) {
 	rows, err := h.db.QueryContext(r.Context(), `
 		SELECT eth.user_id, u.name, u.email, COALESCE(u.avatar_url,''), eth.role, eth.priority, u.archived_at
 		FROM event_type_hosts eth
@@ -256,11 +273,14 @@ func (h *Handler) SetEventTypeHosts(w http.ResponseWriter, r *http.Request) {
 	}
 	h.logForeignEventTypeChange(r.Context(), "set_hosts", etID, ownerID, user)
 
-	h.ListEventTypeHosts(w, r)
+	// The update was already authorized; do not require an additional read grant
+	// just to return the host assignments the caller has supplied.
+	h.writeEventTypeHosts(w, r, etID)
 }
 
 func canPublishForHost(ctx context.Context, q access.Querier, u AuthUser, eventID, hostID string) bool {
-	if (u.InstanceAdmin || u.InstanceOwner) && (u.CredentialID == "" || u.Permissions["event_types.update"] == "all") {
+	permission := access.EventPermission(ctx, q, "event_types.update", eventID)
+	if (u.InstanceAdmin || u.InstanceOwner) && (u.CredentialID == "" || u.Permissions[permission] == "all") {
 		return true
 	}
 	var team sql.NullString

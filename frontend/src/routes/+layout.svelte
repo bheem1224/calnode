@@ -318,7 +318,7 @@
 		<button
 			type="button"
 			bind:this={menuButtonEl}
-			class={buttonVariants({ variant: 'ghost', size: 'icon-sm' })}
+			class={buttonVariants({ variant: 'ghost', size: 'icon-sm' }) + ' min-h-11 min-w-11'}
 			aria-label="Open navigation"
 			aria-controls="app-sidebar"
 			aria-expanded={sidebarOpen}

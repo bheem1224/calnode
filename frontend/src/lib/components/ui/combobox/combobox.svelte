@@ -7,7 +7,7 @@
 	import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
 	import { t } from '$lib/i18n';
 
-	type Item = { value: string; label: string; keywords?: string };
+	type Item = { value: string; label: string; keywords?: string; description?: string };
 
 	let {
 		items,
@@ -17,6 +17,8 @@
 		class: className,
 		onValueChange,
 		id,
+		disabled = false,
+		label,
 	}: {
 		items: Item[];
 		value?: string;
@@ -25,6 +27,8 @@
 		class?: string;
 		onValueChange?: (value: string) => void;
 		id?: string;
+		disabled?: boolean;
+		label?: string;
 	} = $props();
 
 	const resolvedPlaceholder = $derived(placeholder ?? $t('common.select'));
@@ -36,7 +40,7 @@
 	const selectedLabel = $derived(items.find((i) => i.value === value)?.label ?? '');
 	const filtered = $derived(
 		filter.trim()
-			? items.filter((i) => `${i.label} ${i.value} ${i.keywords ?? ''}`.toLowerCase().includes(filter.trim().toLowerCase()))
+			? items.filter((i) => `${i.label} ${i.description ?? ''} ${i.value} ${i.keywords ?? ''}`.toLowerCase().includes(filter.trim().toLowerCase()))
 			: items
 	);
 
@@ -57,7 +61,10 @@
 
 <Popover.Root bind:open onOpenChange={(o) => { if (!o) filter = ''; }}>
 	<Popover.Trigger
+		data-slot="combobox-trigger"
 		{id}
+		{disabled}
+		aria-label={label}
 		class={cn(
 			'border-input focus-visible:border-ring focus-visible:ring-ring/50 inline-flex h-8 w-full items-center justify-between gap-2 rounded-lg border bg-transparent px-2.5 py-1 text-sm transition-colors outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50',
 			className
@@ -68,7 +75,7 @@
 		</span>
 		<ChevronsUpDownIcon class="text-muted-foreground size-4 shrink-0 opacity-50" />
 	</Popover.Trigger>
-	<Popover.Content class="w-[var(--bits-floating-anchor-width)] p-0" align="start">
+	<Popover.Content class="w-[var(--bits-floating-anchor-width)] max-w-[calc(100vw-2rem)] p-0" align="start">
 		<div class="p-2">
 			<Input bind:value={filter} placeholder={resolvedSearchPlaceholder} onkeydown={onInputKeydown} autofocus />
 		</div>
@@ -78,12 +85,16 @@
 			{:else}
 				{#each filtered as item (item.value)}
 					<button
+						data-slot="combobox-option"
 						type="button"
 						onclick={() => select(item.value)}
 						class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
 					>
 						<CheckIcon class={cn('size-4 shrink-0', value === item.value ? 'opacity-100' : 'opacity-0')} />
-						<span class="truncate">{item.label}</span>
+						<span class="min-w-0 break-words">
+							<span class="block">{item.label}</span>
+							{#if item.description}<span class="block break-all text-xs text-muted-foreground">{item.description}</span>{/if}
+						</span>
 					</button>
 				{/each}
 			{/if}

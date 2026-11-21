@@ -1447,8 +1447,16 @@
     class="grid grid-cols-1 gap-8 items-start pb-16 lg:grid-cols-[184px_minmax(360px,460px)] xl:grid-cols-[184px_minmax(360px,460px)_1fr]"
   >
     <!-- Sub-Navigation Rail (Left) -->
+    <div class="lg:hidden">
+      <Select.Root type="single" value={activeTab} onValueChange={(value) => { const tab = TABS.find(tab => tab.id === value); if(tab) activeTab = tab.id; }}>
+        <Select.Trigger aria-label={$t('eventTypeEditor.sectionNavigation')} class="w-full">{TABS.find(tab => tab.id === activeTab)?.label}</Select.Trigger>
+        <Select.Content class="w-(--bits-select-anchor-width)">
+          {#each TABS as tab}<Select.Item value={tab.id} label={tab.label}>{tab.label}</Select.Item>{/each}
+        </Select.Content>
+      </Select.Root>
+    </div>
     <nav
-      class="flex shrink-0 gap-1 overflow-x-auto pb-2 lg:flex-col lg:overflow-visible lg:pb-0"
+      class="hidden shrink-0 flex-col gap-1 lg:flex"
       aria-label="Event type sections"
     >
       {#each TABS as tab, i}

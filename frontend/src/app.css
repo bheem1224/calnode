@@ -3,6 +3,25 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Keep desktop density while giving phone forms usable tap targets. Calendar
+ * day cells own their seven-column sizing and are deliberately excluded. */
+@media (max-width: 639px) {
+	[data-slot="button"],
+	[data-slot="select-trigger"],
+	[data-slot="input"],
+	[data-slot="combobox-trigger"] {
+		min-height: 44px;
+	}
+	[data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"] {
+		font-size: 16px;
+	}
+	[data-slot="combobox-option"] { min-height: 44px; }
+	[data-slot="button"][data-size^="icon"] { min-width: 44px; }
+	[data-slot="select-item"], #app-sidebar nav a, #app-sidebar nav button {
+		min-height: 44px;
+	}
+}
+
 /*
  * Tailwind v4 has built-in data-* variants: `data-foo:` targets `[data-foo]`.
  * bits-ui exposes presence states (data-selected, data-today, data-outside-month,

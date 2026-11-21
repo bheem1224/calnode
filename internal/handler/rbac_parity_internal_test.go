@@ -347,3 +347,148 @@ func TestRBACParity_BookingTeamScopeMatchesLists(t *testing.T) {
 		})
 	}
 }
+
+func TestRBAC_CopyRequiresReadableSource(t *testing.T) {
+	h := rbacFixture(t)
+	for _, read := range []bool{false, true} {
+		actor := "creator-no-read"
+		g := access.Grants{"event_types.create": "own"}
+		if read {
+			actor = "creator-with-read"
+			g["event_types.read"] = "own"
+		}
+		rbacActor(t, h, actor, g, "", "")
+		rbacExec(t, h, `INSERT INTO event_types(id,slug,name,user_id,duration_minutes,location_type,location_value)VALUES(?,?,?, ?,30,'phone','+15551234567')`, actor, actor, actor, actor)
+		for _, channel := range []string{"session", "key", "mcp"} {
+			r := httptest.NewRequest("POST", "/v1/event-types/"+actor+"/duplicate", strings.NewReader(`{}`))
+			r.SetPathValue("slug", actor)
+			if channel == "key" {
+				r.Header.Set("X-API-Key", actor+"-key-secret")
+			} else if channel == "mcp" {
+				r.Header.Set("Authorization", "Bearer "+actor+"-oauth-secret")
+			} else {
+				r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: actor + "-session"})
+			}
+			w := httptest.NewRecorder()
+			rbacEndpoint(t, h, channel, actor, h.DuplicateEventType, w, r)
+			want := http.StatusNotFound
+			if read {
+				want = http.StatusCreated
+			}
+			if w.Code != want {
+				t.Errorf("%s read=%v: %d %s", channel, read, w.Code, w.Body.String())
+			}
+		}
+	}
+}
+
+func TestRBAC_AssignedHostReadEndpoints(t *testing.T) {
+	h := rbacFixture(t)
+	for _, assigned := range []bool{false, true} {
+		actor := "reader-outsider"
+		if assigned {
+			actor = "reader-host"
+		}
+		rbacActor(t, h, actor, access.Grants{"event_types.read": "own"}, "", "")
+		if assigned {
+			rbacExec(t, h, `INSERT INTO event_type_hosts(id,event_type_id,user_id,role)VALUES(?,'personal',?,'required')`, actor, actor)
+		}
+		for _, endpoint := range []http.HandlerFunc{h.ListEventTypeHosts, h.ListQuestionsAdmin} {
+			for _, channel := range []string{"session", "key", "mcp"} {
+				r := httptest.NewRequest("GET", "/v1/event-types/personal/children", nil)
+				r.SetPathValue("slug", "personal")
+				if channel == "key" {
+					r.Header.Set("X-API-Key", actor+"-key-secret")
+				} else if channel == "mcp" {
+					r.Header.Set("Authorization", "Bearer "+actor+"-oauth-secret")
+				} else {
+					r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: actor + "-session"})
+				}
+				w := httptest.NewRecorder()
+				rbacEndpoint(t, h, channel, actor, endpoint, w, r)
+				want := http.StatusNotFound
+				if assigned {
+					want = http.StatusOK
+				}
+				if w.Code != want {
+					t.Errorf("%s assigned=%v endpoint=%s: %d %s", channel, assigned, handlerName(endpoint), w.Code, w.Body.String())
+				}
+			}
+		}
+	}
+}
+
+func TestRBAC_PreviewHostScopeMatchesPublishing(t *testing.T) {
+	h := rbacFixture(t)
+	rbacActor(t, h, "preview-actor", access.Grants{"event_types.read": "own", "event_types.update": "own"}, "", "")
+	rbacActor(t, h, "preview-foreign", access.Grants{}, "", "")
+	rbacExec(t, h, `UPDATE event_types SET user_id='preview-actor' WHERE id='personal'`)
+	for _, channel := range []string{"session", "key", "mcp"} {
+		for _, host := range []string{"preview-actor", "preview-foreign"} {
+			r := httptest.NewRequest("POST", "/v1/event-types/personal/preview", strings.NewReader(`{"hosts":[{"user_id":"`+host+`","role":"required"}],"mode":"form"}`))
+			r.SetPathValue("slug", "personal")
+			if channel == "key" {
+				r.Header.Set("X-API-Key", "preview-actor-key-secret")
+			} else if channel == "mcp" {
+				r.Header.Set("Authorization", "Bearer preview-actor-oauth-secret")
+			} else {
+				r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "preview-actor-session"})
+			}
+			w := httptest.NewRecorder()
+			rbacEndpoint(t, h, channel, "preview-actor", h.PreviewBookingPage, w, r)
+			want := http.StatusForbidden
+			if host == "preview-actor" {
+				want = http.StatusOK
+			}
+			if w.Code != want {
+				t.Errorf("%s host=%s: %d %s", channel, host, w.Code, w.Body.String())
+			}
+		}
+	}
+}
+
+func rbacEndpoint(t *testing.T, h *Handler, channel, actor string, endpoint http.HandlerFunc, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	if channel == "mcp" {
+		u, _, err := h.mcpPrincipal(context.Background(), actor+"-oauth-secret")
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.authorizedCall(w, r, u, endpoint)
+	} else {
+		h.RequireAuth(endpoint)(w, r)
+	}
+}
+
+func TestRBAC_DelegatedAdminHostPublishingUsesEventNamespace(t *testing.T) {
+	h := rbacFixture(t)
+	u := AuthUser{ID: "owner", InstanceAdmin: true, CredentialID: "scoped", Permissions: access.Grants{"team_event_types.update": "all"}}
+	if !canPublishForHost(context.Background(), h.db, u, "team-a", "foreign") {
+		t.Fatal("team-scoped administrator was checked against personal event grants")
+	}
+	if canPublishForHost(context.Background(), h.db, u, "personal", "foreign") {
+		t.Fatal("team event grant leaked to personal host configuration")
+	}
+}
+
+func TestRBAC_PreviewRetainsSavedHostsWithoutReauthorizingTheirAssignment(t *testing.T) {
+	h := rbacFixture(t)
+	rbacActor(t, h, "legacy-editor", access.Grants{"event_types.read": "own"}, "", "")
+	rbacActor(t, h, "saved-host", access.Grants{}, "", "")
+	rbacExec(t, h, `UPDATE event_types SET user_id='legacy-editor' WHERE id='personal'`)
+	rbacExec(t, h, `INSERT INTO event_type_hosts(id,event_type_id,user_id,role)VALUES('saved-host','personal','saved-host','required')`)
+	for _, channel := range []string{"session", "key", "mcp"} {
+		r := httptest.NewRequest("POST", "/v1/event-types/personal/preview", strings.NewReader(`{"hosts":[{"user_id":"saved-host","role":"required"}],"mode":"form"}`))
+		r.SetPathValue("slug", "personal")
+		if channel == "key" {
+			r.Header.Set("X-API-Key", "legacy-editor-key-secret")
+		} else {
+			r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "legacy-editor-session"})
+		}
+		w := httptest.NewRecorder()
+		rbacEndpoint(t, h, channel, "legacy-editor", h.PreviewBookingPage, w, r)
+		if w.Code != 200 {
+			t.Errorf("%s: %d %s", channel, w.Code, w.Body.String())
+		}
+	}
+}

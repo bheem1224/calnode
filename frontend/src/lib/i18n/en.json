@@ -558,6 +558,17 @@
 		"toast": {
 			"nameRequired": "Team name is required",
 			"nameEmpty": "Name cannot be empty"
+		},
+		"head": "Team Head",
+		"member": "Member",
+		"memberRole": "Role for {name}",
+		"removeNamedMember": "Remove {name} from team",
+		"searchMembers": "Search name or email…",
+		"profile": {
+			"description": "Description / About",
+			"logo": "Logo URL",
+			"location": "Location",
+			"showMembers": "Show team members on public page"
 		}
 	},
 	"eventTypes": {
@@ -1589,7 +1600,8 @@
 				"load": "Could not load tracking settings",
 				"save": "Could not save tracking settings"
 			}
-		}
+		},
+		"navigation": "Settings section"
 	},
 	"eventTypeEditor": {
 		"headTitle": "{name} — Event Type — Calnode",
@@ -2027,7 +2039,8 @@
 			"loadMembers": "Could not load members",
 			"loadTeams": "Could not load teams",
 			"loadTeamMembers": "Could not load team members"
-		}
+		},
+		"sectionNavigation": "Event type section"
 	},
 	"bookingPreview": {
 		"title": "Live preview",

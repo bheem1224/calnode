@@ -530,7 +530,7 @@
 			</div>
 		{:else}
 			<div class="rounded-lg border bg-card overflow-hidden">
-				<table class="w-full text-sm">
+				<table class="member-table w-full text-sm">
 					<thead>
 						<tr class="border-b">
 							<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('members.table.name')}</th>
@@ -555,22 +555,22 @@
 											</div>
 										{/if}
 										<div class="min-w-0">
-											<p class="font-medium">
+											<p class="break-words font-medium">
 												{m.name}
 												{#if m.id === $currentUser?.id}<span class="text-xs text-muted-foreground">{$t('members.you')}</span>{/if}
 											</p>
-											<p class="text-xs text-muted-foreground">{m.email}</p>
+											<p class="break-all text-xs text-muted-foreground">{m.email}</p>
 										</div>
 									</div>
 								</td>
-								<td class="px-4 py-3">
-									<div class="flex items-center gap-1.5">
+								<td data-label={$t('members.table.role')} class="px-4 py-3">
+									<div class="flex flex-wrap items-center gap-1.5">
 										<Badge variant={roleVariant(m)}>{roleLabel(m)}</Badge>
  {#if m.legacy_access && !m.is_admin && !m.custom_role_id}<Badge variant="outline">{$t('permissions.legacyMember')}</Badge>{/if}
 										{#if m.archived}<Badge variant="outline" class="text-xs text-muted-foreground">{$t('members.badge.archived')}</Badge>{/if}
 									</div>
 								</td>
-								<td class="px-4 py-3">
+								<td data-label={$t('members.table.teams')} class="px-4 py-3">
 									<div class="flex gap-1.5 flex-wrap">
 										{#each m.teams as tm}
 											<Badge variant="secondary" class="text-xs">{tm.name}</Badge>
@@ -579,21 +579,21 @@
 										{/each}
 									</div>
 								</td>
-								<td class="px-4 py-3">
+								<td data-label={$t('members.table.page')} class="px-4 py-3">
 									{#if m.handle}
 										<a href="/u/{m.handle}" target="_blank" rel="noopener noreferrer" class="text-xs text-primary hover:underline font-mono">/u/{m.handle}</a>
 									{:else}
 										<span class="text-xs text-muted-foreground/50" title={$t('members.noPublicPageTitle')}>{$t('common.emDash')}</span>
 									{/if}
 								</td>
-								<td class="px-4 py-3">
+								<td data-label={$t('members.table.auth')} class="px-4 py-3">
 									<div class="flex gap-1.5 flex-wrap">
 										{#each authBadge(m) as b}
 											<Badge variant="outline" class="text-xs">{b}</Badge>
 										{/each}
 									</div>
 								</td>
-								<td class="px-4 py-3 text-sm text-muted-foreground">{fmtDate(m.created_at)}</td>
+								<td data-label={$t('members.table.joined')} class="px-4 py-3 text-sm text-muted-foreground">{fmtDate(m.created_at)}</td>
 								{#if can('members.read')}
 									<td class="px-4 py-3">
 										<div class="flex flex-wrap items-center justify-end gap-1">
@@ -661,7 +661,7 @@
 		<div>
 			<h2 class="mb-3 text-sm font-semibold text-muted-foreground uppercase tracking-wide">{$t('members.section.pendingInvites')}</h2>
 			<div class="rounded-lg border bg-card overflow-hidden">
-				<table class="w-full text-sm">
+				<table class="member-table w-full text-sm">
 					<thead>
 						<tr class="border-b">
 							<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('members.table.email')}</th>
@@ -672,8 +672,8 @@
 					<tbody class="divide-y">
 						{#each invites as inv}
 							<tr class="transition-colors hover:bg-muted/30">
-								<td class="px-4 py-3">{inv.email}</td>
-								<td class="px-4 py-3 text-muted-foreground">
+								<td class="break-all px-4 py-3">{inv.email}</td>
+								<td data-label={$t('members.table.expires')} class="px-4 py-3 text-muted-foreground">
 									{fmtDate(inv.expires_at)}
 									<span class="ml-1 text-xs">{$t('members.expiresDaysLeft', { days: daysLeft(inv.expires_at) })}</span>
 								</td>
@@ -755,3 +755,15 @@
 {#if can('logs.read')}<SecurityAudit />{/if}
 
 <MemberRecoveryDialog bind:open={recoveryDialog} userID={recoveryUser} passwordMode={passwordRecovery} />
+
+<style>
+ @media (max-width: 639px) {
+  .member-table, .member-table tbody { display: block; width: 100%; }
+  .member-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .member-table tr { display: grid; min-width: 0; gap: .75rem; padding: 1rem; }
+  .member-table td { display: block; min-width: 0; padding: 0; overflow-wrap: anywhere; white-space: normal; }
+  .member-table td[data-label] { display: grid; grid-template-columns: 5rem minmax(0, 1fr); align-items: start; gap: .75rem; }
+  .member-table td[data-label]::before { content: attr(data-label); color: var(--muted-foreground); font-size: .75rem; }
+  .member-table td:last-child :global(div) { justify-content: flex-start; gap: .5rem; }
+ }
+</style>

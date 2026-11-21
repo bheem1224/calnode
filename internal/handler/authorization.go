@@ -137,6 +137,12 @@ func (h *Handler) authorizedCall(w http.ResponseWriter, r *http.Request, u AuthU
 		scope := u.Permissions[p]
 		id := r.PathValue("id")
 		if strings.HasPrefix(p, "event_types.") || strings.HasPrefix(p, "team_event_types.") {
+			// Creating a blank event grants no right to copy an unreadable source.
+			// Use the same resource check for sessions and delegated credentials.
+			if name == "DuplicateEventType" && !access.EventActionAllowed(r.Context(), h.db, u.ID, u.Permissions, "read", eventTarget) {
+				h.writeError(w, 404, "event type not found")
+				return
+			}
 			if eventTarget != "" && !access.EventActionAllowed(r.Context(), h.db, u.ID, u.Permissions, strings.TrimPrefix(strings.TrimPrefix(p, "team_event_types."), "event_types."), eventTarget) {
 				h.writeError(w, 404, "event type not found")
 				return

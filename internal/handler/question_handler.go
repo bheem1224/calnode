@@ -113,7 +113,7 @@ func (h *Handler) ListQuestions(w http.ResponseWriter, r *http.Request) {
 // questions on inactive or private event types.
 func (h *Handler) ListQuestionsAdmin(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
-	etID, _ := h.eventTypeForEditor(w, r, r.PathValue("slug"), user)
+	etID, _ := h.eventTypeForViewer(w, r, r.PathValue("slug"), user)
 	if etID == "" {
 		return
 	}

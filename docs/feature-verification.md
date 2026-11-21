@@ -25,8 +25,30 @@ that every possible provider/tenant configuration works.
 | Calendar destinations, refresh/revocation failures, reconnect and fail-closed availability | `internal/connstore`, `internal/oauthstore`, `internal/gcal`, `internal/calendar/microsoft`, `calendar_reconcile_internal_test.go`, `booking_calendar_error_test.go` |
 | Video room authority, recording/egress, payment and transcription integrations | `internal/livekit`, `livekit_reschedule_internal_test.go`, `internal/stripe`, `internal/stt` |
 | Compact security screens, keyboard help, policy submission, enforced review state and light/dark styles | `frontend/src/security-permissions.visual.test.ts`, `auth-security.visual.test.ts`, permission-settings browser verification |
+| Mobile team search/addition, long member names/emails, reachable member/invitation actions, touch spacing and ordinary-member configuration denials | `frontend/src/teams-mobile.visual.test.ts` (320px/390px, light/dark) |
+| Duplication requires source read access; preview host substitution respects publishing scope; assigned-host read endpoints and delegated team-admin host configuration | `internal/handler/rbac_parity_internal_test.go` |
 
 Handler test names without a directory above live in `internal/handler/`.
+
+## Deployment review: 2026-11-21
+
+The local browser review covered 26 main/settings routes at 320px, the team
+search-and-add flow at 390px, populated member administration, mobile custom-time
+dialogs, and mobile/desktop editor navigation. Regression tests cover both themes.
+The automated feature suite also passed its 24 hosted/embed/manage booking flows.
+
+One compatibility cleanup remains: `team_members.routing_priority` is accepted and
+returned by the team membership API, but booking assignment uses the priority/order
+in `event_type_hosts`. Configure routing in each event's Hosts panel. The legacy
+team field should be explicitly deprecated or connected under a documented
+precedence rule; it must not be presented as an effective routing policy meanwhile.
+
+Local tests and dependency scans do not verify the deployed environment. Before
+opening production traffic, verify the actual Entra tenant/group restrictions,
+calendar refresh/revocation behavior, external invitation/reminder delivery,
+trusted-proxy configuration, and a backup restore using the deployment's encryption
+key. No production accounts, credentials, or infrastructure were changed by this
+review.
 
 ## Run the checks
 
