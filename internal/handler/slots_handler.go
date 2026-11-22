@@ -183,6 +183,9 @@ var errInvalidDuration = errors.New("invalid duration")
 type slotsWanted struct {
 	// Preview is supplied only by the authenticated preview handler, never public input.
 	Preview *bookingPreview
+	// Reschedule is supplied only after validating the booking's manage token.
+	// It fixes the event, duration and assigned hosts without exposing a private slug.
+	Reschedule *booking.Booking
 	// Taken asks for the starts a booking or calendar conflict removed. Still subject
 	// to the event type's own show_taken_slots opt-in.
 	Taken bool
@@ -205,6 +208,11 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 	if want.Preview != nil {
 		copy := *want.Preview.Event
 		et = &copy
+	} else if want.Reschedule != nil {
+		et, err = h.loadBookableEventTypeWithVisibility(ctx, slug, true)
+		if err == nil && et.ID != want.Reschedule.EventTypeID {
+			err = errEventTypeNotFound
+		}
 	} else {
 		et, err = h.loadBookableEventType(ctx, slug)
 	}
@@ -226,6 +234,10 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 	}
 	if err != nil {
 		return slotsResult{}, err
+	}
+	if want.Reschedule != nil {
+		et.DurationMinutes = int(want.Reschedule.EndAt.Sub(want.Reschedule.StartAt) / time.Minute)
+		et.RoutingMode = "fixed"
 	}
 	offered, err := h.adHocSlots(ctx, want.SingleUseToken, et.ID)
 	if err != nil {
@@ -258,6 +270,12 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 	var hosts []EventHost
 	if want.Preview != nil {
 		hosts = want.Preview.Hosts
+	} else if want.Reschedule != nil {
+		var ids []string
+		ids, err = h.assignedBookingHostIDs(ctx, want.Reschedule.ID, want.Reschedule.HostID)
+		for _, id := range ids {
+			hosts = append(hosts, EventHost{UserID: id, Role: "required"})
+		}
 	} else {
 		hosts, err = h.resolveEventTypeHosts(ctx, et.ID)
 	}
@@ -324,7 +342,11 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 				}
 				scheduleID = &sid
 			}
-			ha, degraded, err := h.hostAvailabilityWithSchedule(ctx, ph.id, et.ID, busyDateFrom, busyDateTo, scheduleID)
+			excludeBookingID := ""
+			if want.Reschedule != nil {
+				excludeBookingID = want.Reschedule.ID
+			}
+			ha, degraded, err := h.hostAvailabilityForSlots(ctx, ph.id, et.ID, busyDateFrom, busyDateTo, scheduleID, excludeBookingID)
 			if err != nil {
 				errsByHost[i] = err
 				return
@@ -477,7 +499,11 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 				rangeEnd = me
 			}
 		}
-		counts, err := booking.CountFrequencyBookings(ctx, h.db, et.ID, rangeStart, rangeEnd, capLoc)
+		excludeBookingID := ""
+		if want.Reschedule != nil {
+			excludeBookingID = want.Reschedule.ID
+		}
+		counts, err := booking.CountFrequencyBookingsExcluding(ctx, h.db, et.ID, rangeStart, rangeEnd, capLoc, excludeBookingID)
 		if err != nil {
 			return slotsResult{}, fmt.Errorf("count frequency caps: %w", err)
 		}
@@ -490,6 +516,17 @@ func (h *Handler) computeSlots(ctx context.Context, slug, tzName, fromStr, toStr
 		result.Free = filtered
 	}
 
+	if want.Reschedule != nil {
+		// The current start is not a move. Remove it before first-slot filtering,
+		// otherwise it can hide every genuine alternative on that day.
+		alternatives := make([]slots.Slot, 0, len(result.Free))
+		for _, s := range result.Free {
+			if !s.Start.Equal(want.Reschedule.StartAt) {
+				alternatives = append(alternatives, s)
+			}
+		}
+		result.Free = alternatives
+	}
 	if et.ShowFirstSlotOnly && len(result.Free) > 0 {
 		seenDays := make(map[string]bool)
 		firstOnly := make([]slots.Slot, 0, len(result.Free))
@@ -714,6 +751,10 @@ func (h *Handler) hostAvailability(ctx context.Context, userID, eventTypeID stri
 }
 
 func (h *Handler) hostAvailabilityWithSchedule(ctx context.Context, userID, eventTypeID string, dateFrom, dateTo time.Time, scheduleOverride *string) (slots.HostAvailability, bool, error) {
+	return h.hostAvailabilityForSlots(ctx, userID, eventTypeID, dateFrom, dateTo, scheduleOverride, "")
+}
+
+func (h *Handler) hostAvailabilityForSlots(ctx context.Context, userID, eventTypeID string, dateFrom, dateTo time.Time, scheduleOverride *string, excludeBookingID string) (slots.HostAvailability, bool, error) {
 	hostLoc, rules, overrides, err := h.loadHostScheduleWithOverride(ctx, userID, eventTypeID, scheduleOverride)
 	if err != nil {
 		return slots.HostAvailability{}, false, err
@@ -735,9 +776,10 @@ func (h *Handler) hostAvailabilityWithSchedule(ctx context.Context, userID, even
 		JOIN booking_hosts bh ON bh.booking_id = b.id
 		JOIN event_types et ON et.id = b.event_type_id
 		WHERE bh.user_id = ? AND b.status != 'cancelled'
+		  AND b.id != ?
 		  AND (b.pending_approval = 0 OR et.unconfirmed_blocks_slots = 1)
 		  AND b.start_at >= ? AND b.start_at < ?`,
-		userID, busyFrom, busyTo)
+		userID, excludeBookingID, busyFrom, busyTo)
 	if err != nil {
 		return slots.HostAvailability{}, false, err
 	}

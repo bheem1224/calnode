@@ -13,6 +13,9 @@ that every possible provider/tenant configuration works.
 | Password policy, passkeys, MFA, recovery codes and personal/company agent review policy | `meeting_policy_test.go`, `auth_security_internal_test.go`, `mcp_operations_internal_test.go`, `frontend/scripts/verify-native-auth.mjs` |
 | Entra/Google/OIDC setup, group/domain checks, account linking, PKCE and calendar-only isolation | `identity_providers_test.go`, `signin_policy_test.go`, `internal/identityprovider`, `frontend/scripts/verify-identity-providers.mjs` |
 | OAuth MCP grants, profiles, reviewed changes/imports, replay/expiry/revocation and redaction | `mcp_oauth_test.go`, `mcp_operations_internal_test.go`, `frontend/scripts/verify-agent-operations.mjs` |
+| MCP grants/refresh after closing and reopening SQLite; client continuity after transport recreation | `internal/handler/mcp_oauth_restart_internal_test.go`, `internal/server/mcp_discovery_test.go` |
+| Second-resolution one-time-link expiry, conflicting units, duration overflow, and expired public-link rejection | `internal/handler/single_use_seconds_test.go` |
+| Private one-time booking reschedule availability, fixed booked duration/hosts, conflict/cap exclusions and manage-token boundaries | `internal/handler/manage_slots_test.go`, `frontend/scripts/verify-booking-flows.mjs` |
 | Multiple durations/locations, public/embedded/manage form behavior and calendar actions | `durations_locations_test.go`, `location_choices_test.go`, `booking_parity_test.go`, `booking_surfaces_contract_test.go`, `frontend/scripts/verify-booking-flows.mjs` |
 | Real draft preview with scheduling settings and disabled booking writes | `booking_preview_test.go`, `frontend/scripts/verify-booking-flows.mjs` |
 | One-time/custom-time links, exact candidate slots, live busy conflicts and atomic token consumption | `single_use_test.go`, `internal/booking`, `internal/worker/notification_lifecycle_test.go` |

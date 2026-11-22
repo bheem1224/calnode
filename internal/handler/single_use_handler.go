@@ -134,6 +134,10 @@ func (h *Handler) CreateSingleUseLink(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, http.StatusBadRequest, "expires_in_hours cannot be negative")
 			return
 		}
+		if int64(*req.ExpiresInHours) > int64(time.Duration(1<<63-1)/time.Hour) {
+			h.writeError(w, http.StatusBadRequest, "expires_in_hours is too large")
+			return
+		}
 		expHours = *req.ExpiresInHours
 	}
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -158,5 +159,46 @@ func TestMCPStatelessServesNormalClientSession(t *testing.T) {
 	}
 	if res.IsError {
 		t.Fatalf("tool returned error: %+v", res.Content)
+	}
+}
+
+func TestMCPClientContinuesAcrossServerRecreation(t *testing.T) {
+	makeTransport := func() http.Handler {
+		srv := mcp.NewServer(&mcp.Implementation{Name: "restart-test", Version: "1"}, nil)
+		mcp.AddTool(srv, &mcp.Tool{Name: "ping", Description: "restart health check"}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, struct{}, error) {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "pong"}}}, struct{}{}, nil
+		})
+		return newMCPStreamableHandler(srv)
+	}
+	type transport struct{ handler http.Handler }
+	var current atomic.Pointer[transport]
+	current.Store(&transport{makeTransport()})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { current.Load().handler.ServeHTTP(w, r) }))
+	defer ts.Close()
+	ctx := context.Background()
+	client := mcp.NewClient(&mcp.Implementation{Name: "restart-client", Version: "1"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	for restart := 0; restart < 3; restart++ {
+		if restart > 0 {
+			current.Store(&transport{http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "restarting", http.StatusServiceUnavailable)
+			})})
+			if _, err := session.ListTools(ctx, &mcp.ListToolsParams{}); err == nil {
+				t.Fatal("temporary outage unexpectedly succeeded")
+			}
+			current.Store(&transport{makeTransport()})
+		}
+		tools, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+		if err != nil || len(tools.Tools) != 1 {
+			t.Fatalf("list after restart %d: %v", restart, err)
+		}
+		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "ping"})
+		if err != nil || result.IsError {
+			t.Fatalf("call after restart %d: %v", restart, err)
+		}
 	}
 }

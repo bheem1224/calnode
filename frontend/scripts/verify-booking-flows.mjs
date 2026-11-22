@@ -231,11 +231,23 @@ try {
             }
 
     assert.ok(lastCompleted.manage_url,'Completed booking omitted its manage URL');
+    // A private one-time event must remain manageable after consuming its link.
+    const privateEvent = await event('matrix-private', {is_public:false});
+    assert.equal((await fetch(origin+'/v1/event-types/matrix-private/slots')).status,404);
+    const privateLink = await api('/v1/event-types/'+privateEvent.id+'/single-use-links',{expires_in_hours:72});
+    const privateDay = new Date(Date.now()+3*86400000).toISOString().slice(0,10);
+    const privateSlots = await (await fetch(origin+'/v1/t/'+privateLink.token+'/slots?from='+privateDay+'&to='+privateDay+'&tz=UTC')).json();
+    assert.ok(privateSlots.slots.length,'Private link has no initial availability');
+    let managedBooking = await api('/v1/t/'+privateLink.token+'/bookings',{start_at:privateSlots.slots[0].start,name:'Private attendee',email:'private@example.test',timezone:'UTC'});
+    assert.equal((await fetch(origin+'/v1/t/'+privateLink.token+'/slots')).status,410);
     for(const width of [1440,390])for(const theme of ['light','dark']){
         const context=await browser.newContext({viewport:{width,height:900},colorScheme:theme,timezoneId:'UTC'});
         await context.addInitScript(theme=>localStorage.setItem('fp-theme',theme),theme);
         const page=await context.newPage();page.on('pageerror',error=>errors.push('manage: '+error.message));
-        await page.goto(lastCompleted.manage_url);await page.locator('#reschedule-btn').click();
+        await page.goto(managedBooking.manage_url);
+        const availability=page.waitForResponse(r=>r.url().includes('/manage/')&&r.url().includes('/slots?'));
+        await page.locator('#reschedule-btn').click();
+        assert.equal((await availability).status(),200,'Private manage availability rejected');
         // The preceding 24 bookings consume tomorrow's morning; choose a fresh day.
         await page.locator('.cd.available').nth(2).click();await page.locator('.slot-btn:not(.taken)').first().waitFor();
         assert.deepEqual(await page.locator('[data-period]').allTextContents(),['Morning','Evening']);
@@ -243,6 +255,26 @@ try {
         assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Manage page overflows horizontally');
         await page.screenshot({path:join(screenshots,`calendar-manage-${width}-${theme}.png`),fullPage:true,animations:'disabled'});
         await page.locator('.slot-btn:not(.taken)').first().click();await page.locator('#confirm-reschedule-btn').waitFor();
+        const moved=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/reschedule'));
+        await page.locator('#confirm-reschedule-btn').click();
+        const movedResponse=await moved;assert.equal(movedResponse.status(),200,await movedResponse.text());
+        managedBooking=await movedResponse.json();
+        await page.locator('#success-reschedule-view').waitFor();
+        assert.equal(Date.parse(managedBooking.end_at)-Date.parse(managedBooking.start_at),30*60000,'Rescheduling changed duration');
+        await page.screenshot({path:join(screenshots,`rescheduled-private-${width}-${theme}.png`),fullPage:true,animations:'disabled'});
+        await context.close();
+    }
+    // UI-only failure injection: a failed availability read must explain the error,
+    // rather than presenting every date as genuinely unavailable.
+    for(const theme of ['light','dark']){
+        const context=await browser.newContext({viewport:{width:390,height:844},colorScheme:theme});
+        await context.addInitScript(theme=>localStorage.setItem('fp-theme',theme),theme);
+        const page=await context.newPage();
+        await page.route('**/manage/*/slots?**',route=>route.fulfill({status:503,contentType:'application/json',body:'{"error":"test unavailable"}'}));
+        await page.goto(managedBooking.manage_url);await page.locator('#reschedule-btn').click();
+        await page.getByText('Could not load times. Please try again.',{exact:true}).waitFor();
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Manage error overflows');
+        await page.screenshot({path:join(screenshots,`availability-error-390-${theme}.png`),fullPage:true,animations:'disabled'});
         await context.close();
     }
     // Real navigation honors the configured redirect, on both booking surfaces.

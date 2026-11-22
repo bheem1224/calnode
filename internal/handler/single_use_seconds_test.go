@@ -20,6 +20,7 @@ func TestSingleUseSecondsExpiryIsAuthoritativeAndValidated(t *testing.T) {
 		{"negative", `{"expires_in_seconds":-1}`, 400},
 		{"over maximum", `{"expires_in_seconds":604801}`, 400},
 		{"overflow", `{"expires_in_seconds":9223372036854775808}`, 400},
+		{"hour duration overflow", `{"expires_in_hours":9223372036854775807}`, 400},
 		{"fraction", `{"expires_in_seconds":0.5}`, 400},
 		{"conflicting units", `{"expires_in_seconds":30,"expires_in_hours":72}`, 400},
 	} {

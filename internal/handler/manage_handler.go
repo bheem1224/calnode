@@ -223,6 +223,45 @@ func (h *Handler) renderManage(w http.ResponseWriter, r *http.Request, data mana
 	}
 }
 
+// ManageSlots exposes availability only for the booking authorized by this manage
+// token. A consumed one-time token or a private event slug is not authorization.
+func (h *Handler) ManageSlots(w http.ResponseWriter, r *http.Request) {
+	b, err := h.bookingSvc.ValidateManageToken(r.Context(), r.PathValue("token"))
+	if errors.Is(err, booking.ErrTokenNotFound) {
+		h.writeError(w, http.StatusNotFound, "manage link not found or expired")
+		return
+	}
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "manage slots: validate token", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	var slug string
+	var disabled, allowPast bool
+	if err := h.db.QueryRowContext(r.Context(), `SELECT slug, disable_reschedule, allow_reschedule_past FROM event_types WHERE id = ?`, b.EventTypeID).Scan(&slug, &disabled, &allowPast); err != nil {
+		h.writeError(w, http.StatusNotFound, "event type not found")
+		return
+	}
+	if b.Status == "cancelled" || disabled || (!allowPast && b.StartAt.Before(bookingNow().UTC())) {
+		h.writeError(w, http.StatusForbidden, "this booking cannot be rescheduled")
+		return
+	}
+	q := r.URL.Query()
+	res, err := h.computeSlots(r.Context(), slug, q.Get("tz"), q.Get("from"), q.Get("to"), slotsWanted{Taken: true, NoticeGap: true, Reschedule: b})
+	switch {
+	case errors.Is(err, errEventTypeNotFound):
+		h.writeError(w, http.StatusNotFound, "event type not found")
+	case errors.Is(err, errInvalidTimezone), errors.Is(err, errBadDateRange):
+		h.writeError(w, http.StatusBadRequest, "invalid timezone or date range")
+	case err != nil:
+		h.logger.ErrorContext(r.Context(), "manage slots", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+	default:
+		w.Header().Set("Cache-Control", "no-store")
+		h.writeSlotsResult(w, res)
+	}
+}
+
 // RescheduleByToken moves a booking to a new time authenticated by a manage token.
 // POST /manage/{token}/reschedule  body: {"start_at":"<RFC3339>"}
 func (h *Handler) RescheduleByToken(w http.ResponseWriter, r *http.Request) {

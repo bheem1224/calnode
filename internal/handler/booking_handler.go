@@ -385,30 +385,36 @@ func (h *Handler) validateRescheduleTime(ctx context.Context, bookingID, eventTy
 	et.FutureRangeStart = rangeStart.String
 	et.FutureRangeEnd = rangeEnd.String
 
+	hostIDs, err := h.assignedBookingHostIDs(ctx, bookingID, fallbackHostID)
+	if err != nil {
+		return err
+	}
+	// Every assigned host keeps their seat when a booking is moved.
+	return h.validateBookingTime(ctx, &et, "fixed", hostIDs, nil, newStart, newEnd)
+}
+
+func (h *Handler) assignedBookingHostIDs(ctx context.Context, bookingID, fallbackHostID string) ([]string, error) {
 	hostRows, err := h.db.QueryContext(ctx, `SELECT user_id FROM booking_hosts WHERE booking_id = ?`, bookingID)
 	if err != nil {
-		return fmt.Errorf("load booking hosts: %w", err)
+		return nil, fmt.Errorf("load booking hosts: %w", err)
 	}
 	var hostIDs []string
 	for hostRows.Next() {
 		var u string
 		if err := hostRows.Scan(&u); err != nil {
 			hostRows.Close() // #nosec G104 -- already returning the scan error; nothing more actionable
-			return fmt.Errorf("scan booking host: %w", err)
+			return nil, fmt.Errorf("scan booking host: %w", err)
 		}
 		hostIDs = append(hostIDs, u)
 	}
 	hostRows.Close() // #nosec G104 -- rows already fully consumed above; nothing actionable on close error
 	if err := hostRows.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	if len(hostIDs) == 0 { // legacy booking with no booking_hosts rows
 		hostIDs = []string{fallbackHostID}
 	}
-	// routingMode "fixed" (i.e. not "round_robin") makes validateBookingTime require EVERY
-	// one of hostIDs to be available — there's no pool to pick from on a reschedule, every
-	// assigned host keeps their seat.
-	return h.validateBookingTime(ctx, &et, "fixed", hostIDs, nil, newStart, newEnd)
+	return hostIDs, nil
 }
 
 // filterAvailableHosts narrows a candidate pool to the hosts actually free

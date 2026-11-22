@@ -707,6 +707,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 
 	// Manage booking (reschedule / cancel via token link)
 	mux.HandleFunc("GET /manage/{token}", manageRL(h.ManagePage))
+	mux.HandleFunc("GET /manage/{token}/slots", manageRL(h.ManageSlots))
 	mux.HandleFunc("POST /manage/{token}/reschedule", manageRL(h.RescheduleByToken))
 	mux.HandleFunc("POST /manage/{token}/cancel", manageRL(h.CancelByToken))
 

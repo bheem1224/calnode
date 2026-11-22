@@ -172,6 +172,7 @@ body {
       {{call .T "back"}}
     </button>
     {{template "calendarGrid" .}}
+    <p id="availability-error" class="form-error" role="alert" aria-live="assertive"></p>
   </section>
 
   <section class="right-col" aria-live="polite">
@@ -352,6 +353,7 @@ body {
   function dowIndex(date) { return BookingLogic.dowIndex(date); } // 0 = Monday
 
   async function loadMonthAvailability(y, m) {
+    $('availability-error').textContent = '';
     // Render immediately, treating every in-window day as available, so the
     // calendar paints without waiting on the slots fetch; refine once it returns.
     availabilityLoaded = false;
@@ -360,7 +362,7 @@ body {
     const lastDay = new Date(y, m + 1, 0).getDate();
     const to = toDateStr(y, m, lastDay);
     try {
-      const r = await fetch(`/v1/event-types/${SLUG}/slots?from=${from}&to=${to}&tz=${encodeURIComponent(TZ)}&duration={{.DurationMinutes}}`);
+      const r = await fetch(`/manage/${encodeURIComponent(TOKEN)}/slots?from=${from}&to=${to}&tz=${encodeURIComponent(TZ)}`);
       if (!r.ok) throw new Error(r.status);
       const data = await r.json();
       // Cache the month's slots grouped by the SELECTED-timezone day (BookingLogic — tested,
@@ -384,6 +386,7 @@ body {
       slotsByDay = {};
       availableDates = new Set();
       noticeDates = new Set();
+      $('availability-error').textContent = t('could_not_load_times');
     }
     availabilityLoaded = true;
     renderCal(); // grey out days that came back with no slots
@@ -536,7 +539,7 @@ body {
     // Fallback (clicked before the month load finished): fetch just this day.
     list.innerHTML = `<p class="hint">${t('loading')}</p>`;
     try {
-      const r = await fetch(`/v1/event-types/${SLUG}/slots?from=${ds}&to=${ds}&tz=${encodeURIComponent(TZ)}&duration={{.DurationMinutes}}`);
+      const r = await fetch(`/manage/${encodeURIComponent(TOKEN)}/slots?from=${ds}&to=${ds}&tz=${encodeURIComponent(TZ)}`);
       if (!r.ok) throw new Error(r.status);
       const data = await r.json();
       ((data.min_notice && data.min_notice.dates) || []).forEach(k => noticeDates.add(k));
