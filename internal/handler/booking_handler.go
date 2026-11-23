@@ -365,7 +365,7 @@ func (h *Handler) validateBookingTime(ctx context.Context, et *bookableEventType
 // to a time in the next minute, years out, or outside the host's configured hours, even
 // though none of that is reachable through the fixed creation path.
 //
-// Deliberately does NOT go through loadBookableEventType (its is_active/is_public gate is
+// Deliberately does NOT go through loadBookableEventType (its active/archive gate is
 // about NEW bookability, not about whether an EXISTING booking may still be moved — an
 // operator unpublishing an event type shouldn't strand already-booked attendees). Checks
 // every host currently assigned to the booking (booking_hosts), matching
@@ -489,11 +489,8 @@ var errNoHostAvailable = errors.New("no active host can take this booking")
 var errPaymentRequired = errors.New("this event requires payment; please book on the booking page")
 
 // bookableEventType is the event_types fields the booking-creation and slot-computation
-// paths need. loadBookableEventType is their one shared query — createBookingForSlug,
-// CreateBooking, and computeSlots each used to hand-write their own column subset, which
-// is exactly how the API/MCP/assistant booking path ended up missing the is_public check
-// the direct booking page (book.go) always had. A future caller now gets both is_active
-// and is_public enforced by construction, not by remembering to add the check.
+// paths need. loadBookableEventType is their shared query: active unlisted events
+// are bookable by direct URL, while disabled/archived events remain closed.
 type bookableEventType struct {
 	AllowPhoneCall      bool
 	ID                  string
@@ -556,22 +553,27 @@ func (et *bookableEventType) allowsDuration(d int) bool {
 }
 
 // loadBookableEventType loads an event type by slug for the booking-creation/slot paths.
-// Returns errEventTypeNotFound if the slug doesn't exist, is inactive, or isn't public —
-// bookability is gated identically to the direct booking page (book.go's PublicEventType/
-// BookPage), so an operator who unpublishes an event type stops it from being bookable
-// everywhere, not just hidden from its own page.
+// Hidden events (is_public=0) are unlisted, not disabled. Only directory queries
+// filter that flag. Internal dynamic events still require their one-time token.
 func (h *Handler) loadBookableEventType(ctx context.Context, slug string) (*bookableEventType, error) {
 	return h.loadBookableEventTypeWithVisibility(ctx, slug, false)
 }
 
-func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug string, allowPrivate bool) (*bookableEventType, error) {
-	return h.loadEventTypeForBooking(ctx, slug, allowPrivate, false)
+func tokenOnlyEventSlug(slug string) bool {
+	return strings.HasPrefix(slug, "__dynamic__")
+}
+
+func (h *Handler) loadBookableEventTypeWithVisibility(ctx context.Context, slug string, allowTokenOnly bool) (*bookableEventType, error) {
+	return h.loadEventTypeForBooking(ctx, slug, allowTokenOnly, false)
 }
 
 // allowInactive is reserved for the authenticated, read-only editor preview.
-func (h *Handler) loadEventTypeForBooking(ctx context.Context, slug string, allowPrivate, allowInactive bool) (*bookableEventType, error) {
+func (h *Handler) loadEventTypeForBooking(ctx context.Context, slug string, allowTokenOnly, allowInactive bool) (*bookableEventType, error) {
+	if tokenOnlyEventSlug(slug) && !allowTokenOnly {
+		return nil, errEventTypeNotFound
+	}
 	var et bookableEventType
-	var isActive, isPublic, showTaken, showFirst int
+	var isActive, showTaken, showFirst int
 	var reqConfirm, reqEmailVerify, allowMultiDur, optimizedSlots int
 	var maxPerDay, maxPerWeek, maxPerMonth, maxPerYear, maxDurDay, maxDurWeek sql.NullInt64
 	var rangeStart, rangeEnd, durOptsRaw, locOptsRaw sql.NullString
@@ -579,7 +581,7 @@ func (h *Handler) loadEventTypeForBooking(ctx context.Context, slug string, allo
 		SELECT et.id, et.user_id, et.name, et.duration_minutes, et.slot_interval_minutes,
 		       et.location_type, et.location_value, et.allow_phone_call, et.routing_mode, et.rr_strategy,
 		       et.buffer_before_minutes, et.buffer_after_minutes, et.min_notice_minutes, et.max_future_days,
-		       et.is_active, et.is_public, et.show_taken_slots, et.max_active_bookings, et.price_cents, et.currency,
+		       et.is_active, et.show_taken_slots, et.max_active_bookings, et.price_cents, et.currency,
 		       et.invite_delivery, et.max_per_day, et.max_per_week,
 		       et.max_per_month, et.max_per_year, et.max_duration_per_day, et.max_duration_per_week,
 		       et.show_first_slot_only, et.future_limit_mode, et.future_range_start, et.future_range_end,
@@ -588,18 +590,18 @@ func (h *Handler) loadEventTypeForBooking(ctx context.Context, slug string, allo
 		       et.allow_multiple_durations, et.duration_options, et.location_options, et.optimized_slots
 		FROM event_types et
 		LEFT JOIN users u ON u.id = et.user_id
-		WHERE et.slug = ?`, slug).
+		WHERE et.slug = ? AND (et.archived_at IS NULL OR ?)`, slug, allowInactive).
 		Scan(&et.ID, &et.UserID, &et.Name, &et.DurationMinutes, &et.SlotIntervalMinutes,
 			&et.LocationType, &et.LocationValue, &et.AllowPhoneCall, &et.RoutingMode, &et.RRStrategy,
 			&et.BufferBeforeMinutes, &et.BufferAfterMinutes, &et.MinNoticeMinutes, &et.MaxFutureDays,
-			&isActive, &isPublic, &showTaken, &et.MaxActiveBookings, &et.PriceCents, &et.Currency,
+			&isActive, &showTaken, &et.MaxActiveBookings, &et.PriceCents, &et.Currency,
 			&et.InviteDelivery, &maxPerDay, &maxPerWeek,
 			&maxPerMonth, &maxPerYear, &maxDurDay, &maxDurWeek,
 			&showFirst, &et.FutureLimitMode, &rangeStart, &rangeEnd,
 			&et.OwnerTimezone,
 			&reqConfirm, &et.ConfirmMode, &et.ConfirmNoticeMinutes, &reqEmailVerify,
 			&allowMultiDur, &durOptsRaw, &locOptsRaw, &optimizedSlots)
-	if err != nil || (!allowInactive && isActive == 0) || (!allowPrivate && isPublic == 0) {
+	if err != nil || (!allowInactive && isActive == 0) {
 		return nil, errEventTypeNotFound
 	}
 	et.ShowTakenSlots = showTaken != 0

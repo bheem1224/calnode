@@ -39,10 +39,8 @@ func (h *Handler) SendVerificationCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var etName string
-	err = h.db.QueryRowContext(r.Context(),
-		`SELECT name FROM event_types WHERE slug = ? AND is_active = 1 AND (is_public=1 OR ?=1)`, slug, boolArg(r.PathValue("token") != "")).Scan(&etName)
-	if errors.Is(err, sql.ErrNoRows) {
+	et, err := h.loadBookableEventTypeWithVisibility(r.Context(), slug, r.PathValue("token") != "")
+	if errors.Is(err, errEventTypeNotFound) {
 		h.writeError(w, http.StatusNotFound, "event type not found")
 		return
 	}
@@ -51,6 +49,7 @@ func (h *Handler) SendVerificationCode(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	etName := et.Name
 
 	if !h.takeBudget(w, r,
 		abuse.Rule{Key: "verify:cooldown:" + email, Limit: 1, Window: time.Minute},

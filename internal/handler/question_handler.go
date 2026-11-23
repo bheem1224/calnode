@@ -61,14 +61,12 @@ type answerJSON struct {
 
 // ListQuestions handles GET /v1/event-types/{slug}/questions (public).
 // Returns questions ordered by position for the booking form.
-// Only returns questions for active, public event types.
+// Active hidden events are bookable by direct URL too.
 func (h *Handler) ListQuestions(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 
-	var etID string
-	err := h.db.QueryRowContext(r.Context(),
-		`SELECT id FROM event_types WHERE slug = ? AND is_active = 1 AND is_public = 1`, slug).Scan(&etID)
-	if errors.Is(err, sql.ErrNoRows) {
+	et, err := h.loadBookableEventType(r.Context(), slug)
+	if errors.Is(err, errEventTypeNotFound) {
 		h.writeError(w, http.StatusNotFound, "event type not found")
 		return
 	}
@@ -77,6 +75,7 @@ func (h *Handler) ListQuestions(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	etID := et.ID
 
 	rows, err := h.db.QueryContext(r.Context(), `
 		SELECT id, event_type_id, label, type, options, required, position,
@@ -110,8 +109,8 @@ func (h *Handler) ListQuestions(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListQuestionsAdmin handles GET /v1/event-types/{slug}/questions/admin (auth required).
-// Like ListQuestions but skips is_active/is_public checks so admins can manage
-// questions on inactive or private event types.
+// Like ListQuestions but uses authenticated management access so admins can manage
+// questions on inactive or token-only event types.
 func (h *Handler) ListQuestionsAdmin(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 	etID, _ := h.eventTypeForViewer(w, r, r.PathValue("slug"), user)

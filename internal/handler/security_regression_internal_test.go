@@ -122,6 +122,13 @@ func TestDynamicLinksScopeExpiryAndLiveCalendarFailure(t *testing.T) {
 	if h.dynamicLinkAllowed(context.Background(), token) {
 		t.Fatal("revoked creator permission retained dynamic authority")
 	}
+	// The generic booking endpoint must recheck the same authority as /t/{token}.
+	// Knowing the internal slug and an otherwise unexpired token is not a bypass.
+	rec = httptest.NewRecorder()
+	h.CreateBooking(rec, httptest.NewRequest("POST", "/v1/bookings", strings.NewReader(body)))
+	if rec.Code != http.StatusGone {
+		t.Fatalf("revoked dynamic token on generic booking route: %d %s", rec.Code, rec.Body)
+	}
 	securityExec(t, h, `UPDATE users SET custom_role_id=NULL WHERE id='member-a'`)
 	securityExec(t, h, `UPDATE single_use_tokens SET expires_at='2000-01-01T00:00:00Z' WHERE token=?`, token)
 	req = httptest.NewRequest("GET", "/t/"+token, nil)

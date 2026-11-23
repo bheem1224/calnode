@@ -57,14 +57,18 @@ func TestManageSlotsPrivateSingleUseBooking(t *testing.T) {
 	if bad := visit("invalid-token", ""); bad.Code != http.StatusNotFound {
 		t.Fatalf("invalid token: %d", bad.Code)
 	}
-	// Public availability stays private, including when passed the consumed token.
-	for _, query := range []string{"", "?single_use_token=" + link.Token} {
-		r := httptest.NewRequest("GET", "/v1/event-types/"+slug+"/slots"+query, nil)
+	// Hidden events are unlisted and their reusable URLs work. Supplying a
+	// consumed one-time token must still fail, rather than falling back to that URL.
+	for _, tc := range []struct {
+		query string
+		code  int
+	}{{"", http.StatusOK}, {"?single_use_token=" + link.Token, http.StatusGone}} {
+		r := httptest.NewRequest("GET", "/v1/event-types/"+slug+"/slots"+tc.query, nil)
 		r.SetPathValue("slug", slug)
 		w := httptest.NewRecorder()
 		h.GetSlots(w, r)
-		if w.Code != http.StatusNotFound {
-			t.Fatalf("private public slots: %d", w.Code)
+		if w.Code != tc.code {
+			t.Fatalf("hidden event slots %q: %d; want %d", tc.query, w.Code, tc.code)
 		}
 	}
 	w := visit(token, "&duration=15&slug=another-private-event")

@@ -191,14 +191,15 @@ type slotsWanted struct {
 	Taken bool
 	// NoticeGap asks which days the minimum-notice rule took a bookable start from.
 	NoticeGap bool
-	// SingleUseToken optionally authorizes slot visibility for a private (is_public=0) event type.
+	// SingleUseToken authorizes token-only events and any custom offered times.
+	// When supplied, it must be valid even for directly bookable event types.
 	SingleUseToken string
 	// DurationMinutes optionally overrides et.DurationMinutes when allow_multiple_durations is enabled.
 	DurationMinutes int
 }
 
 // computeSlots returns the bookable slots (and the candidate hosts' display map) for
-// an active+public event type over the given optional date range, in tzName. It's
+// an active bookable event type over the given optional date range, in tzName. It's
 // the shared core behind the REST GetSlots handler and the MCP get_available_slots
 // tool. tzName "" → UTC; fromStr/toStr "" → today / the max-future cap. Returns one
 // of the sentinel errors above on bad input, or a wrapped error on internal failure.

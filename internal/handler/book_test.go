@@ -111,7 +111,7 @@ func TestBookPage_durationLabels(t *testing.T) {
 	}
 }
 
-func TestBookPage_privateEventType_returns404(t *testing.T) {
+func TestBookPage_deactivatedEventType_returns404(t *testing.T) {
 	h, apiKey, _ := setupWorkspace(t)
 	slug, _ := seedEventTypeHTTP(t, h, apiKey)
 

@@ -383,6 +383,9 @@ func (h *Handler) adHocSlots(ctx context.Context, token, eventID string) ([]book
 	if strings.TrimSpace(token) == "" {
 		return nil, nil
 	}
+	if !h.dynamicLinkAllowed(ctx, token) {
+		return nil, booking.ErrSingleUseTokenGone
+	}
 	var raw sql.NullString
 	err := h.db.QueryRowContext(ctx, `SELECT custom_slots_json FROM single_use_tokens WHERE token = ? AND event_type_id = ? AND used_at IS NULL AND (expires_at IS NULL OR datetime(expires_at) > datetime(?))`, token, eventID, time.Now().UTC().Format(time.RFC3339Nano)).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {

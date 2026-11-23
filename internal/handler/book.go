@@ -499,10 +499,15 @@ func bookingCSP(track trackingSettings) string {
 // PublicEventType handles GET /v1/event-types/{slug}/public — the public display
 // info a booking client (e.g. the embeddable widget) needs before rendering the
 // form: name, duration, location label, host faces, and brand. No PII, no auth;
-// only active + public event types. Slots, intake questions, and booking creation
+// only active, unarchived reusable event types. Hidden types are directly bookable
+// but excluded from directory listings. Slots, intake questions, and booking creation
 // are separate public endpoints the client calls next.
 func (h *Handler) PublicEventType(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
+	if tokenOnlyEventSlug(slug) {
+		h.writeError(w, http.StatusNotFound, "event type not found")
+		return
+	}
 	var (
 		etID, name, description, locType, locValue string
 		hostName, avatarURL, routingMode, currency string
@@ -519,7 +524,7 @@ func (h *Handler) PublicEventType(w http.ResponseWriter, r *http.Request) {
 		       et.price_cents, et.currency, et.msg_greeting, et.allow_phone_call, u.booking_accent, COALESCE(et.location_options,'[]')
 		FROM event_types et
 		JOIN users u ON u.id = et.user_id
-		WHERE et.slug = ? AND et.is_active = 1 AND et.is_public = 1`,
+		WHERE et.slug = ? AND et.is_active = 1 AND et.archived_at IS NULL`,
 		slug).Scan(&etID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor, &locOptionsRaw)
 	if errors.Is(err, sql.ErrNoRows) {
 		h.writeError(w, http.StatusNotFound, "event type not found")
@@ -642,7 +647,11 @@ func (h *Handler) BookPage(w http.ResponseWriter, r *http.Request) {
 	h.renderBookPage(w, r, r.PathValue("slug"), false, bookPrefill{})
 }
 
-func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug string, allowPrivate bool, prefill bookPrefill) {
+func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug string, allowTokenOnly bool, prefill bookPrefill) {
+	if tokenOnlyEventSlug(slug) && !allowTokenOnly {
+		http.NotFound(w, r)
+		return
+	}
 	qp := r.URL.Query()
 	if qp.Has("name") {
 		prefill.Name = strings.TrimSpace(qp.Get("name"))
@@ -678,7 +687,6 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		teamName          string
 		bookingFormConfig string
 	)
-	_ = allowPrivate
 	query := `
 		SELECT et.id, et.user_id, et.name, COALESCE(et.description, ''),
 		       et.duration_minutes, et.location_type, COALESCE(et.location_value, ''),
@@ -690,11 +698,11 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		FROM event_types et
 		JOIN users u ON u.id = et.user_id
 		LEFT JOIN teams tm ON tm.id = et.team_id
-		WHERE et.slug = ? AND et.is_active = 1`
+		WHERE et.slug = ? AND et.is_active = 1 AND (et.archived_at IS NULL OR ?)`
 	if prefill.Preview != nil {
 		query = strings.Replace(query, " AND et.is_active = 1", "", 1)
 	}
-	err := h.db.QueryRowContext(r.Context(), query, slug).
+	err := h.db.QueryRowContext(r.Context(), query, slug, prefill.Preview != nil).
 		Scan(&etID, &ownerID, &name, &description, &durMins, &locType, &locValue, &maxDays, &minNotice, &routingMode, &hostName, &avatarURL, &priceCents, &currency, &msgGreeting, &allowPhoneCall, &accentColor, &redirectURL, &reqEmailVerify, &allowMultiDur, &durOptsRaw, &locOptsRaw, &teamID, &teamName, &bookingFormConfig)
 
 	if errors.Is(err, sql.ErrNoRows) {

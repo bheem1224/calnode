@@ -98,14 +98,16 @@ try {
             await api('/v1/event-types/' + slug, settings, 'PATCH');
         return e;
     }
-    const advanced = await event('matrix-advanced', { allow_multiple_durations: true, duration_options: [15, 30, 45], location_options: [{ type: 'teams', value: 'https://teams.microsoft.com/l/meetup-join/test' }], booking_form_config: JSON.stringify([{ key: 'notes' }, { key: 'name' }, { key: 'email' }, { key: 'phone', hidden: true }, { key: 'guests' }]) });
+    const advanced = await event('matrix-advanced', { is_public: false, allow_multiple_durations: true, duration_options: [15, 30, 45], location_options: [{ type: 'teams', value: 'https://teams.microsoft.com/l/meetup-join/test' }], booking_form_config: JSON.stringify([{ key: 'notes' }, { key: 'name' }, { key: 'email' }, { key: 'phone', hidden: true }, { key: 'guests' }]) });
+    const hiddenTeam = await api('/v1/teams', { name: 'Hidden Team', slug: 'hidden-team' });
+    await event('matrix-hidden-team', { is_public: false, team_id: hiddenTeam.id, routing_mode: 'collective' });
     const types = [['text', null], ['number', null], ['url', null], ['address', null], ['phone', null], ['multiple_emails', null], ['select', ['Alpha', 'Beta']], ['radio_group', ['Alpha', 'Beta']], ['multiselect', ['Alpha', 'Beta']], ['checkbox_group', ['Alpha', 'Beta']], ['checkbox', null]];
     const questions = [];
     for (const [type, options] of types)
         questions.push(await api('/v1/event-types/matrix-advanced/questions', { label: 'Question ' + type, type, options: options || undefined, required: true, identifier: type === 'text' ? 'request_context' : undefined, lock_if_prefilled: type === 'text' }));
     await api('/v1/event-types/matrix-advanced/questions', { label: 'Hidden question', type: 'text', hidden: true, identifier: 'source', lock_if_prefilled: true });
     await event('matrix-pending', { requires_confirmation: true, confirm_mode: 'always' });
-    await event('matrix-verify', { require_email_verification: true });
+    await event('matrix-verify', { is_public: false, require_email_verification: true });
     await event('matrix-redirect', { redirect_url: origin + '/__booking-complete' });
     fixture = httpServer((req, res) => {
         const url = new URL(req.url, 'http://localhost');
@@ -144,6 +146,13 @@ try {
                 }
                 async function identity(prefix) { await root.locator('#f-name').fill('Booking Test'); const email = `${prefix}-${bookings++}@example.test`; await root.locator('#f-email').fill(email); return email; }
                 async function submit() { const result = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/v1/bookings')); await root.locator('button[type="submit"]').click(); const response = await result; assert.equal(response.status(), 201, await response.text()); return { body: await response.json(), sent: response.request().postDataJSON() }; }
+                await open('matrix-hidden-team');
+                await choose();
+                await identity('hidden-team');
+                const teamBooking = await submit();
+                assert.ok(teamBooking.body.id, 'Hidden team event did not create a booking');
+                await root.getByText('Booking confirmed', { exact: true }).waitFor();
+                await page.screenshot({ path: join(screenshots, `hidden-team-${surface}-${width}-${theme}.png`), fullPage: true, animations: 'disabled' });
                 await open('matrix-advanced');
                 await root.locator('.dur-pill').filter({ hasText: '15' }).click();
                 await choose();
@@ -231,9 +240,10 @@ try {
             }
 
     assert.ok(lastCompleted.manage_url,'Completed booking omitted its manage URL');
-    // A private one-time event must remain manageable after consuming its link.
+    // A hidden event remains directly bookable; its one-time URL must still be
+    // consumed independently, and the resulting booking must remain manageable.
     const privateEvent = await event('matrix-private', {is_public:false});
-    assert.equal((await fetch(origin+'/v1/event-types/matrix-private/slots')).status,404);
+    assert.equal((await fetch(origin+'/v1/event-types/matrix-private/slots')).status,200);
     const privateLink = await api('/v1/event-types/'+privateEvent.id+'/single-use-links',{expires_in_hours:72});
     const privateDay = new Date(Date.now()+3*86400000).toISOString().slice(0,10);
     const privateSlots = await (await fetch(origin+'/v1/t/'+privateLink.token+'/slots?from='+privateDay+'&to='+privateDay+'&tz=UTC')).json();
@@ -248,7 +258,7 @@ try {
         const availability=page.waitForResponse(r=>r.url().includes('/manage/')&&r.url().includes('/slots?'));
         await page.locator('#reschedule-btn').click();
         assert.equal((await availability).status(),200,'Private manage availability rejected');
-        // The preceding 24 bookings consume tomorrow's morning; choose a fresh day.
+        // The preceding bookings consume tomorrow's morning; choose a fresh day.
         await page.locator('.cd.available').nth(2).click();await page.locator('.slot-btn:not(.taken)').first().waitFor();
         assert.deepEqual(await page.locator('[data-period]').allTextContents(),['Morning','Evening']);
         await page.locator('[data-period="1"]').click();await page.locator('.slot-btn:not(.taken)').first().waitFor();
@@ -309,7 +319,7 @@ try {
     assert.ok(polls >= 2, 'Checkout skipped durable confirmation polling');
     await paid.close();
     assert.deepEqual(errors, []);
-    console.log(`Verified 24 configured booking flows, redirects and checkout failure handling across hosted/embed plus manage rescheduling, light/dark, desktop/mobile. Screenshots: ${screenshots}`);
+    console.log(`Verified 32 configured booking flows including hidden personal/team events, redirects and checkout failure handling across hosted/embed plus manage rescheduling, light/dark, desktop/mobile. Screenshots: ${screenshots}`);
 }
 catch (error) {
     console.error(logs);
