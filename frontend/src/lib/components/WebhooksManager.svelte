@@ -36,9 +36,10 @@
 		eventTypeId ? items.filter((wh) => wh.event_type_id === eventTypeId || wh.scopes?.some(s=>s.type==='event'&&s.id===eventTypeId)) : items
 	);
  let scopeOptions=$state<(WebhookScope&{name:string})[]>([]);
- let scopeEditOpen=$state(false),scopeEditId=$state(''),scopeEditValue=$state<WebhookScope[]>([]),scopeSaving=$state(false),scopeEditError=$state('');
+ let editId=$state(''),formActive=$state(true);
  function scopeNames(wh:Webhook){if(!wh.scopes?.length)return scopeLabel(wh.event_type_id);return wh.scopes.map(s=>{const option=scopeOptions.find(o=>o.type===s.type&&o.id===s.id);return s.type==='instance'?$t('webhookScopes.instance'):s.type==='user'&&s.id===$currentUser?.id?$t('webhookScopes.mine'):(option?.name??s.id);}).join(', ');}
- async function saveScope(){scopeSaving=true;scopeEditError='';try{await api.patch('/v1/webhooks/'+scopeEditId,{scopes:scopeEditValue});scopeEditOpen=false;await load();}catch(e:any){scopeEditError=e.message;}finally{scopeSaving=false;}}
+ function startCreate(){editId='';formActive=true;createError='';form={url:'',events:['booking.created','booking.cancelled'],fields:[...defaultFieldKeys],scopes:eventTypeId?[{type:'event',id:eventTypeId}]:[{type:'user',id:$currentUser?.id}]};showCreate=true;}
+ function startEdit(wh:Webhook){editId=wh.id;formActive=wh.is_active;createError='';form={url:wh.url,events:[...(wh.events??[])],fields:[...(wh.fields??defaultFieldKeys)],scopes:wh.scopes?.length?structuredClone($state.snapshot(wh.scopes)):wh.event_type_id?[{type:'event',id:wh.event_type_id}]:[{type:'user',id:$currentUser?.id}]};showCreate=true;}
 
 	const allEvents = [
 		'booking.created',
@@ -184,19 +185,20 @@
 
 	async function create() {
 		createError = '';
-		if (!eventTypeId && !form.scopes.length) { createError=tr('webhookScopes.required'); return; }
+		if (!form.scopes.length) { createError=tr('webhookScopes.required'); return; }
 		if (!form.url) { createError = tr('webhooks.validation.url'); return; }
 		if (!form.url.startsWith('https://')) { createError = tr('webhooks.validation.https'); return; }
 		if (form.events.length === 0) { createError = tr('webhooks.validation.events'); return; }
 		creating = true;
 		try {
-			const created=await api.post<{secret:string}>('/v1/webhooks', {
+			const payload = {
 				url: form.url,
 				events: form.events,
 				fields: form.fields.filter(f=>f!=='answers'||can('bookings.answers')),
-				scopes: eventTypeId ? [{type:'event',id:eventTypeId}] : form.scopes
-			});
-			revealedSecret=created.secret;
+				scopes: form.scopes
+			};
+			if(editId)await api.patch('/v1/webhooks/'+editId,{...payload,is_active:formActive});
+			else revealedSecret=(await api.post<{secret:string}>('/v1/webhooks',payload)).secret;
 			form = {
 				url: '',
 				events: ['booking.created', 'booking.cancelled'],
@@ -286,14 +288,13 @@
 			<p class="mt-1 text-sm text-muted-foreground">{$t('webhooks.subtitle')}</p>
 		{/if}
 	</div>
-	<Button disabled={!!credentialOwner || !can('webhooks.create')} onclick={() => { showCreate = !showCreate; createError = ''; }}>
+	<Button disabled={!!credentialOwner || !can('webhooks.create')} onclick={startCreate}>
 		{showCreate ? $t('webhooks.new.toggleCancel') : $t('webhooks.new.toggleOpen')}
 	</Button>
 </div>
 
-{#if showCreate && !credentialOwner}
-	<div class="mb-6 rounded-lg border bg-card p-6">
-		<h2 class="mb-4 text-sm font-semibold">{$t('webhooks.new.title')}</h2>
+<Dialog.Root bind:open={showCreate}><Dialog.Content class="max-h-[90dvh] w-[calc(100%-2rem)] max-w-3xl overflow-y-auto rounded-lg"><Dialog.Header><Dialog.Title>{editId ? $t('webhookScopes.edit') : $t('webhooks.new.title')}</Dialog.Title></Dialog.Header>
+	<div class="min-w-0">
 		{#if createError}<p class="mb-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{createError}</p>{/if}
 
 		<div class="mb-4 space-y-1.5">
@@ -306,17 +307,15 @@
 			/>
 		</div>
 
-		{#if !isScoped}
 			<div class="mb-4 space-y-1.5">
 				<Label for="wh-scope">{$t('webhooks.new.scopeLabel')}</Label>
 				<WebhookScopePicker items={scopeOptions} bind:value={form.scopes} />
 			</div>
-		{/if}
 
 		<div class="mb-4 space-y-2">
 			<p class="text-sm font-medium">{$t('webhooks.new.eventsTitle')}</p>
 			{#each allEvents as ev}
-				<label class="flex cursor-pointer items-center gap-2 font-mono text-sm">
+				<label class="flex min-h-10 cursor-pointer items-start gap-2 py-2 text-sm">
 					<Checkbox
 						checked={form.events.includes(ev)}
 						onCheckedChange={() => toggleEvent(ev)}
@@ -333,9 +332,9 @@
 					<p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 						{grp.group}{#if grp.pii}<span class="ml-1.5 font-normal normal-case text-amber-600">{$t('webhooks.new.fieldsPii')}</span>{/if}
 					</p>
-					<div class="grid grid-cols-2 gap-x-4 gap-y-1">
+					<div class="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
 						{#each grp.fields as f}
-							<label class="flex cursor-pointer items-center gap-2 font-mono text-sm">
+							<label class="flex min-h-10 cursor-pointer items-start gap-2 py-2 text-sm">
 								<Checkbox checked={form.fields.includes(f.key)} onCheckedChange={() => toggleField(f.key)} />
 								<span>{f.label}{#if f.pii}<span class="ml-1 text-[10px] font-medium uppercase text-amber-600">{$t('webhooks.new.piiBadge')}</span>{/if}</span>
 							</label>
@@ -345,11 +344,12 @@
 			{/each}
 		</div>
 
-		<Button onclick={create} disabled={creating}>
-			{creating ? $t('webhooks.new.creating') : $t('webhooks.new.create')}
-		</Button>
+		{#if editId}<label class="mb-4 flex min-h-10 items-center gap-2"><Checkbox bind:checked={formActive} /><span>{$t('common.active')}</span></label>{/if}
+		<Dialog.Footer><Button variant="ghost" onclick={()=>showCreate=false}>{$t('common.cancel')}</Button><Button onclick={create} disabled={creating}>
+			{creating ? $t('webhooks.new.creating') : editId ? $t('common.save') : $t('webhooks.new.create')}
+		</Button></Dialog.Footer>
 	</div>
-{/if}
+</Dialog.Content></Dialog.Root>
 
 <CredentialOwnerPicker bind:value={credentialOwner} permission="webhooks.read" onChange={load} />
 
@@ -399,7 +399,7 @@
 							</td>
 							<td class="px-4 py-3 text-muted-foreground">{fmtDate(wh.created_at)}</td>
 							<td class="px-4 py-3 text-right whitespace-nowrap">
-								{#if can('webhooks.update') && !credentialOwner}<Tooltip.Root><Tooltip.Trigger class={buttonVariants({variant:'ghost',size:'icon'})} aria-label={$t('webhookScopes.edit')} onclick={()=>{scopeEditError='';scopeEditId=wh.id;scopeEditValue=wh.scopes?.length?structuredClone($state.snapshot(wh.scopes)):wh.event_type_id?[{type:'event',id:wh.event_type_id}]:[{type:'user',id:$currentUser?.id}];scopeEditOpen=true;}}><Pencil class="size-4" /></Tooltip.Trigger><Tooltip.Content>{$t('webhookScopes.edit')}</Tooltip.Content></Tooltip.Root>{/if}
+								{#if can('webhooks.update') && !credentialOwner}<Tooltip.Root><Tooltip.Trigger class={buttonVariants({variant:'ghost',size:'icon'})} aria-label={$t('webhookScopes.edit')} onclick={()=>startEdit(wh)}><Pencil class="size-4" /></Tooltip.Trigger><Tooltip.Content>{$t('webhookScopes.edit')}</Tooltip.Content></Tooltip.Root>{/if}
                                 {#if can('webhooks.rotate')}<Button type="button" size="sm" variant="ghost" onclick={() => {rotateTarget=wh.id;rotateOpen=true;}}>{$t('permissions.rotate')}</Button>{/if}
 <Tooltip.Root>
 									<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} aria-label={$t('webhooks.tooltip.deliveries')} disabled={!can('webhooks.deliveries')} onclick={() => toggleDeliveries(wh.id)}>
@@ -462,7 +462,7 @@
 	</div>
 {/if}
 
-<Dialog.Root bind:open={scopeEditOpen}><Dialog.Content class="sm:max-w-lg"><Dialog.Header><Dialog.Title>{$t('webhookScopes.edit')}</Dialog.Title><Dialog.Description>{$t('webhookScopes.hint')}</Dialog.Description></Dialog.Header>{#if scopeEditError}<p role="alert" class="text-sm text-destructive">{scopeEditError}</p>{/if}<WebhookScopePicker id="wh-edit-scope" items={scopeOptions} bind:value={scopeEditValue} /><Dialog.Footer><Button type="button" variant="ghost" onclick={()=>scopeEditOpen=false}>{$t('common.cancel')}</Button><Button type="button" disabled={scopeSaving||!scopeEditValue.length} onclick={saveScope}>{$t('common.save')}</Button></Dialog.Footer></Dialog.Content></Dialog.Root>
+
 
 <style>
  @media(max-width:639px){

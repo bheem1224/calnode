@@ -8,6 +8,23 @@ import TeamsManager from '$lib/components/TeamsManager.svelte';
 import en from '$lib/i18n/en.json';
 afterEach(async()=>{cleanup();vi.restoreAllMocks();currentUser.set(null);document.documentElement.classList.remove('dark');await page.viewport(1280,720)});
 
+test.each(['light','dark'])('webhook editor preserves scopes and edits all settings on mobile in %s',async theme=>{
+ await page.viewport(390,844);document.documentElement.classList.toggle('dark',theme==='dark');
+ currentUser.set({id:'me',permissions:{'webhooks.read':'own','webhooks.update':'own','bookings.read':'own'}} as unknown as User);
+ const hook={id:'hook',url:'https://automation.example.test/old',events:['booking.created'],fields:['id'],scopes:[{type:'user',id:'me'}],is_active:true,created_at:'2026-11-01T00:00:00Z'};
+ vi.spyOn(api,'get').mockImplementation(async path=>path==='/v1/webhooks'?{items:[hook]}:path==='/v1/webhooks/scopes'?{items:[{type:'user',id:'me',name:'Me'}]}:{items:[]} as never);
+ const patch=vi.spyOn(api,'patch').mockResolvedValue(undefined);
+ await render(WebhooksManager);await page.getByRole('button',{name:en.webhookScopes.edit,exact:true}).click();
+ const dialog=page.getByRole('dialog');await dialog.getByRole('textbox',{name:en.webhooks.new.urlLabel}).fill('https://automation.example.test/new');
+ await dialog.getByRole('checkbox',{name:'booking.cancelled',exact:true}).click();
+ await dialog.getByRole('checkbox',{name:en.common.active,exact:true}).click();
+ await page.screenshot({path:`./__screenshots__/webhook-editor-${theme}.png`});
+ expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
+ await dialog.getByRole('button',{name:en.common.save,exact:true}).click();
+ await expect.poll(()=>patch.mock.calls.length).toBe(1);
+ expect(patch.mock.calls[0]).toEqual(['/v1/webhooks/hook',{url:'https://automation.example.test/new',events:['booking.created','booking.cancelled'],fields:['id'],scopes:[{type:'user',id:'me'}],is_active:false}]);
+});
+
 test('new webhooks require explicit opt-in to disclose a booking token',async()=>{
  currentUser.set({id:'me',is_admin:true} as User);
  vi.spyOn(api,'get').mockResolvedValue({items:[]});
@@ -16,7 +33,7 @@ test('new webhooks require explicit opt-in to disclose a booking token',async()=
  const token=page.getByRole('checkbox',{name:en.webhooks.lifecycleFields.token,exact:true});
  await expect.element(token).not.toBeChecked();
  await token.click();await expect.element(token).toBeChecked();
- expect(container.textContent).toContain(en.webhooks.lifecycleFields.linkId);
+ await expect.element(page.getByRole('dialog')).toHaveTextContent(en.webhooks.lifecycleFields.linkId);
 });
 test.each(['light','dark'])('failed webhook retry is reviewed and preserves its delivery target in %s',async theme=>{
  await page.viewport(390,844);document.documentElement.classList.toggle('dark',theme==='dark');

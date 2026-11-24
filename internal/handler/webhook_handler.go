@@ -147,8 +147,7 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// PatchWebhook handles PATCH /v1/webhooks/{id} — update events and/or the payload
-// field selection of an existing webhook.
+// PatchWebhook applies a validated partial update without rotating the signing secret.
 func (h *Handler) PatchWebhook(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 	id := r.PathValue("id")
@@ -165,6 +164,8 @@ func (h *Handler) PatchWebhook(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 
 	var req struct {
+		URL         *string          `json:"url"`
+		IsActive    *bool            `json:"is_active"`
 		Events      *[]string        `json:"events"`
 		Fields      *[]string        `json:"fields"`
 		EventTypeID *string          `json:"event_type_id"`
@@ -173,6 +174,17 @@ func (h *Handler) PatchWebhook(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
+	}
+	if req.URL != nil {
+		u, err := url.ParseRequestURI(*req.URL)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+			h.writeError(w, http.StatusBadRequest, "url must be a valid http or https URL")
+			return
+		}
+		if err := validateWebhookURL(r.Context(), u); err != nil {
+			h.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if req.EventTypeID != nil && *req.EventTypeID != "" {
 		if ok, err := h.validateWebhookEventType(r.Context(), user.ID, user.IsAdmin, req.EventTypeID); !ok {
@@ -257,7 +269,7 @@ func (h *Handler) PatchWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.webhookSvc.UpdateConfig(r.Context(), resourceOwner, id, req.Events, req.Fields, req.EventTypeID, req.Scopes); err != nil {
+	if err := h.webhookSvc.UpdateConfig(r.Context(), resourceOwner, id, webhook.ConfigPatch{URL: req.URL, IsActive: req.IsActive, Events: req.Events, Fields: req.Fields, EventTypeID: req.EventTypeID, Scopes: req.Scopes}); err != nil {
 		if errors.Is(err, webhook.ErrNotFound) {
 			h.writeError(w, 404, "webhook not found")
 		} else {
@@ -386,6 +398,9 @@ func (h *Handler) ListWebhookDeliveries(w http.ResponseWriter, r *http.Request) 
 // time (netutil.ResolveSafe), since DNS can change between saving a URL and
 // delivering to it.
 func validateWebhookURL(ctx context.Context, u *url.URL) error {
+	if u.User != nil || u.Fragment != "" || u.Hostname() == "" {
+		return fmt.Errorf("webhook URL must have a hostname and must not contain credentials or a fragment")
+	}
 	if _, err := netutil.ResolveSafe(ctx, u.Hostname()); err != nil {
 		return fmt.Errorf("webhook URL must not resolve to a private or loopback address: %w", err)
 	}

@@ -2596,7 +2596,7 @@
 		"selected": "{count} scopes selected",
 		"search": "Search people, teams or events",
 		"empty": "No matching authorized scopes.",
-		"edit": "Edit webhook scopes",
+		"edit": "Edit webhook",
 		"hint": "Choose one or more scopes. Overlapping selections create one notification. Retries may deliver it more than once. Only data allowed by your current role and this webhook’s saved permissions is sent.",
 		"types": {
 			"user": "Person",

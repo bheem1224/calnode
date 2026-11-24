@@ -261,11 +261,29 @@ func (s *Service) CreateConfigured(ctx context.Context, userID, url string, even
 // Update applies partial changes to a webhook owned by userID. Nil pointers are
 // left unchanged. Returns ErrNotFound if no such webhook exists for the user.
 func (s *Service) Update(ctx context.Context, userID, id string, events, fields *[]string) error {
-	return s.UpdateConfig(ctx, userID, id, events, fields, nil, nil)
+	return s.UpdateConfig(ctx, userID, id, ConfigPatch{Events: events, Fields: fields})
 }
-func (s *Service) UpdateConfig(ctx context.Context, userID, id string, events, fields *[]string, legacy *string, scopes *[]Scope) error {
+
+type ConfigPatch struct {
+	URL            *string
+	IsActive       *bool
+	Events, Fields *[]string
+	EventTypeID    *string
+	Scopes         *[]Scope
+}
+
+func (s *Service) UpdateConfig(ctx context.Context, userID, id string, patch ConfigPatch) error {
+	events, fields, legacy, scopes := patch.Events, patch.Fields, patch.EventTypeID, patch.Scopes
 	var set []string
 	var args []any
+	if patch.URL != nil {
+		set = append(set, "url = ?")
+		args = append(args, *patch.URL)
+	}
+	if patch.IsActive != nil {
+		set = append(set, "is_active = ?")
+		args = append(args, *patch.IsActive)
+	}
 	if events != nil {
 		eb, _ := json.Marshal(*events)
 		set = append(set, "events = ?")

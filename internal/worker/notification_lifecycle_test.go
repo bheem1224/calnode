@@ -137,7 +137,7 @@ func TestWebhookScopes_OverlapOnceAndScopeChangeBeforeDelivery(t *testing.T) {
 		t.Fatalf("overlap produced duplicates or unrelated events: %d", len(deliveries))
 	}
 	scopes = []webhook.Scope{{Type: "user", ID: "host-01"}}
-	if err = svc.UpdateConfig(ctx, "host-01", hook.ID, nil, nil, nil, &scopes); err != nil {
+	if err = svc.UpdateConfig(ctx, "host-01", hook.ID, webhook.ConfigPatch{Scopes: &scopes}); err != nil {
 		t.Fatal(err)
 	}
 	newWorker(t, d, svc).Poll(ctx)
