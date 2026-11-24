@@ -2,11 +2,20 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
+
+	"github.com/calnode/calnode/internal/uid"
 )
 
 func (h *Handler) recordCalendarHealth(ctx context.Context, id string, checkErr error) {
+	// Navigating away or replacing an availability request cancels its provider
+	// calls. That says nothing about the connected calendar's health.
+	if errors.Is(checkErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		return
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if checkErr == nil {
 		_, _ = h.db.ExecContext(ctx, `UPDATE users SET calendar_check_error='',calendar_checked_at=? WHERE id=?`, now, id)
@@ -18,7 +27,12 @@ func (h *Handler) recordCalendarHealth(ctx context.Context, id string, checkErr 
 	}
 	n, _ := res.RowsAffected()
 	if n == 1 {
-		h.securityNotice(ctx, id, "Calendar availability check failed; review your connected calendars", "")
+		payload, _ := json.Marshal(map[string]string{"user_id": id, "category": "calendar", "action": "Calendar availability check failed; review your connected calendars"})
+		// A brief recovery must not reset the notification cooldown. Keep the
+		// health state current, but send at most one calendar alert per six hours.
+		if _, err := h.db.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(id,type,payload,run_at) SELECT ?,'security.notify',?,? WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE type='security.notify' AND json_extract(payload,'$.user_id')=? AND json_extract(payload,'$.category')='calendar' AND created_at>datetime('now','-6 hours'))`, uid.New(), string(payload), now, id); err != nil {
+			h.logger.Error("calendar health notification queue failed", "error", err)
+		}
 	}
 }
 func (h *Handler) GetSecurityOperations(w http.ResponseWriter, r *http.Request) {

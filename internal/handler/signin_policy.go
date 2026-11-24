@@ -14,24 +14,26 @@ import (
 // A missing policy preserves existing installations until an administrator opts in.
 // Provider credentials configure calendar integrations independently of this policy.
 type SigninPolicy struct {
-	MCPReviewEnforced    bool   `json:"mcp_review_enforced"`
-	RequireAdminMFA      bool   `json:"require_admin_mfa"`
-	RequireMemberMFA     bool   `json:"require_member_mfa"`
-	PasswordMinLength    int    `json:"password_min_length"`
-	SessionHours         int    `json:"session_hours"`
-	DynamicLinkDays      int    `json:"dynamic_link_days"`
-	revision             string // Original database value, used to reject login/policy-update races.
-	GoogleEnabled        bool   `json:"google_enabled"`
-	MicrosoftEnabled     bool   `json:"microsoft_enabled"`
-	MembersSSOOnly       bool   `json:"members_sso_only"`
-	AdminPasswordEnabled bool   `json:"admin_password_enabled"`
-	AutoProvision        bool   `json:"auto_provision"`
-	ApprovedDomains      string `json:"approved_domains"`
-	RequiredGroupID      string `json:"required_group_id"`
+	AdminAlertMode       string   `json:"admin_alert_mode"`
+	AdminAlertUserIDs    []string `json:"admin_alert_user_ids"`
+	MCPReviewEnforced    bool     `json:"mcp_review_enforced"`
+	RequireAdminMFA      bool     `json:"require_admin_mfa"`
+	RequireMemberMFA     bool     `json:"require_member_mfa"`
+	PasswordMinLength    int      `json:"password_min_length"`
+	SessionHours         int      `json:"session_hours"`
+	DynamicLinkDays      int      `json:"dynamic_link_days"`
+	revision             string   // Original database value, used to reject login/policy-update races.
+	GoogleEnabled        bool     `json:"google_enabled"`
+	MicrosoftEnabled     bool     `json:"microsoft_enabled"`
+	MembersSSOOnly       bool     `json:"members_sso_only"`
+	AdminPasswordEnabled bool     `json:"admin_password_enabled"`
+	AutoProvision        bool     `json:"auto_provision"`
+	ApprovedDomains      string   `json:"approved_domains"`
+	RequiredGroupID      string   `json:"required_group_id"`
 }
 
 func (h *Handler) signinPolicy(ctx context.Context) (SigninPolicy, error) {
-	p := SigninPolicy{PasswordMinLength: 16, SessionHours: 12, DynamicLinkDays: 7, GoogleEnabled: true, MicrosoftEnabled: true, AdminPasswordEnabled: true}
+	p := SigninPolicy{AdminAlertMode: "owner", AdminAlertUserIDs: []string{}, PasswordMinLength: 16, SessionHours: 12, DynamicLinkDays: 7, GoogleEnabled: true, MicrosoftEnabled: true, AdminPasswordEnabled: true}
 	var raw string
 	err := h.db.QueryRowContext(ctx, `SELECT signin_policy_json FROM server_settings WHERE id=1`).Scan(&raw)
 	if err != nil {
@@ -43,6 +45,12 @@ func (h *Handler) signinPolicy(ctx context.Context) (SigninPolicy, error) {
 		return p, nil
 	}
 	err = json.Unmarshal([]byte(raw), &p)
+	if p.AdminAlertMode == "" {
+		p.AdminAlertMode = "owner"
+	}
+	if p.AdminAlertUserIDs == nil {
+		p.AdminAlertUserIDs = []string{}
+	}
 	if p.PasswordMinLength == 0 {
 		p.PasswordMinLength = 16
 	}
@@ -115,7 +123,12 @@ func (h *Handler) GetSigninPolicy(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, 500, "could not load sign-in policy")
 		return
 	}
-	h.writeJSON(w, 200, map[string]any{"policy": p, "google_configured": h.getGoogleAuth() != nil, "microsoft_configured": h.getMicrosoftAuth() != nil})
+	recipients, err := h.adminAlertOptions(r.Context())
+	if err != nil {
+		h.writeError(w, 500, "could not load alert recipients")
+		return
+	}
+	h.writeJSON(w, 200, map[string]any{"policy": p, "alert_recipients": recipients, "google_configured": h.getGoogleAuth() != nil, "microsoft_configured": h.getMicrosoftAuth() != nil})
 }
 
 func (h *Handler) PutSigninPolicy(w http.ResponseWriter, r *http.Request) {
@@ -131,6 +144,10 @@ func (h *Handler) PutSigninPolicy(w http.ResponseWriter, r *http.Request) {
 	var p SigninPolicy
 	if json.NewDecoder(r.Body).Decode(&p) != nil {
 		h.writeError(w, 400, "invalid JSON")
+		return
+	}
+	if err := h.validateAdminAlerts(r.Context(), &p); err != nil {
+		h.writeError(w, 400, err.Error())
 		return
 	}
 	if p.PasswordMinLength == 0 {

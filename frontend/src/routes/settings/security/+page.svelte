@@ -9,12 +9,15 @@
  import { Input } from '$lib/components/ui/input';
  import { Label } from '$lib/components/ui/label';
  import { Switch } from '$lib/components/ui/switch';
+ import { Checkbox } from '$lib/components/ui/checkbox';
+ import * as Select from '$lib/components/ui/select';
  import * as Dialog from '$lib/components/ui/dialog';
  import { toast } from 'svelte-sonner';
- type Policy={mcp_review_enforced:boolean;password_min_length:number;require_admin_mfa:boolean;require_member_mfa:boolean;session_hours:number;dynamic_link_days:number;google_enabled:boolean;microsoft_enabled:boolean;members_sso_only:boolean;admin_password_enabled:boolean;auto_provision:boolean;approved_domains:string;required_group_id:string};
- type Response={policy:Policy;google_configured:boolean;microsoft_configured:boolean};
+ type Policy={admin_alert_mode:string;admin_alert_user_ids:string[];mcp_review_enforced:boolean;password_min_length:number;require_admin_mfa:boolean;require_member_mfa:boolean;session_hours:number;dynamic_link_days:number;google_enabled:boolean;microsoft_enabled:boolean;members_sso_only:boolean;admin_password_enabled:boolean;auto_provision:boolean;approved_domains:string;required_group_id:string};
+ type Response={policy:Policy;alert_recipients?:{id:string;name:string;email:string;is_owner:boolean}[];google_configured:boolean;microsoft_configured:boolean};
  let data=$state<Response|null>(null),error=$state(''),verify=$state(false),busy=$state(false),password=$state('');
- onMount(async()=>{try{data=await api.get<Response>('/v1/settings/security');data.policy.mcp_review_enforced??=false;}catch(e){error=e instanceof Error?e.message:$t('securitySettings.loadError');}});
+ onMount(async()=>{try{data=await api.get<Response>('/v1/settings/security');data.policy.mcp_review_enforced??=false;data.policy.admin_alert_mode||='owner';data.policy.admin_alert_user_ids??=[];}catch(e){error=e instanceof Error?e.message:$t('securitySettings.loadError');}});
+ function toggleRecipient(id:string){if(data)data.policy.admin_alert_user_ids=data.policy.admin_alert_user_ids.includes(id)?data.policy.admin_alert_user_ids.filter(v=>v!==id):[...data.policy.admin_alert_user_ids,id];}
  async function save(){busy=true;error='';try{
   data=await api.put<Response>('/v1/settings/security',data!.policy);
   verify=false;password='';toast.success($t('securitySettings.saved'));
@@ -35,7 +38,18 @@
   <section class="space-y-4 rounded-xl border bg-card p-5"><div><div class="flex items-center gap-1"><h3 class="text-sm font-semibold">{$t('passwordPolicy.title')}</h3><HelpTooltip label={$t('passwordPolicy.title')} text={$t('passwordPolicy.description')+' '+$t('passwordPolicy.application')} /></div></div><div class="max-w-xs space-y-2"><Label for="password-minimum">{$t('passwordPolicy.minimum')}</Label><Input id="password-minimum" type="number" min={15} max={128} bind:value={data.policy.password_min_length} /></div></section>
   <section class="space-y-3 rounded-xl border bg-card p-5"><div class="flex items-start justify-between gap-5"><div class="space-y-1"><div class="flex items-center gap-1"><Label for="agent-company-review">{$t('agentReview.companyTitle')}</Label><HelpTooltip label={$t('agentReview.companyTitle')} text={$t('agentReview.companyHint')} /></div></div><Switch id="agent-company-review" bind:checked={data.policy.mcp_review_enforced} /></div></section>
 
-  <Button type="button" onclick={()=>{error='';password='';verify=true;}}>{$t('securitySettings.save')}</Button>
+  <section class="space-y-4 rounded-xl border bg-card p-5" aria-labelledby="admin-alerts-title">
+   <div class="flex items-center gap-1"><h3 id="admin-alerts-title" class="text-sm font-semibold">{$t('adminAlerts.title')}</h3><HelpTooltip label={$t('adminAlerts.title')} text={$t('adminAlerts.hint')} /></div>
+   <div class="space-y-2"><Label for="admin-alert-mode">{$t('adminAlerts.recipients')}</Label>
+    <Select.Root type="single" bind:value={data.policy.admin_alert_mode}><Select.Trigger id="admin-alert-mode" class="w-full">{$t(`adminAlerts.${data.policy.admin_alert_mode}`)}</Select.Trigger><Select.Content>{#each ['owner','admins','selected'] as mode}<Select.Item value={mode}>{$t(`adminAlerts.${mode}`)}</Select.Item>{/each}</Select.Content></Select.Root>
+   </div>
+   {#if data.policy.admin_alert_mode==='selected'}
+    <div class="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">{#each data.alert_recipients??[] as person (person.id)}<label class="flex min-h-12 cursor-pointer items-start gap-3 rounded-md p-2 hover:bg-muted"><Checkbox aria-label={person.name+' ('+person.email+')'} checked={data.policy.admin_alert_user_ids.includes(person.id)} onCheckedChange={()=>toggleRecipient(person.id)} /><span class="min-w-0 text-sm"><span class="block break-words font-medium">{person.name}</span><span class="block break-all text-xs text-muted-foreground">{person.email}</span></span></label>{/each}</div>
+    {#if !data.policy.admin_alert_user_ids.length}<p class="text-xs text-muted-foreground">{$t('adminAlerts.choose')}</p>{/if}
+   {/if}
+  </section>
+
+  <Button type="button" disabled={data.policy.admin_alert_mode==='selected'&&!data.policy.admin_alert_user_ids.length} onclick={()=>{error='';password='';verify=true;}}>{$t('securitySettings.save')}</Button>
   <SecurityOperations />
  {:else if !error}<p class="text-sm text-muted-foreground">{$t('securitySettings.loading')}</p>{/if}
 </div>

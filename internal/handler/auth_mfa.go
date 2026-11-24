@@ -566,9 +566,10 @@ func (h *Handler) securityNotice(ctx context.Context, id, action, reason string)
 }
 func (h *Handler) JobSecurityNotify(ctx context.Context, payload string) error {
 	var p struct {
-		ID     string `json:"user_id"`
-		Action string `json:"action"`
-		Reason string `json:"reason"`
+		ID       string `json:"user_id"`
+		Action   string `json:"action"`
+		Reason   string `json:"reason"`
+		Category string `json:"category"`
 	}
 	if json.Unmarshal([]byte(payload), &p) != nil {
 		return fmt.Errorf("invalid security notification")
@@ -576,28 +577,23 @@ func (h *Handler) JobSecurityNotify(ctx context.Context, payload string) error {
 	if !h.isEmailEnabled() {
 		return nil
 	}
-	rows, err := h.db.QueryContext(ctx, `SELECT DISTINCT email FROM users WHERE archived_at IS NULL AND (id=? OR is_admin=1 OR is_owner=1)`, p.ID)
+	emails, err := h.securityNoticeEmails(ctx, p.ID)
 	if err != nil {
 		return err
 	}
-	var emails []string
-	for rows.Next() {
-		var email string
-		if err = rows.Scan(&email); err != nil {
-			break
-		}
-		emails = append(emails, email)
+	subject := "Calnode security notification"
+	text := p.Action + ".\nAccount: " + p.ID
+	if p.Reason != "" {
+		text += "\nReference: " + p.Reason
 	}
-	scanErr := rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	if scanErr != nil {
-		return scanErr
+	if p.Category == "calendar" {
+		subject = "Calnode calendar connection needs attention"
+		text += "\nReview your calendar connections: " + strings.TrimRight(h.baseURL, "/") + "/admin/calendar"
+	} else {
+		text += "\nReview Settings → Members & Roles if this was unexpected."
 	}
 	for _, email := range emails {
-		if err = h.mailer.Send(ctx, mailer.Message{To: []string{email}, Subject: "Calnode security notification", Text: p.Action + ".\nAccount: " + p.ID + "\nReference: " + p.Reason + "\nReview Settings → Members & Roles if this was unexpected."}); err != nil {
+		if err = h.mailer.Send(ctx, mailer.Message{To: []string{email}, Subject: subject, Text: text}); err != nil {
 			return err
 		}
 	}
