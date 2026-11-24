@@ -227,10 +227,11 @@ type bookPageData struct {
 	// DemoMode shows the "public demo" banner + a noindex meta tag (see internal/demo).
 	DemoMode bool
 	// Single-use link token and optional prefill values (empty on normal /book/{slug} pages).
-	SingleUseToken string
-	PrefillName    string
-	PrefillEmail   string
-	RedirectURL    string
+	SingleUseToken   string
+	SingleUsePrefill map[string]string
+	PrefillName      string
+	PrefillEmail     string
+	RedirectURL      string
 }
 
 type bookPrefill struct {
@@ -238,6 +239,7 @@ type bookPrefill struct {
 	SingleUseToken string
 	Name           string
 	Email          string
+	Values         map[string]string
 }
 
 // hostDisplay is one host's identity for the public booking page.
@@ -889,6 +891,7 @@ func (h *Handler) renderBookPage(w http.ResponseWriter, r *http.Request, slug st
 		TermsURL:                 brand.TermsURL,
 		DemoMode:                 h.demoMode,
 		SingleUseToken:           prefill.SingleUseToken,
+		SingleUsePrefill:         prefill.Values,
 		PrefillName:              prefill.Name,
 		PrefillEmail:             prefill.Email,
 		RedirectURL:              redirectURL,

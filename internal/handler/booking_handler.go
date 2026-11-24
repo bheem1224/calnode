@@ -999,6 +999,18 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate intake question answers.
+	if singleUseToken != "" {
+		var mergeErr error
+		req.Answers, mergeErr = h.applySavedLinkAnswers(r.Context(), singleUseToken, et.ID, req.Answers)
+		if mergeErr != nil {
+			if errors.Is(mergeErr, booking.ErrSingleUseTokenGone) {
+				h.writeError(w, http.StatusGone, "This booking link has expired or has already been used")
+			} else {
+				h.writeError(w, http.StatusInternalServerError, "internal error")
+			}
+			return
+		}
+	}
 	answers, err := h.validateAnswers(w, r, et.ID, loc, req.Answers)
 	if err != nil {
 		return // validateAnswers already wrote the error response

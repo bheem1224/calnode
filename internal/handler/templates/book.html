@@ -874,7 +874,12 @@ body {
   });
   $('cal-back-btn').addEventListener('click', () => setStep('cal'));
 
-  CalnodeBookingUI.prefill(document,new URLSearchParams(window.location.search));
+  const formPrefills = new URLSearchParams(window.location.search);
+  const savedPrefills = {{.SingleUsePrefill}} || {};
+  for (const [key,value] of Object.entries(savedPrefills)) {
+    if (!formPrefills.get(key)) formPrefills.set(key,value);
+  }
+  CalnodeBookingUI.prefill(document,formPrefills);
 
   document.querySelectorAll('.dur-pill').forEach(btn => {
     btn.addEventListener('click', async () => {

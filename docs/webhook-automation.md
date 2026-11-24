@@ -23,6 +23,44 @@ combined with `expires_in_hours`. This uses the same authoritative expiry checke
 by the public booking API and expiry worker. Deploy an image supporting this field
 before using it: an older image may ignore unknown fields and use its default.
 
+## Saved form prefills
+
+One-time links can store optional booking-form defaults without putting personal
+data in their query string:
+
+```json
+{
+  "expires_in_hours": 72,
+  "prefill": {
+    "name": "Jane Example",
+    "email": "jane@example.test",
+    "Reference": "customer-reference"
+  }
+}
+```
+
+`Reference` in this example must be an existing question identifier on the event.
+Supported built-ins are `name` and `email`. Up to 32 fields are accepted, with a
+4096-byte limit per value and a 32 KiB request limit. Existing link-generation
+permissions apply; no CRM-specific schema or matching rules are part of Calnode.
+
+Missing/empty query values recover from the saved defaults. Nonempty URL or form
+values still win: prefills are convenience data, not authorization. The normal
+required-question and answer validators still apply. Valid tokens can supply
+missing custom answers on submission; expired, consumed or foreign-event tokens
+cannot. Deleting a question makes its old saved default inert.
+
+Create/list responses expose only `has_prefill`, never the saved values. The
+valid bearer link's page displays them with private/no-store and no-referrer
+headers. Treat the token as private recipient access. Revoke and reissue a link
+to change its saved defaults. Deploy migration 00105 and require the creation
+response's `has_prefill: true` before sending query-free invitations; older
+images may ignore the new request field. Existing links keep their URL-prefill
+behavior and are not backfilled.
+
+Authorized booking-answer responses include each question's stable `identifier`
+alongside its label, type and value, under the existing answer-read permission.
+
 Subscribe to `single_use_link.booked` and `single_use_link.expired`. Their `data.id`
 is the link ID, and a booked notification includes `booking_id`. These events
 describe consumption or expiry of the link; inspect the booking if your workflow

@@ -54,6 +54,7 @@ type questionJSON struct {
 // answerJSON is the API representation of a booking answer.
 type answerJSON struct {
 	QuestionID string `json:"question_id"`
+	Identifier string `json:"identifier,omitempty"`
 	Label      string `json:"label"`
 	Type       string `json:"type"`
 	Value      string `json:"value"`
@@ -432,7 +433,7 @@ func (h *Handler) GetBookingAnswers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.db.QueryContext(r.Context(), `
-		SELECT a.question_id, q.label, q.type, a.value
+		SELECT a.question_id, COALESCE(q.identifier,''), q.label, q.type, a.value
 		FROM booking_answers a
 		JOIN event_type_questions q ON q.id = a.question_id
 		WHERE a.booking_id = ?
@@ -447,7 +448,7 @@ func (h *Handler) GetBookingAnswers(w http.ResponseWriter, r *http.Request) {
 	items := []answerJSON{}
 	for rows.Next() {
 		var a answerJSON
-		if err := rows.Scan(&a.QuestionID, &a.Label, &a.Type, &a.Value); err != nil {
+		if err := rows.Scan(&a.QuestionID, &a.Identifier, &a.Label, &a.Type, &a.Value); err != nil {
 			h.logger.ErrorContext(r.Context(), "get booking answers: scan", "error", err)
 			h.writeError(w, http.StatusInternalServerError, "internal error")
 			return

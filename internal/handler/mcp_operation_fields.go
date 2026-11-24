@@ -11,7 +11,7 @@ var agentRequestFields = map[string][]string{
 	"CreateEventType":            {"slug", "name", "display_order", "is_active", "is_public", "description", "duration_minutes", "slot_interval_minutes", "location_type", "location_value", "routing_mode", "buffer_before_minutes", "buffer_after_minutes", "min_notice_minutes", "max_future_days", "max_active_bookings", "max_per_day", "max_per_week", "allow_phone_call", "show_taken_slots", "invite_delivery", "team_id"},
 	"CreateOOOEntry":             {"team_id", "dates", "reason", "public_note", "redirect_user_id"},
 	"CreateQuestion":             {"label", "type", "options", "required", "position", "identifier", "hidden", "lock_if_prefilled"},
-	"CreateSingleUseLink":        {"expires_in_hours", "expires_in_seconds", "custom_slots"},
+	"CreateSingleUseLink":        {"expires_in_hours", "expires_in_seconds", "custom_slots", "prefill"},
 	"CreateTeam":                 {"name", "slug"},
 	"PatchAvailabilitySchedule":  {"name", "timezone", "is_default"},
 	"PatchBranding":              {"business_name", "logo_height", "logo_opacity", "banner_opacity", "privacy_url", "terms_url", "fallback_locale"},

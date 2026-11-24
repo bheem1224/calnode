@@ -31,6 +31,7 @@ type singleUseLinkJSON struct {
 	BookingID       *string             `json:"booking_id"`
 	CreatedAt       string              `json:"created_at"`
 	CustomSlots     []booking.AdHocSlot `json:"custom_slots,omitempty"`
+	HasPrefill      bool                `json:"has_prefill,omitempty"`
 }
 
 func (h *Handler) singleUseURL(token string) string {
@@ -83,12 +84,25 @@ func (h *Handler) CreateSingleUseLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		ExpiresInHours   *int            `json:"expires_in_hours"`
-		ExpiresInSeconds *int            `json:"expires_in_seconds"`
-		CustomSlots      json.RawMessage `json:"custom_slots"`
+		ExpiresInHours   *int              `json:"expires_in_hours"`
+		ExpiresInSeconds *int              `json:"expires_in_seconds"`
+		CustomSlots      json.RawMessage   `json:"custom_slots"`
+		Prefill          map[string]string `json:"prefill"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	prefillJSON, err := h.validateLinkPrefill(r.Context(), etID, req.Prefill)
+	if err != nil {
+		var invalid *answerError
+		if errors.As(err, &invalid) {
+			h.writeError(w, http.StatusBadRequest, invalid.Error())
+		} else {
+			h.logger.ErrorContext(r.Context(), "validate link prefill", "error", err)
+			h.writeError(w, http.StatusInternalServerError, "internal error")
+		}
 		return
 	}
 
@@ -165,9 +179,9 @@ func (h *Handler) CreateSingleUseLink(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := h.db.ExecContext(r.Context(), `
 		INSERT INTO single_use_tokens
-		  (id, token, event_type_id, created_by_user_id, expires_at, created_at, custom_slots_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, token, etID, user.ID, expiresAtSQL, nowStr, customSlotsJSON); err != nil {
+		  (id, token, event_type_id, created_by_user_id, expires_at, created_at, custom_slots_json, prefill_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, token, etID, user.ID, expiresAtSQL, nowStr, customSlotsJSON, prefillJSON); err != nil {
 		h.logger.ErrorContext(r.Context(), "create single-use link: insert", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -181,6 +195,7 @@ func (h *Handler) CreateSingleUseLink(w http.ResponseWriter, r *http.Request) {
 		CreatedByUserID: user.ID,
 		ExpiresAt:       expiresAtPtr,
 		CreatedAt:       nowStr,
+		HasPrefill:      len(req.Prefill) > 0,
 		CustomSlots: func() []booking.AdHocSlot {
 			if req.CustomSlots != nil {
 				return customSlots
@@ -211,7 +226,7 @@ func (h *Handler) ListSingleUseLinks(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.db.QueryContext(r.Context(), `
 		SELECT id, token, event_type_id, created_by_user_id,
-		       expires_at, used_at, booking_id, created_at, custom_slots_json
+		       expires_at, used_at, booking_id, created_at, custom_slots_json, prefill_json IS NOT NULL
 		FROM single_use_tokens
 		WHERE event_type_id = ?
 		ORDER BY created_at DESC`, etID)
@@ -228,7 +243,7 @@ func (h *Handler) ListSingleUseLinks(w http.ResponseWriter, r *http.Request) {
 		var expiresAt, usedAt, bookingID, customSlots sql.NullString
 		if err := rows.Scan(
 			&item.ID, &item.Token, &item.EventTypeID, &item.CreatedByUserID,
-			&expiresAt, &usedAt, &bookingID, &item.CreatedAt, &customSlots,
+			&expiresAt, &usedAt, &bookingID, &item.CreatedAt, &customSlots, &item.HasPrefill,
 		); err != nil {
 			h.logger.ErrorContext(r.Context(), "list single-use links: scan", "error", err)
 			h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -328,18 +343,19 @@ func (h *Handler) SingleUseBookPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var (
-		slug      string
-		isActive  int
-		expiresAt sql.NullString
-		usedAt    sql.NullString
+		slug       string
+		isActive   int
+		expiresAt  sql.NullString
+		usedAt     sql.NullString
+		prefillRaw sql.NullString
 	)
 	err := h.db.QueryRowContext(r.Context(), `
 		SELECT et.slug, et.is_active,
-		       s.expires_at, s.used_at
+		       s.expires_at, s.used_at, s.prefill_json
 		FROM single_use_tokens s
 		JOIN event_types et ON et.id = s.event_type_id
 		WHERE s.token = ?`, token).
-		Scan(&slug, &isActive, &expiresAt, &usedAt)
+		Scan(&slug, &isActive, &expiresAt, &usedAt, &prefillRaw)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeSingleUseGonePage(w)
 		return
@@ -365,8 +381,16 @@ func (h *Handler) SingleUseBookPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var values map[string]string
+	if prefillRaw.Valid && json.Unmarshal([]byte(prefillRaw.String), &values) != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	h.renderBookPage(w, r, slug, true, bookPrefill{
 		SingleUseToken: token,
+		Values:         values,
 	})
 }
 
