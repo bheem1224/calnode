@@ -231,6 +231,7 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 // Returns nil if eventID is empty or the user has no connection. sendUpdates=all
 // so the attendee is notified of the new time.
 func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time) error {
+	start, end = start.Truncate(time.Second), end.Truncate(time.Second)
 	return providerhttp.Serialize(ctx, providerhttp.Key(fmt.Sprintf("%p", c.db), "google", userID, calendarID, eventID), func() error { return c.updateEvent(ctx, userID, calendarID, eventID, start, end) })
 }
 func (c *Client) updateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time) error {

@@ -1,7 +1,8 @@
-# Microsoft and Google request reliability
+# Calendar and conference request reliability
 
-Microsoft Graph and Google Calendar use `internal/providerhttp` beneath their
-OAuth transport. One manager is shared by calendar clients and Graph sign-in
+Microsoft Graph, Google Calendar and Zoom use `internal/providerhttp` beneath their
+OAuth transport. CalDAV shares the budgets while retaining its metadata-safe
+transport and credential/redirect restrictions. One manager is shared by calendar clients and Graph sign-in
 helpers for a Calnode database. Recreating a client does not reset its budget.
 
 ## Request controls
@@ -86,28 +87,41 @@ do not replace a smoke test against the deployed Microsoft/Google tenants.
 The Microsoft/Google retry transport is deliberately not installed around these
 side-effecting APIs. They need their own provider-specific recovery contracts.
 
-Two broader calendar lifecycle gaps also remain outside the HTTP retry contract:
+Migration 00104 closes the two calendar lifecycle gaps found in the earlier
+review. Cancellation, host changes and booking/seat deletion queue their original
+targets in the same SQLite transaction. The reconciler recovers an event ID by
+its operation marker and deletes the event after a lost creation acknowledgement.
+Provider writes and cleanup share a per-operation lock; retired assignments cannot
+create again. A late acknowledgement refreshes the cleanup task. Failed work uses
+bounded backoff and stays visible under **Security & sign-in / Delivery & calendar
+health**, with its owner and booking reference. A missing lookup immediately after
+an ambiguous write is retried through a 72-hour settlement window; a disconnected
+account or failed lookup is never treated as an absent event.
 
-- Cancellation reconciliation currently discovers events through their saved
-  external IDs. If creation was accepted but every acknowledgement was lost, and
-  the booking is cancelled before creation recovery saves the ID, cancellation
-  can miss that provider event. The stable operation identity now makes lookup
-  possible, but cancellation needs an explicit lookup-and-cleanup recovery path.
-- Host reassignment clears the old seat's calendar IDs before asynchronous
-  cleanup. If that old-event deletion fails, it is logged but has no independent
-  durable cleanup record. A persisted cleanup outbox is needed to survive an
-  outage or crash during host changes. Concurrent different reassignments also
-  need lifecycle coordination beyond duplicate-create protection.
+CalDAV pins its destination, derives a stable UID/resource path, creates with
+`If-None-Match: *`, verifies an existing object's UID, and serializes reschedules.
+Updates require an ETag and skip already-applied times. Conditional create retries
+cannot allocate another resource; stale updates fail rather than overwrite.
 
-These are release blockers for an unconditional claim that every calendar
-lifecycle operation recovers automatically from any outage. Passing create,
-update and delete HTTP fault tests does not demonstrate those missing lifecycle
-paths. They should be fixed and exercised before that broader production sign-off.
+Zoom uses the shared request and refresh controls, plus a durable meeting journal
+and unique agenda marker. An uncertain POST is reconciled through paginated
+meeting reads and is never automatically re-posted because a read found nothing.
+This favors avoiding duplicates over guessing: unresolved creation stays visible
+for operator review, cancellation or rebooking. Retry performs reconciliation and
+cannot reset an uncertain operation to a new create. Reconciliation preserves the
+original creator through reassignment, recovers cancelled meetings without saved
+IDs, and retries reschedule drift. Confirmation delivery waits for the generated
+Zoom link instead of sending a broken invitation. Existing calendar/Zoom targets
+are backfilled on upgrade.
+
+Zoom apps need `meeting:read` alongside `meeting:write`, or the corresponding
+granular list/get/create/update/delete meeting scopes. Reauthorize existing Zoom
+connections after adding scopes. See [Zoom integration](ZOOM.md).
+
+Stripe and Resend remain deferred at the owner's request; their code is unchanged.
 
 | Integration | Remaining gap | Release implication |
 | --- | --- | --- |
-| Zoom (`internal/zoom/zoom.go`) | Meeting creation lacks provider-enforced idempotency and coordinated refresh/throttling. An accepted response lost before storing the meeting ID can create another room on a later job attempt. | Keep automatic Zoom creation out of a release that promises duplicate-safe recovery until stable operation reconciliation is implemented and fault-tested. |
-| CalDAV (`internal/caldav/events.go`) | Creation uses a new UID/resource path per call. An ambiguous successful PUT can be followed by a different resource on a later attempt. | Needs a stable UID/path, conditional creation and readback before equivalent retry guarantees apply. |
 | Stripe (`internal/stripe/stripe.go`) | Refunds have idempotency keys; checkout-session creation does not. | Keep paid-booking recovery outside the current free-meeting rollout; add stable checkout keys before enabling automatic creation retries. |
 | Resend (`internal/mailer/resend.go`) | Sending lacks a stable provider idempotency key and does not propagate Retry-After to worker scheduling. | Ambiguous acceptance can repeat a notification on a later worker attempt. Requires a stable message operation and provider-specific retry handling. |
 | SMTP | A lost acknowledgement after message acceptance is ambiguous. | Do not promise exactly-once SMTP delivery. A provider with message-level idempotency is required for that stronger contract. |
@@ -120,7 +134,7 @@ target-validation controls; this change does not replace them.
 
 ## Deployment boundary
 
-Build and deploy the complete checkout, including migration 00103, before relying
+Build and deploy the complete checkout, including migrations 00103 and 00104, before relying
 on these protections. Keep the n8n scheduler in TEST MODE until the deployed
 cancellation and CRM outage-recovery scenarios pass, received invitations are
 checked, and all owned test fixtures are destroyed. This document records a

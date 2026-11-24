@@ -4,7 +4,7 @@ One Zoom OAuth app per Calnode instance (entered in **Settings → Zoom**), then
 host connects their **own** Zoom account through that app from the **Calendar** page.
 Bookings with a Zoom location get a real meeting link minted under the assigned host's
 account. The settings page shows the exact Redirect URL and required scope
-(`meeting:write`); the app can stay unpublished for a single-account team.
+(`meeting:write` and `meeting:read`); the app can stay unpublished for a single-account team.
 
 ## Multi-member teams: read this before inviting people
 
@@ -39,3 +39,20 @@ That said, it is explicitly **not on the maintainers' roadmap**: it is a big chu
 work that asks the least technical users to do the most technical thing (register a
 Zoom Marketplace app each), while LiveKit already covers the need with zero
 configuration. If you build it, build it within the bounds above.
+
+## Recovery permissions and behavior
+
+Recovery reads the host's scheduled meetings and verifies a unique agenda marker
+before adopting a meeting whose create response was lost. Classic scopes are
+`meeting:read` and `meeting:write`. For granular apps, grant
+`meeting:read:list_meetings`, `meeting:read:meeting`, `meeting:write:meeting`,
+`meeting:update:meeting` and `meeting:delete:meeting`. Add the scopes to the Zoom
+app, then reconnect existing hosts to grant them.
+
+An uncertain creation is not blindly repeated. If Zoom cannot establish the
+outcome, review it under **Delivery & calendar health**. Retry repeats recovery;
+it never authorizes another uncertain create. Cancel and rebook if an unresolved
+operation needs to be replaced. Background cancellation and reschedule recovery
+continue using the meeting's original creator after a host change.
+
+Reference: [Zoom Meetings API](https://developers.zoom.us/docs/api/meetings/).

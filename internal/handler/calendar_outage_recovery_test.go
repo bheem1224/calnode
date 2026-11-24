@@ -33,6 +33,11 @@ func TestCalendarTransientOutageHealsWithoutRepeatedSuccessfulSideEffects(t *tes
 			provider.mu.Lock()
 			provider.err = nil
 			provider.mu.Unlock()
+			if status == "cancelled" {
+				if _, err := database.Exec(`UPDATE calendar_event_cleanup SET next_attempt_at=''`); err != nil {
+					t.Fatal(err)
+				}
+			}
 			sweep()
 			eventID, needsSync = hostRow(t, database)
 			if status == "confirmed" && (!eventID.Valid || needsSync != 0) {

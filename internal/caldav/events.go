@@ -2,6 +2,7 @@ package caldav
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/calnode/calnode/internal/calendar"
+	"github.com/calnode/calnode/internal/providerhttp"
 	"github.com/calnode/calnode/internal/uid"
 )
 
@@ -18,17 +20,56 @@ import (
 // returned joinURL is always empty. The returned eventID is the absolute resource URL, which
 // UpdateEvent/CancelEvent use directly. Returns ("","",nil) if the user has no destination.
 func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.CreateEventParams) (string, string, string, error) {
-	cn, ok, err := c.loadConn(ctx, userID, -1, 1)
+	id := uid.New()
+	if p.IdempotencyKey != "" {
+		id = "calnode-" + providerhttp.Key(userID, p.IdempotencyKey)
+	}
+	cn, ok, err := c.createConn(ctx, userID, p.DestinationCalendarID, id)
 	if err != nil || !ok {
 		return "", "", "", err
 	}
-	id := uid.New()
 	resourceURL := joinURL(cn.calURL, id+".ics")
+	recoverExisting := func() (bool, error) {
+		body, _, status, err := c.getICS(ctx, resourceURL, cn.username, cn.password)
+		if err != nil {
+			return false, err
+		}
+		if status == 404 {
+			return false, nil
+		}
+		if status != 200 {
+			return false, fmt.Errorf("caldav: recover status %d", status)
+		}
+		if !hasOperationUID(body, id) {
+			return false, errors.New("caldav: operation UID mismatch")
+		}
+		return true, c.UpdateEvent(ctx, userID, cn.calURL, resourceURL, p.Start, p.End)
+	}
+	if p.IdempotencyKey != "" {
+		found, err := recoverExisting()
+		if err != nil {
+			return "", "", "", err
+		}
+		if found {
+			return resourceURL, "", cn.calURL, nil
+		}
+	}
+
 	ics := buildICS(id, p.Start, p.End, p.Summary, p.Description, p.Location, p.OrganizerName, p.OrganizerEmail, 0, p.Private)
 
 	status, _, err := c.putICS(ctx, resourceURL, cn.username, cn.password, ics, "*", "")
 	if err != nil {
 		return "", "", "", err
+	}
+	if status == http.StatusPreconditionFailed && p.IdempotencyKey != "" {
+		found, err := recoverExisting()
+		if err != nil {
+			return "", "", "", err
+		}
+		if !found {
+			return "", "", "", errors.New("caldav: conflicting resource not verified")
+		}
+		return resourceURL, "", cn.calURL, nil
 	}
 	if status != http.StatusCreated && status != http.StatusNoContent && status != http.StatusOK {
 		return "", "", "", fmt.Errorf("caldav: create event returned status %d", status)
@@ -47,6 +88,10 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 // destination, and returns an error without sending anything when that account cannot be
 // established.
 func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time) error {
+	start, end = start.Truncate(time.Second), end.Truncate(time.Second)
+	return providerhttp.Serialize(ctx, providerhttp.Key("caldav-update", fmt.Sprintf("%p", c.db), userID, eventID), func() error { return c.updateEvent(ctx, userID, calendarID, eventID, start, end) })
+}
+func (c *Client) updateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time) error {
 	cn, ok, err := c.eventConn(ctx, userID, calendarID, eventID)
 	if err != nil || !ok {
 		return err
@@ -60,6 +105,16 @@ func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID st
 	}
 	if status != http.StatusOK {
 		return fmt.Errorf("caldav: fetch event for update returned status %d", status)
+	}
+	events := parseVEvents(body)
+	if len(events) != 1 || events[0].start.IsZero() || events[0].end.IsZero() {
+		return errors.New("caldav: incomplete event times")
+	}
+	if events[0].start.Equal(start) && events[0].end.Equal(end) {
+		return nil
+	}
+	if etag == "" {
+		return errors.New("caldav: server omitted ETag; refusing unguarded update")
 	}
 	updated := rewriteEventTimes(body, start, end)
 	putStatus, _, err := c.putICS(ctx, eventID, cn.username, cn.password, updated, "", etag)
@@ -83,7 +138,7 @@ func (c *Client) CancelEvent(ctx context.Context, userID, calendarID, eventID st
 	if err != nil {
 		return err
 	}
-	if status != http.StatusNoContent && status != http.StatusOK && status != http.StatusNotFound {
+	if status != http.StatusNoContent && status != http.StatusOK && status != http.StatusNotFound && status != http.StatusGone {
 		return fmt.Errorf("caldav: delete event returned status %d", status)
 	}
 	return nil
@@ -284,7 +339,7 @@ func (c *Client) getICS(ctx context.Context, rawURL, username, password string) 
 	}
 	req.SetBasicAuth(username, password)
 	req.Header.Set("Accept", "text/calendar")
-	resp, err := c.hc.Do(req)
+	resp, err := c.requestClient(rawURL, username).Do(req)
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -311,7 +366,10 @@ func (c *Client) putICS(ctx context.Context, rawURL, username, password, ics, if
 	if ifMatch != "" {
 		req.Header.Set("If-Match", ifMatch)
 	}
-	resp, err := c.hc.Do(req)
+	if ifNoneMatch == "*" {
+		req = providerhttp.ReplaySafe(req)
+	}
+	resp, err := c.requestClient(rawURL, username).Do(req)
 	if err != nil {
 		return 0, nil, err
 	}

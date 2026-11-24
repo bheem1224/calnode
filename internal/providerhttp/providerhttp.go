@@ -210,6 +210,13 @@ func Error(resp *http.Response, operation string) error {
 }
 
 type replayKey struct{}
+type beforeSendKey struct{}
+
+// BeforeSend records a durable write intent after authorization and queueing,
+// immediately before the transport may send bytes to the provider.
+func BeforeSend(r *http.Request, fn func(context.Context) error) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), beforeSendKey{}, fn))
+}
 
 // ReplaySafe is for read-only POSTs and creates with provider-enforced stable IDs.
 // PATCH is deliberately excluded: idempotent state changes may still email twice.
@@ -246,6 +253,13 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 			r.Body, err = req.GetBody()
 			if err != nil {
+				release()
+				cancel()
+				return nil, err
+			}
+		}
+		if fn, ok := r.Context().Value(beforeSendKey{}).(func(context.Context) error); ok {
+			if err := fn(ctx); err != nil {
 				release()
 				cancel()
 				return nil, err

@@ -67,7 +67,13 @@ func (s *boundSource) Token() (*oauth2.Token, error) {
 	}
 	defer func() { <-s.entry.lock }()
 	var access, refresh, expiry, binding string
-	if err := s.db.QueryRowContext(s.ctx, `SELECT access_token_enc,COALESCE(refresh_token_enc,''),COALESCE(expiry_at,''),oauth_provider_id FROM calendar_connections WHERE user_id=? AND provider=? AND account_email=?`, s.user, s.provider, s.account).Scan(&access, &refresh, &expiry, &binding); err != nil {
+	query := `SELECT access_token_enc,COALESCE(refresh_token_enc,''),COALESCE(expiry_at,''),oauth_provider_id FROM calendar_connections WHERE user_id=? AND provider=? AND account_email=?`
+	args := []any{s.user, s.provider, s.account}
+	if s.provider == "zoom" {
+		query = `SELECT access_token_enc,COALESCE(refresh_token_enc,''),COALESCE(expiry_at,''),'' FROM zoom_connections WHERE user_id=?`
+		args = []any{s.user}
+	}
+	if err := s.db.QueryRowContext(s.ctx, query, args...).Scan(&access, &refresh, &expiry, &binding); err != nil {
 		return nil, err
 	}
 	if binding != s.binding {
@@ -91,7 +97,13 @@ func (s *boundSource) Token() (*oauth2.Token, error) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		result, err := s.db.ExecContext(ctx, `UPDATE calendar_connections SET access_token_enc=?,refresh_token_enc=?,expiry_at=? WHERE user_id=? AND provider=? AND account_email=? AND oauth_provider_id=? AND access_token_enc=?`, a, r, t.Expiry.UTC().Format(time.RFC3339Nano), s.user, s.provider, s.account, s.binding, access)
+		query := `UPDATE calendar_connections SET access_token_enc=?,refresh_token_enc=?,expiry_at=? WHERE user_id=? AND provider=? AND account_email=? AND oauth_provider_id=? AND access_token_enc=?`
+		args := []any{a, r, t.Expiry.UTC().Format(time.RFC3339Nano), s.user, s.provider, s.account, s.binding, access}
+		if s.provider == "zoom" {
+			query = `UPDATE zoom_connections SET access_token_enc=?,refresh_token_enc=?,expiry_at=? WHERE user_id=? AND access_token_enc=?`
+			args = []any{a, r, t.Expiry.UTC().Format(time.RFC3339Nano), s.user, access}
+		}
+		result, err := s.db.ExecContext(ctx, query, args...)
 		if err != nil {
 			return err
 		}

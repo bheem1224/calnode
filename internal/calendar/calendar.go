@@ -14,23 +14,25 @@ import (
 
 	"github.com/calnode/calnode/internal/abuse"
 	"github.com/calnode/calnode/internal/connstore"
+	"github.com/calnode/calnode/internal/providerhttp"
 	"github.com/calnode/calnode/internal/slots"
 )
 
 // CreateEventParams holds the data needed to create a calendar event. Provider-
 // agnostic: AddMeet requests the provider's online-meeting (Google Meet / Teams).
 type CreateEventParams struct {
-	IdempotencyKey        string // stable for one booking-host assignment
-	Summary               string
-	Description           string
-	Location              string // optional; e.g. the meeting link on secondary hosts' events
-	Start, End            time.Time
-	OrganizerName         string
-	OrganizerEmail        string
-	Guests                []string
-	AddMeet               bool
-	Private               bool
-	DestinationCalendarID string
+	BookingID, AssignmentID string // lifecycle fence; not attendee input
+	IdempotencyKey          string // stable for one booking-host assignment
+	Summary                 string
+	Description             string
+	Location                string // optional; e.g. the meeting link on secondary hosts' events
+	Start, End              time.Time
+	OrganizerName           string
+	OrganizerEmail          string
+	Guests                  []string
+	AddMeet                 bool
+	Private                 bool
+	DestinationCalendarID   string
 }
 
 // CalendarInfo is one calendar the provider exposes for a connected account.
@@ -430,17 +432,49 @@ func (s *Service) freeBusy(ctx context.Context, userID string, from, to time.Tim
 // ("","","","",nil) if they have no destination. Persist the calendar id AND the provider
 // alongside the event id: the provider stamp is what routes later updates and cancels
 // after a destination move (issue #58).
-func (s *Service) CreateEvent(ctx context.Context, userID string, p CreateEventParams) (string, string, string, string, error) {
+func (s *Service) CreateEvent(ctx context.Context, userID string, p CreateEventParams) (eventID, joinURL, calendarID, provider string, err error) {
+	if p.IdempotencyKey == "" {
+		return s.createEvent(ctx, userID, p)
+	}
+	err = providerhttp.Serialize(ctx, s.operationLock(userID, p.IdempotencyKey), func() error {
+		eventID, joinURL, calendarID, provider, err = s.createEvent(ctx, userID, p)
+		return err
+	})
+	return
+}
+
+func (s *Service) createEvent(ctx context.Context, userID string, p CreateEventParams) (string, string, string, string, error) {
 	if p.IdempotencyKey != "" {
 		if provider, reference, err := s.createIntent(ctx, userID, p); err != nil {
 			return "", "", "", "", err
 		} else if provider != "" {
+			if err := s.liveIntent(ctx, userID, p); err != nil {
+				return "", "", "", "", err
+			}
 			pr := s.providers[provider]
 			if pr == nil {
 				return "", "", "", "", errors.New("original calendar provider is unavailable")
 			}
 			p.DestinationCalendarID = reference
+			claimed, claimErr := s.db.ExecContext(ctx, `UPDATE calendar_event_intents SET write_started=1 WHERE user_id=? AND operation_key=? AND retired=0`, userID, p.IdempotencyKey)
+			if claimErr != nil {
+				return "", "", "", "", claimErr
+			}
+			if n, _ := claimed.RowsAffected(); n != 1 {
+				return "", "", "", "", ErrObsoleteAssignment
+			}
 			id, join, cal, err := pr.CreateEvent(ctx, userID, p)
+			if id != "" {
+				persistCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				_, saveErr := s.db.ExecContext(persistCtx, `UPDATE calendar_event_intents SET event_id=? WHERE user_id=? AND operation_key=?`, id, userID, p.IdempotencyKey)
+				cancel()
+				if saveErr != nil {
+					return "", "", "", "", saveErr
+				}
+			}
+			if err == nil {
+				err = s.liveIntent(ctx, userID, p)
+			}
 			return id, join, cal, provider, err
 		}
 	}

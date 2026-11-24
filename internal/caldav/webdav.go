@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/calnode/calnode/internal/providerhttp"
 )
 
 // do issues one WebDAV request with HTTP Basic auth and returns the status, body, and any
@@ -34,7 +36,10 @@ func (c *Client) do(ctx context.Context, method, rawURL, username, password, dep
 	if depth != "" {
 		req.Header.Set("Depth", depth)
 	}
-	resp, err := c.hc.Do(req)
+	if method == "PROPFIND" || method == "REPORT" {
+		req = providerhttp.ReplaySafe(req)
+	}
+	resp, err := c.requestClient(rawURL, username).Do(req)
 	if err != nil {
 		return 0, nil, "", err
 	}

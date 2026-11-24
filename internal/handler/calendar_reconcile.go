@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"errors"
-	"net/url"
 	"time"
 
 	"github.com/calnode/calnode/internal/calendar"
@@ -51,14 +50,22 @@ func (h *Handler) nudgeCalendarReconcile() {
 
 func (h *Handler) reconcileCalendar() {
 	gc := h.getCal()
-	if gc == nil {
-		return // calendar not configured — nothing to reconcile
+	zc := h.getZoom()
+	if gc == nil && zc == nil {
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	h.reconcileCancellations(ctx, gc)
-	h.reconcileCreations(ctx, gc)
-	h.reconcileReschedules(ctx, gc)
+	if gc != nil {
+		h.reconcileCancellations(ctx, gc)
+		h.reconcileCreations(ctx, gc)
+		h.reconcileReschedules(ctx, gc)
+	}
+	if zc != nil {
+		if err := zc.ReconcileCleanup(ctx); err != nil {
+			h.logger.Error("reconcile: Zoom lifecycle", "error", err)
+		}
+	}
 }
 
 // reconcileReschedules re-applies the calendar time for booking_hosts rows flagged
@@ -120,11 +127,7 @@ func (h *Handler) reconcileReschedules(ctx context.Context, gc *calendar.Service
 			h.logger.Warn("reconcile: not retrying an event no single account holds; it keeps its old time",
 				"error", err, "booking_id", d.bookingID, "host", d.userID)
 		}
-		if _, err := h.db.ExecContext(ctx,
-			`UPDATE booking_hosts SET needs_sync = 0 WHERE booking_id = ? AND user_id = ?`,
-			d.bookingID, d.userID); err != nil {
-			h.logger.Error("reconcile: clear needs_sync", "error", err, "booking_id", d.bookingID)
-		}
+		h.clearCalendarSync(ctx, d.bookingID, d.userID, start, end)
 	}
 }
 
@@ -132,48 +135,8 @@ func (h *Handler) reconcileReschedules(ctx context.Context, gc *calendar.Service
 // bookings (the inline cancel never reached Google). On success the per-host
 // event id is cleared so the row drops out of the next sweep.
 func (h *Handler) reconcileCancellations(ctx context.Context, gc *calendar.Service) {
-	type orphan struct{ bookingID, userID, eventID, calendarID, provider string }
-	// Read fully before acting — the single DB connection can't serve the inner
-	// CancelEvent/UPDATE queries while a cursor is open (would deadlock).
-	var orphans []orphan
-	rows, err := h.db.QueryContext(ctx, `
-		SELECT bh.booking_id, bh.user_id, bh.external_event_id, COALESCE(bh.external_calendar_id, ''), COALESCE(bh.external_provider, '')
-		FROM booking_hosts bh JOIN bookings b ON b.id = bh.booking_id
-		WHERE b.status = 'cancelled' AND COALESCE(bh.external_event_id, '') != ''`)
-	if err != nil {
-		h.logger.Error("reconcile: query orphaned events", "error", err)
-		return
-	}
-	for rows.Next() {
-		var o orphan
-		if err := rows.Scan(&o.bookingID, &o.userID, &o.eventID, &o.calendarID, &o.provider); err == nil {
-			orphans = append(orphans, o)
-		}
-	}
-	rows.Close() // #nosec G104 -- rows already fully consumed above; nothing actionable on close error
-
-	for _, o := range orphans {
-		if err := gc.CancelEvent(ctx, o.userID, o.calendarID, o.eventID, o.provider); err != nil {
-			if !errors.Is(err, calendar.ErrEventUnreachable) {
-				h.logger.Error("reconcile: cancel orphaned event", "error", err, "booking_id", o.bookingID, "host", o.userID)
-				continue // leave the id in place; retry next sweep
-			}
-			// As for reschedules: no retry can succeed, and this query has no date bound, so
-			// leaving the id would repeat the refusal every sweep forever. The event stays on
-			// its calendar; its id is logged because clearing it drops the only copy. A CalDAV
-			// id is a URL and could carry userinfo, so it is logged redacted, or not at all.
-			eventForLog := ""
-			if u, perr := url.Parse(o.eventID); perr == nil {
-				eventForLog = u.Redacted()
-			}
-			h.logger.Warn("reconcile: not retrying the delete of an event no single account holds; it stays on its calendar",
-				"error", err, "booking_id", o.bookingID, "host", o.userID, "event_id", eventForLog)
-		}
-		if _, err := h.db.ExecContext(ctx,
-			`UPDATE booking_hosts SET external_event_id = NULL WHERE booking_id = ? AND user_id = ?`,
-			o.bookingID, o.userID); err != nil {
-			h.logger.Error("reconcile: clear orphaned event id", "error", err, "booking_id", o.bookingID)
-		}
+	if err := gc.ReconcileCleanup(ctx); err != nil {
+		h.logger.Error("reconcile: durable calendar cleanup", "error", err)
 	}
 }
 
@@ -203,6 +166,18 @@ func (h *Handler) reconcileCreations(ctx context.Context, gc *calendar.Service) 
 		if err != nil {
 			h.logger.Error("reconcile: load booking", "booking_id", m.id, "error", err)
 			continue
+		}
+		if m.locationType == "zoom" {
+			if zc := h.getZoom(); zc != nil {
+				connected, err := zc.Connected(ctx, b.HostID)
+				var mid string
+				if err == nil && connected {
+					err = h.db.QueryRowContext(ctx, `SELECT COALESCE(zoom_meeting_id,'') FROM bookings WHERE id=?`, b.ID).Scan(&mid)
+				}
+				if err != nil || (connected && mid == "") {
+					continue
+				}
+			}
 		}
 		hosts, err := h.assignedHosts(ctx, m.id)
 		if err != nil || len(hosts) == 0 {

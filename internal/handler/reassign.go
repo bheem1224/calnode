@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/calnode/calnode/internal/booking"
-	"github.com/calnode/calnode/internal/calendar"
 	"github.com/calnode/calnode/internal/i18n"
 	"github.com/calnode/calnode/internal/mailer"
 )
@@ -97,17 +96,14 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Capture the old host + calendar event + summary fields before the move.
-	var oldHostID, extEventID, extCalendarID, extProvider, etName, orgName, orgEmail, orgLocale string
+	var etName, orgName, orgEmail, orgLocale string
 	err = h.db.QueryRowContext(r.Context(), `
-		SELECT b.host_id, COALESCE(b.external_event_id,''), COALESCE(bh.external_calendar_id,''),
-		       COALESCE(bh.external_provider,''),
-		       et.name, COALESCE(a.name,''), COALESCE(a.email,''), COALESCE(a.locale,'')
+		SELECT et.name, COALESCE(a.name,''), COALESCE(a.email,''), COALESCE(a.locale,'')
 		FROM bookings b
 		JOIN event_types et ON et.id = b.event_type_id
 		LEFT JOIN booking_attendees a ON a.booking_id = b.id AND a.is_organizer = 1
-		LEFT JOIN booking_hosts bh ON bh.booking_id = b.id AND bh.user_id = b.host_id
 		WHERE b.id = ?`, id).
-		Scan(&oldHostID, &extEventID, &extCalendarID, &extProvider, &etName, &orgName, &orgEmail, &orgLocale)
+		Scan(&etName, &orgName, &orgEmail, &orgLocale)
 	if errors.Is(err, sql.ErrNoRows) {
 		h.writeError(w, http.StatusNotFound, "booking not found")
 		return
@@ -158,53 +154,25 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 		// produced nothing, e.g. the new host has no destination calendar).
 		inviteMode := bCopy.InviteDelivery
 		if gc := h.getCal(); gc != nil {
-			if extEventID != "" {
-				// Reassignment cancels on the OLD host's calendar. Their stamped provider
-				// routes it ("" falls back to id recognition, then their destination).
-				if err := gc.CancelEvent(ctx, oldHostID, extCalendarID, extEventID, extProvider); err != nil {
-					h.logger.Error("reassign: delete old calendar event", "error", err, "booking_id", bCopy.ID)
-				}
+			// The old target was queued in the SAME transaction as the move.
+			// This pass is an optimization; a restart resumes durable cleanup.
+			if err := gc.CleanupBooking(ctx, bCopy.ID); err != nil {
+				h.logger.Error("reassign: durable old event cleanup", "error", err, "booking_id", bCopy.ID)
+				h.nudgeCalendarReconcile()
 			}
-			loc := i18n.Get(orgLocale) // nil (→ English) if empty/unrecognized; i18n.Locale.T handles nil safely
-			hosts, loadErr := h.assignedHosts(ctx, bCopy.ID)
-			if loadErr != nil {
-				h.logger.Error("reassign: load calendar assignment", "error", loadErr)
+			current, err := h.bookingSvc.Get(ctx, bCopy.ID)
+			if err != nil || current.Status != "confirmed" || current.HostID != newHostID {
+				return
+			}
+			bCopy = *current
+			hosts, err := h.assignedHosts(ctx, bCopy.ID)
+			if err != nil {
 				h.nudgeCalendarReconcile()
 				return
 			}
-			assignment := assignedHost{UserID: newHostID}
-			for _, host := range hosts {
-				if host.UserID == newHostID {
-					assignment = host
-					break
-				}
-			}
-			newEventID, _, newCalID, newProvider, err := gc.CreateEvent(ctx, newHostID, calendar.CreateEventParams{
-				IdempotencyKey: calendarAssignmentKey(bCopy.ID, assignment),
-				Summary:        loc.Tf("calendar_event_summary", etName, orgName),
-				Description:    loc.Tf("calendar_event_booking_id", bCopy.ID),
-				Location:       bCopy.LocationValue, // keep the existing Meet link (don't mint a new one)
-				Start:          bCopy.StartAt,
-				End:            bCopy.EndAt,
-				OrganizerName:  orgName,
-				OrganizerEmail: calendarInvitee(inviteMode, orgEmail),
-			})
-			if err != nil {
-				h.logger.Error("reassign: create new calendar event", "error", err, "booking_id", bCopy.ID)
-				h.nudgeCalendarReconcile()
-			} else {
-				if _, err := h.db.ExecContext(ctx,
-					`UPDATE bookings SET external_event_id = ? WHERE id = ?`, newEventID, bCopy.ID); err != nil {
-					h.logger.Error("reassign: persist new event id", "error", err, "booking_id", bCopy.ID)
-				}
-				if _, err := h.db.ExecContext(ctx,
-					`UPDATE booking_hosts SET external_event_id = ?, external_calendar_id = ?,
-					 external_provider = ?
-					 WHERE booking_id = ? AND is_primary = 1`,
-					newEventID, newCalID, newProvider, bCopy.ID); err != nil {
-					h.logger.Error("reassign: persist host event id", "error", err, "booking_id", bCopy.ID)
-				}
-			}
+			data := mailer.BookingData{BookingID: bCopy.ID, LocationValue: bCopy.LocationValue, Locale: i18n.Get(orgLocale)}
+			in := bookingConfirmationInput{EventTypeName: etName, OrganizerName: orgName, OrganizerEmail: orgEmail, OrganizerLocale: orgLocale}
+			h.createHostEvents(ctx, &bCopy, in, &data, hosts, bCopy.LocationValue, false, "")
 		}
 
 		// Notify the attendee (their host changed) and the new host, reusing the

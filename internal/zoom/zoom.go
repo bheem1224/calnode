@@ -13,14 +13,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
 	"golang.org/x/oauth2"
 
 	"github.com/calnode/calnode/internal/oauthstore"
+	"github.com/calnode/calnode/internal/providerhttp"
 	"github.com/calnode/calnode/internal/secret"
 )
 
@@ -85,7 +86,9 @@ func (c *Client) DecryptState(state string) (string, error) {
 
 // Exchange swaps an auth code for tokens and persists them for userID.
 func (c *Client) Exchange(ctx context.Context, userID, code string) error {
-	tok, err := c.config.Exchange(ctx, code)
+	app := providerhttp.Key("zoom", c.config.ClientID, c.config.Endpoint.TokenURL)
+	hc := providerhttp.ForDB(c.db).Coordinate(&http.Client{Timeout: 15 * time.Second}, app, providerhttp.Key(app, "connect"))
+	tok, err := c.config.Exchange(context.WithValue(ctx, oauth2.HTTPClient, hc), code)
 	if err != nil {
 		return fmt.Errorf("zoom: token exchange: %w", err)
 	}
@@ -140,56 +143,30 @@ func (c *Client) saveToken(ctx context.Context, userID string, tok *oauth2.Token
 // authedClient returns an *http.Client that auto-refreshes (persisting rotated tokens),
 // or (nil, nil) when userID has no Zoom connection.
 func (c *Client) authedClient(ctx context.Context, userID string) (*http.Client, error) {
-	var accessEnc, refreshEnc, expiryStr string
-	err := c.db.QueryRowContext(ctx, `
-		SELECT access_token_enc, COALESCE(refresh_token_enc,''), COALESCE(expiry_at,'')
-		FROM zoom_connections WHERE user_id = ? LIMIT 1`,
-		userID).Scan(&accessEnc, &refreshEnc, &expiryStr)
-	if err == sql.ErrNoRows {
+	var exists int
+	if err := c.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM zoom_connections WHERE user_id=?`, userID).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists == 0 {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("zoom: load connection: %w", err)
-	}
-	access, err := secret.Decrypt(c.key, accessEnc)
-	if err != nil {
-		return nil, fmt.Errorf("zoom: decrypt access token: %w", err)
-	}
-	var refresh string
-	if refreshEnc != "" {
-		if refresh, err = secret.Decrypt(c.key, refreshEnc); err != nil {
-			return nil, fmt.Errorf("zoom: decrypt refresh token: %w", err)
-		}
-	}
-	expiry := time.Now().Add(-time.Second) // zero/missing → refresh immediately
-	if expiryStr != "" {
-		if t, perr := time.Parse(time.RFC3339, expiryStr); perr == nil {
-			expiry = t
-		}
-	}
-	tok := &oauth2.Token{AccessToken: access, RefreshToken: refresh, Expiry: expiry}
-	src := oauth2.ReuseTokenSource(nil, c.config.TokenSource(ctx, tok))
-	saving := &oauthstore.SavingTokenSource{
-		Inner:  src,
-		Save:   func(ctx context.Context, t *oauth2.Token) error { return c.saveToken(ctx, userID, t) },
-		Logger: c.logger,
-		LogMsg: "zoom: persist refreshed token",
-		UserID: userID,
-	}
-	return oauth2.NewClient(ctx, saving), nil
+	return oauthstore.BoundClient(ctx, c.db, c.key, "zoom", userID, "", "", c.config, providerhttp.ForDB(c.db)), nil
 }
 
 // MeetingParams describes a meeting to create.
 type MeetingParams struct {
-	Topic           string
-	Start           time.Time
-	DurationMinutes int
-	Timezone        string // IANA name, for Zoom's display
+	OperationKey, BookingID string
+	beforeSend              func(context.Context) error
+	agenda                  string
+	Topic                   string
+	Start                   time.Time
+	DurationMinutes         int
+	Timezone                string // IANA name, for Zoom's display
 }
 
 // CreateMeeting schedules a Zoom meeting under userID's account and returns its join URL
 // and meeting id. Returns an error (joinURL empty) when userID has no Zoom connection.
-func (c *Client) CreateMeeting(ctx context.Context, userID string, p MeetingParams) (joinURL, meetingID string, err error) {
+func (c *Client) createMeeting(ctx context.Context, userID string, p MeetingParams) (joinURL, meetingID string, err error) {
 	cl, err := c.authedClient(ctx, userID)
 	if err != nil {
 		return "", "", err
@@ -199,6 +176,7 @@ func (c *Client) CreateMeeting(ctx context.Context, userID string, p MeetingPara
 	}
 	body, _ := json.Marshal(map[string]any{
 		"topic":      p.Topic,
+		"agenda":     p.agenda,
 		"type":       2, // scheduled
 		"start_time": p.Start.UTC().Format("2006-01-02T15:04:05Z"),
 		"duration":   p.DurationMinutes,
@@ -210,14 +188,16 @@ func (c *Client) CreateMeeting(ctx context.Context, userID string, p MeetingPara
 	})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.apiBase+"/users/me/meetings", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	if p.beforeSend != nil {
+		req = providerhttp.BeforeSend(req, p.beforeSend)
+	}
 	resp, err := cl.Do(req)
 	if err != nil {
 		return "", "", fmt.Errorf("zoom: create meeting: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<10))
-		return "", "", fmt.Errorf("zoom: create meeting returned %d: %s", resp.StatusCode, b)
+		return "", "", providerhttp.Error(resp, "zoom: create meeting")
 	}
 	var out struct {
 		ID      json.Number `json:"id"`
@@ -232,6 +212,10 @@ func (c *Client) CreateMeeting(ctx context.Context, userID string, p MeetingPara
 // UpdateMeeting changes a meeting's start time and duration (the join URL is unchanged).
 // Used on reschedule. A nil/empty meetingID or missing connection is a no-op error.
 func (c *Client) UpdateMeeting(ctx context.Context, userID, meetingID string, start time.Time, durationMinutes int, timezone string) error {
+	start = start.Truncate(time.Second)
+	return providerhttp.Serialize(ctx, providerhttp.Key("zoom-update", fmt.Sprintf("%p", c.db), userID, meetingID), func() error { return c.updateMeeting(ctx, userID, meetingID, start, durationMinutes, timezone) })
+}
+func (c *Client) updateMeeting(ctx context.Context, userID, meetingID string, start time.Time, durationMinutes int, timezone string) error {
 	if meetingID == "" {
 		return nil
 	}
@@ -242,12 +226,23 @@ func (c *Client) UpdateMeeting(ctx context.Context, userID, meetingID string, st
 	if cl == nil {
 		return fmt.Errorf("zoom: user %s is not connected", userID)
 	}
+	current, err := c.getMeeting(ctx, userID, meetingID)
+	if err != nil {
+		return err
+	}
+	at, err := time.Parse(time.RFC3339, current.Start)
+	if err != nil {
+		return fmt.Errorf("zoom: incomplete meeting start time")
+	}
+	if at.Equal(start) && current.Duration == durationMinutes {
+		return nil
+	}
 	body, _ := json.Marshal(map[string]any{
 		"start_time": start.UTC().Format("2006-01-02T15:04:05Z"),
 		"duration":   durationMinutes,
 		"timezone":   timezone,
 	})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPatch, c.apiBase+"/meetings/"+meetingID, bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPatch, c.apiBase+"/meetings/"+url.PathEscape(meetingID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := cl.Do(req)
 	if err != nil {
@@ -256,8 +251,7 @@ func (c *Client) UpdateMeeting(ctx context.Context, userID, meetingID string, st
 	defer resp.Body.Close()
 	// 204 No Content on success.
 	if resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<10))
-		return fmt.Errorf("zoom: update meeting returned %d: %s", resp.StatusCode, b)
+		return providerhttp.Error(resp, "zoom: update meeting")
 	}
 	return nil
 }
@@ -275,7 +269,7 @@ func (c *Client) DeleteMeeting(ctx context.Context, userID, meetingID string) er
 	if cl == nil {
 		return fmt.Errorf("zoom: user %s is not connected", userID)
 	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, c.apiBase+"/meetings/"+meetingID, nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, c.apiBase+"/meetings/"+url.PathEscape(meetingID), nil)
 	resp, err := cl.Do(req)
 	if err != nil {
 		return fmt.Errorf("zoom: delete meeting: %w", err)
@@ -285,8 +279,7 @@ func (c *Client) DeleteMeeting(ctx context.Context, userID, meetingID string) er
 		return nil
 	}
 	if resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<10))
-		return fmt.Errorf("zoom: delete meeting returned %d: %s", resp.StatusCode, b)
+		return providerhttp.Error(resp, "zoom: delete meeting")
 	}
 	return nil
 }

@@ -821,7 +821,7 @@ func (s *Service) ReassignHostWithChange(ctx context.Context, bookingID, newHost
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE bookings SET host_id = ?, updated_at = ? WHERE id = ?`,
+		UPDATE bookings SET host_id = ?, external_event_id = NULL, updated_at = ? WHERE id = ?`,
 		newHostID, now, bookingID); err != nil {
 		if db.IsUniqueViolation(err) {
 			return nil, false, ErrDoubleBooked

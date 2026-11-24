@@ -1351,7 +1351,7 @@
 				"step2": "Choisissez une General App (User-managed OAuth). Tant qu'elle n'est pas publiée, Zoom n'autorise que les utilisateurs du compte Zoom propriétaire de l'application à se connecter ; les hôtes disposant de leur propre compte Zoom distinct ont besoin d'une application publiée (voir DEPLOY.md, « Zoom meeting links »). Si cela écarte Zoom, la vidéo intégrée n'a besoin d'aucune application Zoom — voir {videoDocs}.",
 				"videoDocs": "docs/VIDEO.md",
 				"step3": "Sous OAuth, définissez le Redirect URL for OAuth (et ajoutez-le à la liste d'autorisation) sur l'URL indiquée ci-dessous.",
-				"step4": "Sous Scopes, ajoutez meeting:write (créer/mettre à jour/supprimer des réunions au nom de l'utilisateur).",
+				"step4": "Sous Scopes, ajoutez meeting:write et meeting:read pour créer, retrouver, modifier et supprimer les réunions.",
 				"step5": "Copiez le Client ID et le Client Secret depuis Basic Information de l'application, collez-les ci-dessous et enregistrez."
 			},
 			"title": "Zoom",
@@ -2438,6 +2438,9 @@
 		"disableOptional": "Désactiver le MFA facultatif sans demander de nouvelle configuration"
 	},
 	"securityOperations": {
+		"calendarCleanup": "Nettoyage du calendrier",
+		"zoomRecovery": "Récupération Zoom",
+		"bookingReference": "Référence de réservation",
 		"title": "État des envois et calendriers",
 		"description": "Dernières vérifications des calendriers et échecs des envois en arrière-plan.",
 		"refresh": "Actualiser",

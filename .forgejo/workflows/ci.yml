@@ -100,8 +100,8 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: |
-          go test -race ./internal/providerhttp ./internal/oauthstore ./internal/calendar ./internal/calendar/microsoft ./internal/gcal \
-            -run 'Test(Cooldown|Retry|SafeRetries|AccountConcurrency|BoundClients|ConcurrentAvailability|CreateIntent|StableEvent|ExchangeRejects|AvailabilityFallback|ProviderPagination)' -count=1
+          go test -race ./internal/providerhttp ./internal/oauthstore ./internal/calendar ./internal/calendar/microsoft ./internal/gcal ./internal/caldav ./internal/zoom \
+            -run 'Test(Cooldown|Retry|SafeRetries|AccountConcurrency|BoundClients|ConcurrentAvailability|CreateIntent|StableEvent|ExchangeRejects|AvailabilityFallback|ProviderPagination|DurableCleanup|StableCalDAV|Zoom)' -count=1
 
       - name: Native authentication browser verification
         run: |

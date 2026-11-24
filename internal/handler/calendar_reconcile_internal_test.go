@@ -158,45 +158,43 @@ func TestReconcileReschedules_unreachableEventIsNotRetried(t *testing.T) {
 	}
 }
 
-// A cancellation the provider refuses as unreachable is not retried either. This sweep has no
-// date bound, so before this change the refusal repeated every two minutes forever. The event id
-// is logged (it is the only record of which event was left behind), then cleared.
-func TestReconcileCancellations_unreachableEventIsNotRetried(t *testing.T) {
-	cases := []struct {
-		name        string
-		err         error
-		wantCancels int
-		wantID      bool
-	}{
-		{"unreachable: id cleared, second sweep sends nothing", fmt.Errorf("cancel: %w", unreachable{}), 1, false},
-		{"transient: id kept, retried every sweep", errors.New("caldav: delete event returned status 503"), 2, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+// Lost authorization and transient outages both retain their durable target.
+// Rapid sweeps respect backoff; restoration can retry the same event later.
+func TestReconcileCancellationsRetainsUnreachableWorkWithBackoff(t *testing.T) {
+	for _, failure := range []error{fmt.Errorf("cancel: %w", unreachable{}), errors.New("caldav: temporary HTTP 503")} {
+		t.Run(failure.Error(), func(t *testing.T) {
 			var logs bytes.Buffer
 			h, database, _ := newReconcileFixture(t, "cancelled", &logs)
-			p := &stuckProvider{err: tc.err}
+			p := &stuckProvider{err: failure}
 			svc := calendar.NewService(database)
 			svc.Register(p)
-
 			h.reconcileCancellations(context.Background(), svc)
 			h.reconcileCancellations(context.Background(), svc)
-
-			if _, cancels := p.calls(); cancels != tc.wantCancels {
-				t.Errorf("CancelEvent called %d times over two sweeps, want %d", cancels, tc.wantCancels)
+			if _, calls := p.calls(); calls != 1 {
+				t.Fatalf("backoff ignored: %d calls", calls)
 			}
-			eventID, _ := hostRow(t, database)
-			if eventID.Valid != tc.wantID {
-				t.Errorf("external_event_id present = %v, want %v", eventID.Valid, tc.wantID)
+			event, _ := hostRow(t, database)
+			if !event.Valid {
+				t.Fatal("unreachable target discarded")
 			}
-			if !tc.wantID {
-				out := logs.String()
-				if n := strings.Count(out, "not retrying the delete of an event no single account holds"); n != 1 {
-					t.Errorf("logged the give-up warning %d times, want exactly once:\n%s", n, out)
-				}
-				if !strings.Contains(out, "calendars/host/home/ev1.ics") {
-					t.Errorf("the warning does not name the event it leaves behind:\n%s", out)
-				}
+			var target, lastError string
+			var done int
+			if err := database.QueryRow(`SELECT event_id,last_error,done FROM calendar_event_cleanup WHERE id='seat:bh-1'`).Scan(&target, &lastError, &done); err != nil || target != event.String || lastError == "" || done != 0 {
+				t.Fatal("durable work lost", target, lastError, done, err)
+			}
+			p.mu.Lock()
+			p.err = nil
+			p.mu.Unlock()
+			if _, err := database.Exec(`UPDATE calendar_event_cleanup SET next_attempt_at=''`); err != nil {
+				t.Fatal(err)
+			}
+			h.reconcileCancellations(context.Background(), svc)
+			event, _ = hostRow(t, database)
+			if event.Valid {
+				t.Fatal("recovered target not cleared")
+			}
+			if _, calls := p.calls(); calls != 2 {
+				t.Fatal("restored access did not retry", calls)
 			}
 		})
 	}
@@ -204,7 +202,7 @@ func TestReconcileCancellations_unreachableEventIsNotRetried(t *testing.T) {
 
 // The event id is a URL a host typed the server part of, so it can carry userinfo. The give-up
 // warning must not write a password into the log.
-func TestReconcileCancellations_warningRedactsEventURL(t *testing.T) {
+func TestReconcileCancellationsRetainedTargetDoesNotLeakEventURL(t *testing.T) {
 	var logs bytes.Buffer
 	h, database, _ := newReconcileFixture(t, "cancelled", &logs)
 	if _, err := database.Exec(`UPDATE booking_hosts SET external_event_id = 'https://host:s3cret@dav.example.com/calendars/host/home/ev1.ics'`); err != nil {
@@ -218,7 +216,11 @@ func TestReconcileCancellations_warningRedactsEventURL(t *testing.T) {
 	if strings.Contains(logs.String(), "s3cret") {
 		t.Errorf("the warning logged the password embedded in the event URL:\n%s", logs.String())
 	}
-	if !strings.Contains(logs.String(), "calendars/host/home/ev1.ics") {
-		t.Errorf("the warning does not name the event:\n%s", logs.String())
+	if !strings.Contains(logs.String(), "seat:bh-1") {
+		t.Fatalf("failure has no safe recovery reference: %s", logs.String())
+	}
+	var target string
+	if err := database.QueryRow(`SELECT event_id FROM calendar_event_cleanup WHERE id='seat:bh-1'`).Scan(&target); err != nil || !strings.Contains(target, "calendars/host/home/ev1.ics") {
+		t.Fatal("target missing from protected recovery storage", err)
 	}
 }

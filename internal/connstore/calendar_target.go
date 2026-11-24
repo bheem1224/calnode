@@ -34,7 +34,7 @@ func CalendarTarget(ctx context.Context, q Execer, userID, reference string) (pr
 			return
 		}
 		raw, e := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(reference, CalendarReferencePrefix))
-		if e != nil || json.Unmarshal(raw, &target) != nil || target.Calendar == "" || (target.Provider != "google" && target.Provider != "microsoft") {
+		if e != nil || json.Unmarshal(raw, &target) != nil || target.Calendar == "" || (target.Provider != "google" && target.Provider != "microsoft" && target.Provider != "caldav") {
 			err = fmt.Errorf("invalid calendar reference")
 			return
 		}

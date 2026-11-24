@@ -207,6 +207,7 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 // event by id at /me/events/{id} regardless of which of the user's calendars holds it, so
 // unlike Google and CalDAV there is nothing to re-target.
 func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time) error {
+	start, end = start.Truncate(time.Second), end.Truncate(time.Second) // match encoded provider precision
 	return providerhttp.Serialize(ctx, providerhttp.Key(fmt.Sprintf("%p", c.db), "microsoft", userID, calendarID, eventID), func() error { return c.updateEvent(ctx, userID, calendarID, eventID, start, end) })
 }
 func (c *Client) updateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time) error {

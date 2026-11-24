@@ -1351,7 +1351,7 @@
 				"step2": "Choose a General App (User-managed OAuth). While it is unpublished, Zoom only lets users inside the Zoom account that owns the app connect; hosts with their own separate Zoom accounts need a published app (see DEPLOY.md, \"Zoom meeting links\"). If that rules Zoom out, built-in video needs no Zoom app at all — see {videoDocs}.",
 				"videoDocs": "docs/VIDEO.md",
 				"step3": "Under OAuth, set the Redirect URL for OAuth (and add it to the allow list) to the URL shown below.",
-				"step4": "Under Scopes, add meeting:write (create/update/delete meetings on the user's behalf).",
+				"step4": "Under Scopes, add meeting:write and meeting:read to create, reconcile, update and delete meetings.",
 				"step5": "Copy the Client ID and Client Secret from the app's Basic Information, paste them below, and save."
 			},
 			"title": "Zoom",
@@ -2438,6 +2438,9 @@
 		"disableOptional": "Disable optional MFA instead of requiring re-enrollment"
 	},
 	"securityOperations": {
+		"calendarCleanup": "Calendar cleanup",
+		"zoomRecovery": "Zoom recovery",
+		"bookingReference": "Booking reference",
 		"title": "Delivery & calendar health",
 		"description": "Recent calendar checks and background delivery failures.",
 		"refresh": "Refresh",

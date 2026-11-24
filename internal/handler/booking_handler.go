@@ -1396,6 +1396,7 @@ func (h *Handler) mintMeetingLink(ctx context.Context, b *booking.Booking, in bo
 				h.logger.Error("zoom: connection lookup", "error", cerr, "booking_id", b.ID)
 			} else if connected {
 				join, mid, zerr := zc.CreateMeeting(ctx, primaryHostID, zoom.MeetingParams{
+					OperationKey: "booking:" + b.ID, BookingID: b.ID,
 					Topic:           in.EventTypeName + " with " + in.OrganizerName,
 					Start:           b.StartAt,
 					DurationMinutes: int(b.EndAt.Sub(b.StartAt).Minutes()),
@@ -1584,6 +1585,7 @@ func (h *Handler) createHostEvents(ctx context.Context, b *booking.Booking, in b
 			hostDest = destCalID
 		}
 		eventID, link, calID, provider, err := gc.CreateEvent(ctx, host.UserID, calendar.CreateEventParams{
+			BookingID: b.ID, AssignmentID: host.AssignmentID,
 			IdempotencyKey: calendarAssignmentKey(b.ID, host),
 			// The attendee is added as a calendar invitee below, so this text reaches
 			// them via the provider's own native invite (Google/Outlook/CalDAV) —
@@ -1614,13 +1616,13 @@ func (h *Handler) createHostEvents(ctx context.Context, b *booking.Booking, in b
 		if _, err := h.db.ExecContext(ctx,
 			`UPDATE booking_hosts SET external_event_id = ?, external_calendar_id = ?,
 			 external_provider = ?
-			 WHERE booking_id = ? AND user_id = ?`,
-			eventID, calID, provider, b.ID, host.UserID); err != nil {
+			 WHERE booking_id = ? AND user_id = ? AND id = ?`,
+			eventID, calID, provider, b.ID, host.UserID, host.AssignmentID); err != nil {
 			h.logger.Error("save host gcal event id", "error", err, "booking_id", b.ID)
 		}
 		if host.IsPrimary {
 			if _, err := h.db.ExecContext(ctx,
-				`UPDATE bookings SET external_event_id = ? WHERE id = ?`, eventID, b.ID); err != nil {
+				`UPDATE bookings SET external_event_id = ? WHERE id = ? AND host_id=? AND status='confirmed' AND EXISTS(SELECT 1 FROM booking_hosts WHERE id=? AND booking_id=bookings.id)`, eventID, b.ID, host.UserID, host.AssignmentID); err != nil {
 				h.logger.Error("save gcal event id", "error", err, "booking_id", b.ID)
 			}
 		}
@@ -1780,6 +1782,20 @@ func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConf
 	}
 
 	meetURL, autoGenMeet, livekitHostURL := h.mintMeetingLink(ctx, b, in, &bData, hosts)
+	if in.LocationType == "zoom" {
+		if zc := h.getZoom(); zc != nil {
+			connected, err := zc.Connected(ctx, primaryHost(hosts).UserID)
+			var meeting string
+			if connected && err == nil {
+				err = h.db.QueryRowContext(ctx, `SELECT COALESCE(zoom_meeting_id,'') FROM bookings WHERE id=?`, b.ID).Scan(&meeting)
+			}
+			if err != nil || (connected && meeting == "") {
+				_, _ = h.db.ExecContext(context.WithoutCancel(ctx), `UPDATE bookings SET confirm_failed=1 WHERE id=?`, b.ID)
+				h.nudgeCalendarReconcile()
+				return // The durable confirmation job retries without emailing a broken link.
+			}
+		}
+	}
 	h.createHostEvents(ctx, b, in, &bData, hosts, meetURL, autoGenMeet, livekitHostURL)
 	// Booking transitions use the durable outbox. Record the one-time link lifecycle
 	// here as well; the worker sweep recovers it if confirmation stops before this point.
@@ -2388,28 +2404,14 @@ func (h *Handler) cancelSideEffects(b booking.Booking) {
 	if hErr != nil {
 		h.logger.Error("booking cancellation: load hosts", "error", hErr, "booking_id", b.ID)
 	}
-	for _, host := range hosts {
-		if gc != nil && host.ExternalEventID != "" {
-			if err := gc.CancelEvent(ctx, host.UserID, host.ExternalCalendarID, host.ExternalEventID, host.ExternalProvider); err != nil {
-				h.logger.Error("cancel gcal event", "error", err, "booking_id", b.ID, "host", host.UserID)
-				h.nudgeCalendarReconcile() // event still on the calendar — heal on a later sweep
-			} else {
-				// Event removed — clear the id (matching the reconciler) so it isn't
-				// re-processed and so own-event exclusion, which keys on a non-empty
-				// external_event_id, stops treating this slot as ours.
-				if _, err := h.db.ExecContext(ctx,
-					`UPDATE booking_hosts SET external_event_id = NULL WHERE booking_id = ? AND user_id = ?`,
-					b.ID, host.UserID); err != nil {
-					h.logger.Error("clear cancelled event id", "error", err, "booking_id", b.ID, "host", host.UserID)
-				}
-				if host.IsPrimary {
-					if _, err := h.db.ExecContext(ctx,
-						`UPDATE bookings SET external_event_id = NULL WHERE id = ?`, b.ID); err != nil {
-						h.logger.Error("clear cancelled booking event id", "error", err, "booking_id", b.ID)
-					}
-				}
-			}
+	if gc != nil {
+		if err := gc.CleanupBooking(ctx, b.ID); err != nil {
+			h.logger.Error("cancel: durable calendar cleanup", "error", err, "booking_id", b.ID)
+			h.nudgeCalendarReconcile()
 		}
+	}
+	for _, host := range hosts {
+
 		prefs := h.hostPrefsOrDefault(ctx, b.ID, host.UserID)
 		if host.IsPrimary {
 			primaryPrefs = prefs
@@ -2447,8 +2449,15 @@ func (h *Handler) rescheduleZoomMeeting(ctx context.Context, b *booking.Booking)
 	}
 	dur := int(b.EndAt.Sub(b.StartAt).Minutes())
 	// timezone is cosmetic for Zoom (start_time is sent as unambiguous UTC); leave blank.
-	if err := zc.UpdateMeeting(ctx, b.HostID, meetingID, b.StartAt, dur, ""); err != nil {
+	owner, err := zc.BookingOwner(ctx, b.ID, b.HostID)
+	if err != nil {
+		h.logger.Error("zoom: resolve meeting owner", "error", err, "booking_id", b.ID)
+		return
+	}
+	if err := zc.UpdateMeeting(ctx, owner, meetingID, b.StartAt, dur, ""); err != nil {
 		h.logger.Error("zoom: update meeting on reschedule", "error", err, "booking_id", b.ID)
+		_, _ = h.db.ExecContext(context.WithoutCancel(ctx), `UPDATE zoom_meeting_intents SET next_attempt_at='' WHERE booking_id=?`, b.ID)
+		h.nudgeCalendarReconcile()
 	}
 }
 
@@ -2459,13 +2468,9 @@ func (h *Handler) cancelZoomMeeting(ctx context.Context, b *booking.Booking) {
 	if zc == nil {
 		return
 	}
-	var meetingID string
-	if err := h.db.QueryRowContext(ctx,
-		`SELECT COALESCE(zoom_meeting_id,'') FROM bookings WHERE id = ?`, b.ID).Scan(&meetingID); err != nil || meetingID == "" {
-		return
-	}
-	if err := zc.DeleteMeeting(ctx, b.HostID, meetingID); err != nil {
+	if err := zc.CleanupBooking(ctx, b.ID); err != nil {
 		h.logger.Error("zoom: delete meeting on cancel", "error", err, "booking_id", b.ID)
+		h.nudgeCalendarReconcile()
 	}
 }
 
@@ -2494,7 +2499,7 @@ func (h *Handler) moveCalendarEvents(ctx context.Context, bookingID string, star
 			h.nudgeCalendarReconcile()
 		} else {
 			// Succeeded — clear any flag a previous failed move may have left.
-			h.setNeedsSync(ctx, bookingID, host.UserID, false)
+			h.clearCalendarSync(ctx, bookingID, host.UserID, start, end)
 		}
 	}
 }
@@ -2507,9 +2512,15 @@ func (h *Handler) setNeedsSync(ctx context.Context, bookingID, userID string, di
 		v = 1
 	}
 	if _, err := h.db.ExecContext(ctx,
-		`UPDATE booking_hosts SET needs_sync = ? WHERE booking_id = ? AND user_id = ?`,
+		`UPDATE booking_hosts SET needs_sync = ? WHERE booking_id = ? AND user_id = ? AND booking_id IN(SELECT id FROM bookings WHERE status='confirmed')`,
 		v, bookingID, userID); err != nil {
 		h.logger.Error("set needs_sync", "error", err, "booking_id", bookingID, "host", userID)
+	}
+}
+
+func (h *Handler) clearCalendarSync(ctx context.Context, booking, user string, start, end time.Time) {
+	if _, err := h.db.ExecContext(ctx, `UPDATE booking_hosts SET needs_sync=0 WHERE booking_id=? AND user_id=? AND EXISTS(SELECT 1 FROM bookings b WHERE b.id=booking_hosts.booking_id AND b.status='confirmed' AND julianday(b.start_at)=julianday(?) AND julianday(b.end_at)=julianday(?))`, booking, user, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano)); err != nil {
+		h.logger.Error("clear calendar sync", "error", err, "booking_id", booking)
 	}
 }
 

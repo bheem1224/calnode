@@ -52,14 +52,19 @@ func (s *Service) createIntent(ctx context.Context, user string, p CreateEventPa
 			}
 		}
 	}
-	if provider != "microsoft" && provider != "google" {
+	if provider != "microsoft" && provider != "google" && provider != "caldav" {
 		return "", "", nil
 	}
 	if calendarID == "" {
 		calendarID = "primary"
 	}
 	reference = connstore.CalendarReference(provider, calendarID, account)
-	_, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO calendar_event_intents(user_id,operation_key,provider,calendar_ref)VALUES(?,?,?,?)`, user, p.IdempotencyKey, provider, reference)
+	if p.BookingID != "" {
+		if err = s.liveAssignment(ctx, user, p); err != nil {
+			return
+		}
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO calendar_event_intents(user_id,operation_key,provider,calendar_ref,booking_id,assignment_id,write_started)VALUES(?,?,?,?,?,?,0)`, user, p.IdempotencyKey, provider, reference, p.BookingID, p.AssignmentID)
 	if err != nil {
 		return
 	}

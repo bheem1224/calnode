@@ -130,6 +130,10 @@ func TestStableEventSurvivesLostResponseConcurrentRetriesAndRestart(t *testing.T
 	if updateErrors.Load() != 1 {
 		t.Fatalf("concurrent reschedule: got %d ambiguous responses, want 1", updateErrors.Load())
 	}
+	precise := moved.Add(time.Hour + 500*time.Millisecond)
+	if err = restarted.UpdateEvent(context.Background(), "u1", "", id, precise, precise.Add(time.Hour)); err != nil {
+		t.Fatal("encoded precision repeated an update", err)
+	}
 	if err = restarted.CancelEvent(context.Background(), "u1", "", id); err != nil {
 		t.Fatal(err)
 	}
