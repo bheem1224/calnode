@@ -9,6 +9,7 @@ import (
 	"net/url"
 
 	"github.com/calnode/calnode/internal/calendar"
+	"github.com/calnode/calnode/internal/providerhttp"
 )
 
 // clientForAccount builds an authorized HTTP client for one connected Google account
@@ -52,7 +53,12 @@ func (c *Client) ListCalendars(ctx context.Context, userID, accountEmail string)
 	}
 	var out []calendar.CalendarInfo
 	pageToken := ""
+	seen := map[string]bool{}
 	for {
+		if seen[pageToken] || len(seen) >= 1000 {
+			return nil, fmt.Errorf("gcal: invalid calendar pagination")
+		}
+		seen[pageToken] = true
 		endpoint := c.apiBase + "/users/me/calendarList?maxResults=250"
 		if pageToken != "" {
 			endpoint += "&pageToken=" + url.QueryEscape(pageToken)
@@ -67,8 +73,9 @@ func (c *Client) ListCalendars(ctx context.Context, userID, accountEmail string)
 		}
 		var lr calListResp
 		if resp.StatusCode != http.StatusOK {
+			failure := providerhttp.Error(resp, "gcal: calendarList")
 			resp.Body.Close() // #nosec G104 -- already returning the status; nothing actionable on close error
-			return nil, fmt.Errorf("gcal: calendarList status %d", resp.StatusCode)
+			return nil, failure
 		}
 		derr := json.NewDecoder(resp.Body).Decode(&lr)
 		resp.Body.Close() // #nosec G104 -- body already decoded above; nothing actionable on close error

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/calnode/calnode/internal/providerhttp"
 	"io"
 	"net/http"
 	"strings"
@@ -115,7 +116,8 @@ func (h *Handler) CallbackMicrosoft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	principal, objectID, err := fetchMicrosoftIdentity(r.Context(), ma, tok)
+	providerCtx := providerhttp.WithManager(r.Context(), providerhttp.ForDB(h.db))
+	principal, objectID, err := fetchMicrosoftIdentity(providerCtx, ma, tok)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "auth: microsoft user info", "error", err)
 		http.Redirect(w, r, "/admin/login?error=userinfo", http.StatusFound)
@@ -160,7 +162,7 @@ func (h *Handler) CallbackMicrosoft(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if p.RequiredGroupID != "" {
-			member, err := checkMicrosoftGroup(r.Context(), ma.Client(r.Context(), tok), p.RequiredGroupID)
+			member, err := checkMicrosoftGroup(providerCtx, ma.Client(providerCtx, tok), p.RequiredGroupID, providerhttp.Key("microsoft", ma.ClientID, ma.Endpoint.TokenURL))
 			if err != nil {
 				h.logger.WarnContext(r.Context(), "Microsoft enrollment group check failed", "error", err)
 				h.writeError(w, 503, "could not verify the enrollment security group; try again shortly")
@@ -185,7 +187,9 @@ func isMultiTenantMicrosoftAuthority(authURL string) bool {
 // fetchMicrosoftIdentity obtains the principal and stable directory object ID
 // together using the delegated Graph token from this authorization-code exchange.
 func fetchMicrosoftIdentity(ctx context.Context, cfg *oauth2.Config, tok *oauth2.Token) (principal, objectID string, err error) {
-	resp, err := cfg.Client(ctx, tok).Get("https://graph.microsoft.com/v1.0/me?$select=id,userPrincipalName")
+	app := providerhttp.Key("microsoft", cfg.ClientID, cfg.Endpoint.TokenURL)
+	client := providerhttp.FromContext(ctx).Coordinate(cfg.Client(ctx, tok), app, providerhttp.Key(app, "signin"))
+	resp, err := client.Get("https://graph.microsoft.com/v1.0/me?$select=id,userPrincipalName")
 	if err != nil {
 		return "", "", fmt.Errorf("auth: Graph identity request: %w", err)
 	}
@@ -209,13 +213,19 @@ func fetchMicrosoftIdentity(ctx context.Context, cfg *oauth2.Config, tok *oauth2
 
 // Microsoft documents User.Read as sufficient for the signed-in user's own
 // transitive membership check. No directory-wide read permission is requested.
-func checkMicrosoftGroup(ctx context.Context, client *http.Client, groupID string) (bool, error) {
+func checkMicrosoftGroup(ctx context.Context, client *http.Client, groupID string, appScopes ...string) (bool, error) {
 	body, _ := json.Marshal(map[string]any{"groupIds": []string{groupID}})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://graph.microsoft.com/v1.0/me/checkMemberGroups", bytes.NewReader(body))
 	if err != nil {
 		return false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req = providerhttp.ReplaySafe(req)
+	app := "microsoft-signin-groups"
+	if len(appScopes) > 0 {
+		app = appScopes[0]
+	}
+	client = providerhttp.FromContext(ctx).Coordinate(client, app, providerhttp.Key(app, "signin"))
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, err

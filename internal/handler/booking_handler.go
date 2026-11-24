@@ -1560,6 +1560,17 @@ func (h *Handler) createHostEvents(ctx context.Context, b *booking.Booking, in b
 		if host.ExternalEventID != "" {
 			return ""
 		}
+		if host.AssignmentID == "" {
+			// Notification fallback hosts may lack a loaded seat ID after a
+			// transient read failure. Recover it before choosing the operation key;
+			// otherwise the reconciler would later use a different create identity.
+			err := h.db.QueryRowContext(ctx, `SELECT id FROM booking_hosts WHERE booking_id=? AND user_id=?`, b.ID, host.UserID).Scan(&host.AssignmentID)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				h.logger.Error("load calendar operation identity", "error", err, "booking_id", b.ID)
+				h.nudgeCalendarReconcile()
+				return ""
+			}
+		}
 		inviteeEmail := calendarInvitee(b.InviteDelivery, in.OrganizerEmail)
 		if !host.IsPrimary {
 			inviteeEmail = ""
@@ -1573,6 +1584,7 @@ func (h *Handler) createHostEvents(ctx context.Context, b *booking.Booking, in b
 			hostDest = destCalID
 		}
 		eventID, link, calID, provider, err := gc.CreateEvent(ctx, host.UserID, calendar.CreateEventParams{
+			IdempotencyKey: calendarAssignmentKey(b.ID, host),
 			// The attendee is added as a calendar invitee below, so this text reaches
 			// them via the provider's own native invite (Google/Outlook/CalDAV) —
 			// follows their locale like the confirmation email, not English/host-fixed.
@@ -2503,6 +2515,7 @@ func (h *Handler) setNeedsSync(ctx context.Context, bookingID, userID string, di
 
 // assignedHost is one host attending a booking (from booking_hosts).
 type assignedHost struct {
+	AssignmentID    string
 	UserID          string
 	Name            string
 	Email           string
@@ -2523,7 +2536,7 @@ type assignedHost struct {
 // querying inside the loop would deadlock.
 func (h *Handler) assignedHosts(ctx context.Context, bookingID string) ([]assignedHost, error) {
 	rows, err := h.db.QueryContext(ctx, `
-		SELECT bh.user_id, u.name, u.email, bh.is_primary, COALESCE(bh.external_event_id, ''),
+		SELECT bh.id, bh.user_id, u.name, u.email, bh.is_primary, COALESCE(bh.external_event_id, ''),
 		       COALESCE(bh.external_calendar_id, ''), COALESCE(bh.external_provider, '')
 		FROM booking_hosts bh JOIN users u ON u.id = bh.user_id
 		WHERE bh.booking_id = ?
@@ -2536,13 +2549,20 @@ func (h *Handler) assignedHosts(ctx context.Context, bookingID string) ([]assign
 	for rows.Next() {
 		var a assignedHost
 		var primary int
-		if err := rows.Scan(&a.UserID, &a.Name, &a.Email, &primary, &a.ExternalEventID, &a.ExternalCalendarID, &a.ExternalProvider); err != nil {
+		if err := rows.Scan(&a.AssignmentID, &a.UserID, &a.Name, &a.Email, &primary, &a.ExternalEventID, &a.ExternalCalendarID, &a.ExternalProvider); err != nil {
 			return nil, err
 		}
 		a.IsPrimary = primary != 0
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+func calendarAssignmentKey(bookingID string, host assignedHost) string {
+	if host.AssignmentID != "" {
+		return "booking-host:" + host.AssignmentID
+	}
+	return "legacy-booking-host:" + bookingID + ":" + host.UserID
 }
 
 // displayHostsForBooking returns the assigned host(s) of a booking for display

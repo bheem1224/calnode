@@ -2333,6 +2333,15 @@
 		"startFrom": "Partir d’un modèle",
 		"count": "Autorisations : {count}"
 	},
+	"adminAlerts": {
+		"title": "Alertes des administrateurs",
+		"recipients": "Envoyer les copies destinées aux administrateurs à",
+		"owner": "Propriétaire uniquement",
+		"admins": "Tous les administrateurs",
+		"selected": "Administrateurs sélectionnés",
+		"choose": "Sélectionnez au moins un administrateur.",
+		"hint": "S’applique aux alertes de sécurité et de connexion aux calendriers. Le compte concerné reçoit toujours ses propres notifications. Si les administrateurs sélectionnés perdent leur accès, les alertes sont envoyées au propriétaire. Les instances sans propriétaire utilisent leurs administrateurs."
+	},
 	"securitySettings": {
 		"title": "Sécurité et connexion",
 		"subtitle": "Choisissez qui peut rejoindre cette instance et comment se connecter. Les connexions aux calendriers restent indépendantes.",

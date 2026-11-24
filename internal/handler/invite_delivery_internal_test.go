@@ -411,6 +411,22 @@ func TestInviteDelivery_reassignKeepsBothHostsPrivate(t *testing.T) {
 	if len(events) != 2 || events[1].OrganizerEmail != "" {
 		t.Errorf("new host's calendar events = %+v; want the moved event created without the booker", events)
 	}
+	// Retrying the same API operation must preserve the existing event and avoid
+	// generating another attendee notice or a new calendar invitation.
+	retry := httptest.NewRequest(http.MethodPost, "/v1/bookings/"+b.ID+"/reassign", strings.NewReader(`{"host_id":"host-2"}`))
+	retry.SetPathValue("id", b.ID)
+	retry.Header.Set("X-API-Key", f.apiKey)
+	replayed := httptest.NewRecorder()
+	f.h.RequireAuth(f.h.ReassignBooking)(replayed, retry)
+	if replayed.Code != http.StatusOK {
+		t.Fatalf("reassignment retry: %d", replayed.Code)
+	}
+	// The handler's no-op path is synchronous; no background side effects may be
+	// started. Observe through the same calendar recorder used by the real move.
+	time.Sleep(50 * time.Millisecond)
+	if got := len(f.cal.events()); got != len(events) {
+		t.Fatalf("retry repeated calendar creation: %d events, want %d", got, len(events))
+	}
 }
 
 // The reconciler re-creates a host event whose inline create failed; for a Calnode

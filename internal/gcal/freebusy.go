@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/calnode/calnode/internal/providerhttp"
 	"github.com/calnode/calnode/internal/slots"
 )
 
@@ -65,6 +66,7 @@ func (c *Client) freeBusyForConn(ctx context.Context, conn fbConn, from, to time
 		return nil, fmt.Errorf("gcal: freeBusy request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req = providerhttp.ReplaySafe(req)
 
 	resp, err := conn.hc.Do(req)
 	if err != nil {
@@ -72,13 +74,16 @@ func (c *Client) freeBusyForConn(ctx context.Context, conn fbConn, from, to time
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("gcal: freeBusy status %d", resp.StatusCode)
+		return nil, providerhttp.Error(resp, "gcal: freeBusy")
 	}
 
 	var fbr freeBusyResp
 	if err := json.NewDecoder(resp.Body).Decode(&fbr); err != nil {
 		return nil, fmt.Errorf("gcal: freeBusy decode: %w", err)
 	}
+	// A fallback makes another request on this account. Release the first
+	// response's concurrency slot before that request can wait for one.
+	resp.Body.Close()
 	var out []slots.Interval
 	for _, id := range conn.calIDs {
 		cal, ok := fbr.Calendars[id]
@@ -132,8 +137,9 @@ func (c *Client) calendarEventsBusy(ctx context.Context, hc *http.Client, id str
 			}
 		}
 		if resp.StatusCode != 200 {
+			failure := providerhttp.Error(resp, "gcal: events lookup")
 			resp.Body.Close()
-			return nil, fmt.Errorf("events lookup status %d", resp.StatusCode)
+			return nil, failure
 		}
 		err = json.NewDecoder(resp.Body).Decode(&result)
 		resp.Body.Close()
@@ -168,7 +174,7 @@ func (c *Client) calendarEventsBusy(ctx context.Context, hc *http.Client, id str
 		if page == "" {
 			return out, nil
 		}
-		if seen[page] {
+		if seen[page] || len(seen) >= 1000 {
 			return nil, fmt.Errorf("repeated calendar page token")
 		}
 		seen[page] = true

@@ -18,6 +18,7 @@ import (
 
 	ip "github.com/calnode/calnode/internal/identityprovider"
 	"github.com/calnode/calnode/internal/netutil"
+	"github.com/calnode/calnode/internal/providerhttp"
 	"github.com/calnode/calnode/internal/secret"
 	"github.com/calnode/calnode/internal/uid"
 	oidc "github.com/coreos/go-oidc/v3/oidc"
@@ -445,7 +446,10 @@ func (h *Handler) providerGroupsAllowed(ctx context.Context, p ip.Provider, clai
 			return false
 		}
 		req.Header.Set("Content-Type", "application/json")
-		resp, err := cfg.Client(ctx, tok).Do(req)
+		req = providerhttp.ReplaySafe(req)
+		app := providerhttp.Key("microsoft", cfg.ClientID, cfg.Endpoint.TokenURL)
+		client := providerhttp.ForDB(h.db).Coordinate(cfg.Client(ctx, tok), app, providerhttp.Key(app, "signin"))
+		resp, err := client.Do(req)
 		if err != nil {
 			return false
 		}

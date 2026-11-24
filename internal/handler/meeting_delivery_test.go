@@ -5,6 +5,7 @@ import (
 	"context"
 	"github.com/calnode/calnode/internal/booking"
 	"github.com/calnode/calnode/internal/calendar"
+	"github.com/calnode/calnode/internal/connstore"
 	"github.com/calnode/calnode/internal/mailer"
 	"github.com/calnode/calnode/internal/zoom"
 	"strings"
@@ -83,8 +84,18 @@ func TestMeetingDeliveryCalendarOverrideAndPrivacy(t *testing.T) {
 	if len(p.events) != 2 {
 		t.Fatalf("calendar deliveries=%d: %s", len(p.events), logs.String())
 	}
-	if p.events["host-1"].DestinationCalendarID != "selected" || p.events["host-2"].DestinationCalendarID != "" {
-		t.Fatal("primary override leaked to co-host's calendar")
+	for host, want := range map[string]string{"host-1": "selected", "host-2": "primary"} {
+		if p.events[host].IdempotencyKey != "booking-host:bh-"+strings.TrimPrefix(host, "host-") {
+			t.Fatal("fallback host did not recover its persisted calendar operation")
+		}
+		provider, id, account, err := connstore.CalendarTarget(context.Background(), db, host, p.events[host].DestinationCalendarID)
+		wantAccount := "private@example.test"
+		if host == "host-2" {
+			wantAccount = "other@example.test"
+		}
+		if err != nil || provider != "google" || id != want || account != wantAccount {
+			t.Fatalf("wrong pinned calendar for %s: %s %s %s %v", host, provider, id, account, err)
+		}
 	}
 	for host, event := range p.events {
 		if (host == "host-1" && event.OrganizerEmail != "client@example.test") || (host == "host-2" && event.OrganizerEmail != "") {
@@ -121,7 +132,7 @@ func TestMeetingDeliveryCalendarOverrideAndPrivacy(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.reconcileCreations(context.Background(), svc)
-	if !p.events["host-1"].Private || p.events["host-1"].DestinationCalendarID != "selected" || len(p.events["host-1"].Guests) != 1 || len(p.events["host-2"].Guests) != 0 {
+	if !p.events["host-1"].Private || p.events["host-1"].DestinationCalendarID != connstore.CalendarReference("google", "selected", "private@example.test") || p.events["host-2"].DestinationCalendarID != connstore.CalendarReference("google", "primary", "other@example.test") || len(p.events["host-1"].Guests) != 1 || len(p.events["host-2"].Guests) != 0 {
 		t.Fatalf("retry lost settings: %+v", p.events)
 	}
 	foreign, err := h.meetingCalendars(context.Background(), "host-2", "host-1")

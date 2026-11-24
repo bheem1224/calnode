@@ -128,7 +128,7 @@ func TestCancelEvent_emptyStoredCalendarFallsBackToTheDestination(t *testing.T) 
 }
 
 func TestUpdateEvent_usesTheStoredCalendar(t *testing.T) {
-	srv, path := recordPath(t, http.StatusOK, `{"id":"evt-1"}`)
+	srv, path := recordPath(t, http.StatusOK, `{"id":"evt-1","start":{"dateTime":"2026-01-01T10:00:00Z"},"end":{"dateTime":"2026-01-01T10:30:00Z"}}`)
 	c := newTestClient(t)
 	c.apiBase = srv.URL
 	saveDestinationConnection(t, c, "user-1", "primary")

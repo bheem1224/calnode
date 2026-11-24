@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/providerhttp"
 	"github.com/calnode/calnode/internal/slots"
 )
 
@@ -86,7 +87,12 @@ func (c *Client) calendarView(ctx context.Context, hc *http.Client, base string,
 	next := base + "?" + q.Encode()
 
 	var out []slots.Interval
+	seen := map[string]bool{}
 	for next != "" {
+		if seen[next] || len(seen) >= 1000 || !providerhttp.SameOrigin(c.apiBase, next) {
+			return nil, fmt.Errorf("microsoft: invalid availability pagination")
+		}
+		seen[next] = true
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, next, nil)
 		if err != nil {
 			return nil, fmt.Errorf("microsoft: calendarView request: %w", err)
@@ -99,9 +105,9 @@ func (c *Client) calendarView(ctx context.Context, hc *http.Client, base string,
 		}
 		var cv calendarViewResp
 		if resp.StatusCode != http.StatusOK {
-			msg := graphErrBody(resp)
+			failure := providerhttp.Error(resp, "microsoft: calendarView")
 			resp.Body.Close() // #nosec G104 -- already returning a more specific error; nothing actionable on close error
-			return nil, fmt.Errorf("microsoft: calendarView status %d: %s", resp.StatusCode, msg)
+			return nil, failure
 		}
 		derr := json.NewDecoder(resp.Body).Decode(&cv)
 		resp.Body.Close() // #nosec G104 -- body already decoded above; nothing actionable on close error

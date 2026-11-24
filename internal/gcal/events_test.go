@@ -288,6 +288,10 @@ func TestUpdateEvent_sendsPatchWithNewTimes(t *testing.T) {
 	var gotMethod string
 	var gotBody calEventReq
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			_, _ = w.Write([]byte(`{"start":{"dateTime":"2026-01-01T10:00:00Z"},"end":{"dateTime":"2026-01-01T10:30:00Z"}}`))
+			return
+		}
 		gotMethod = r.Method
 		json.NewDecoder(r.Body).Decode(&gotBody) //nolint:errcheck
 		w.WriteHeader(http.StatusOK)

@@ -22,6 +22,7 @@ import (
 	"github.com/calnode/calnode/internal/connstore"
 	"github.com/calnode/calnode/internal/identityprovider"
 	"github.com/calnode/calnode/internal/oauthstore"
+	"github.com/calnode/calnode/internal/providerhttp"
 	"github.com/calnode/calnode/internal/secret"
 	"github.com/calnode/calnode/internal/uid"
 )
@@ -38,6 +39,7 @@ func (c *Client) InvitesGuests() bool { return true }
 
 // Client manages Google Calendar OAuth tokens and API access.
 type Client struct {
+	requests     *providerhttp.Manager
 	config       *oauth2.Config
 	providerID   string
 	pkceVerifier string
@@ -63,10 +65,11 @@ func New(db *sql.DB, clientID, clientSecret, redirectURL, encKeyHex string) (*Cl
 			RedirectURL:  redirectURL,
 			Scopes:       []string{"https://www.googleapis.com/auth/calendar"},
 		},
-		key:     key,
-		db:      db,
-		logger:  slog.Default(),
-		apiBase: "https://www.googleapis.com/calendar/v3",
+		key:      key,
+		requests: providerhttp.ForDB(db),
+		db:       db,
+		logger:   slog.Default(),
+		apiBase:  "https://www.googleapis.com/calendar/v3",
 	}, nil
 }
 
@@ -108,41 +111,53 @@ func (c *Client) Exchange(ctx context.Context, userID, code, calendarID string) 
 	if c.pkceVerifier != "" {
 		options = append(options, oauth2.VerifierOption(c.pkceVerifier))
 	}
-	tok, err := c.config.Exchange(ctx, code, options...)
+	app := providerhttp.Key("google", c.config.ClientID, c.config.Endpoint.TokenURL)
+	tokenHTTP := providerhttp.ForDB(c.db).Coordinate(&http.Client{Timeout: 15 * time.Second}, app, providerhttp.Key(app, "connect"))
+	tokenCtx := context.WithValue(ctx, oauth2.HTTPClient, tokenHTTP)
+	tok, err := c.config.Exchange(tokenCtx, code, options...)
 	if err != nil {
 		return fmt.Errorf("gcal: token exchange: %w", err)
 	}
 	if calendarID == "" {
 		calendarID = "primary"
 	}
-	email := c.fetchAccountEmail(ctx, tok) // best-effort; "" on failure
+	email, err := c.fetchAccountEmail(ctx, tok)
+	if err != nil {
+		return err
+	}
 	return c.saveToken(ctx, userID, calendarID, email, tok)
 }
 
 // fetchAccountEmail returns the connected account's email — the primary calendar's id is the
-// account email. Best-effort: returns "" on any error (the connection still works; only
-// dedup/display degrade). Avoids needing extra OAuth scopes.
-func (c *Client) fetchAccountEmail(ctx context.Context, tok *oauth2.Token) string {
+// account email. Refuse an unidentified connection rather than overwriting another
+// account's empty identity when a transient provider failure hides its email.
+func (c *Client) fetchAccountEmail(ctx context.Context, tok *oauth2.Token) (string, error) {
 	hc := oauth2.NewClient(ctx, c.config.TokenSource(ctx, tok))
+	manager := c.requests
+	if manager == nil {
+		manager = providerhttp.Default
+	}
+	app := providerhttp.Key("google", c.config.ClientID, c.config.Endpoint.TokenURL)
+	hc = manager.Coordinate(hc, app, providerhttp.Key(app, "connect"))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.apiBase+"/calendars/primary", nil)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return ""
+		return "", providerhttp.Error(resp, "gcal: identify connected account")
 	}
 	var out struct {
 		ID string `json:"id"`
 	}
-	if json.NewDecoder(resp.Body).Decode(&out) != nil {
-		return ""
+	if json.NewDecoder(resp.Body).Decode(&out) != nil || out.ID == "" {
+		return "", fmt.Errorf("gcal: connected account identity unavailable; retry connecting")
 	}
-	return out.ID
+	return out.ID, nil
 }
 
 // Connected reports whether userID has an active Google Calendar connection.
@@ -165,45 +180,23 @@ func (c *Client) Disconnect(ctx context.Context, userID string) error {
 // buildClient turns one connection row's encrypted tokens into an authorized *http.Client
 // whose refreshes persist back to that same account's row (keyed by accountEmail).
 func (c *Client) buildClient(ctx context.Context, userID, accessEnc, refreshEnc, calID, expiryStr, accountEmail string) (*http.Client, error) {
-	cfg, providerID, resolveErr := identityprovider.CalendarConfig(ctx, c.db, c.key, "google", userID, accountEmail, accessEnc, c.config)
-	if resolveErr != nil {
-		return nil, resolveErr
-	}
-	bound := *c
-	bound.config = cfg
-	bound.providerID = providerID
-
-	access, err := c.decrypt(accessEnc)
+	cfg, providerID, err := identityprovider.CalendarConfig(ctx, c.db, c.key, "google", userID, accountEmail, accessEnc, c.config)
 	if err != nil {
-		return nil, fmt.Errorf("gcal: decrypt access token: %w", err)
-	}
-	var refresh string
-	if refreshEnc != "" {
-		rb, err := c.decrypt(refreshEnc)
-		if err != nil {
-			return nil, fmt.Errorf("gcal: decrypt refresh token: %w", err)
+		// A concurrent coordinated refresh may have replaced the snapshot above.
+		var latest string
+		if e := c.db.QueryRowContext(ctx, `SELECT access_token_enc FROM calendar_connections WHERE user_id=? AND provider=? AND account_email=?`, userID, "google", accountEmail).Scan(&latest); e != nil {
+			return nil, err
 		}
-		refresh = string(rb)
+		cfg, providerID, err = identityprovider.CalendarConfig(ctx, c.db, c.key, "google", userID, accountEmail, latest, c.config)
+		if err != nil {
+			return nil, err
+		}
 	}
-	var expiry time.Time
-	if expiryStr != "" {
-		expiry, _ = time.Parse(time.RFC3339, expiryStr)
+	manager := c.requests
+	if manager == nil {
+		manager = providerhttp.Default
 	}
-	// Zero expiry (legacy/missing) → treat as expired so oauth2 refreshes immediately.
-	if expiry.IsZero() {
-		expiry = time.Now().Add(-time.Second)
-	}
-	tok := &oauth2.Token{AccessToken: string(access), RefreshToken: refresh, Expiry: expiry}
-	saving := &oauthstore.SavingTokenSource{
-		Inner: oauth2.ReuseTokenSource(nil, bound.config.TokenSource(ctx, tok)),
-		Save: func(ctx context.Context, t *oauth2.Token) error {
-			return bound.saveTokenBound(ctx, userID, calID, accountEmail, t, true)
-		},
-		Logger: c.logger,
-		LogMsg: "gcal: failed to persist refreshed token",
-		UserID: userID,
-	}
-	return oauth2.NewClient(ctx, saving), nil
+	return oauthstore.BoundClient(ctx, c.db, c.key, "google", userID, accountEmail, providerID, cfg, manager), nil
 }
 
 // httpClient returns an authorized *http.Client and the calendarID for one matching

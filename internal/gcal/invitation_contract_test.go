@@ -29,7 +29,7 @@ func TestInvitationContractExplicitCalendarAndAccount(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer second-account" {
 			t.Error("used credentials from the default account")
 		}
-		if !strings.HasPrefix(r.URL.Path, "/calendars/chosen-calendar/events") || r.URL.Query().Get("sendUpdates") != "all" {
+		if !strings.HasPrefix(r.URL.Path, "/calendars/chosen-calendar/events") || r.Method != "GET" && r.URL.Query().Get("sendUpdates") != "all" {
 			t.Errorf("wrong destination or invitation notification: %s", r.URL)
 		}
 		if r.Method == "POST" {
@@ -43,6 +43,8 @@ func TestInvitationContractExplicitCalendarAndAccount(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":"event-id","hangoutLink":"https://meet.google.com/abc-defg-hij"}`))
+		} else if r.Method == "GET" {
+			_, _ = w.Write([]byte(`{"start":{"dateTime":"2026-12-01T09:00:00Z"},"end":{"dateTime":"2026-12-01T09:45:00Z"}}`))
 		} else {
 			if r.Method == "PATCH" {
 				w.WriteHeader(200)
@@ -64,7 +66,7 @@ func TestInvitationContractExplicitCalendarAndAccount(t *testing.T) {
 	if err = c.CancelEvent(context.Background(), "host", cal, id); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(methods, ",") != "POST,PATCH,DELETE" {
+	if strings.Join(methods, ",") != "POST,GET,PATCH,DELETE" {
 		t.Fatal(methods)
 	}
 }

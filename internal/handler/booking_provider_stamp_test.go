@@ -2,6 +2,8 @@ package handler_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -32,7 +34,8 @@ func (p stampCalendar) CreateEvent(context.Context, string, calendar.CreateEvent
 // TestBookingStampsEventProvider is the write half of the issue #58 fix: the
 // provider that writes the event is recorded on booking_hosts so later updates
 // and cancels route back to it after a destination move. Calendar creation runs
-// in a background goroutine, so the test waits for the create before asserting.
+// in a background goroutine, so the test waits for the provider stamp to persist,
+// not just for entry into the provider's create method.
 func TestBookingStampsEventProvider(t *testing.T) {
 	h, db, key, userID := setupWorkspaceWithDB(t)
 	slug, _ := seedEventTypeHTTP(t, h, key)
@@ -58,8 +61,16 @@ func TestBookingStampsEventProvider(t *testing.T) {
 		t.Fatal("calendar event was not created")
 	}
 	var provider string
-	if err := db.QueryRow(`SELECT COALESCE(external_provider,'') FROM booking_hosts WHERE external_event_id = 'event-id'`).Scan(&provider); err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := db.QueryRow(`SELECT COALESCE(external_provider,'') FROM booking_hosts WHERE external_event_id = 'event-id'`).Scan(&provider)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, sql.ErrNoRows) || time.Now().After(deadline) {
+			t.Fatal("calendar event's provider stamp was not persisted", err)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	if provider != "google" {
 		t.Fatalf("external_provider = %q, want google", provider)

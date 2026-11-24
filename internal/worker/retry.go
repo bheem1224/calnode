@@ -35,7 +35,12 @@ func webhookExpired(created string, now time.Time) bool {
 }
 func retryAt(typ, created string, attempt int, err error, now time.Time) (time.Time, bool) {
 	if !webhookJob(typ) {
-		return now.Add(backoff(attempt)), false
+		next := now.Add(backoff(attempt))
+		var deferred interface{ RetryAt() time.Time }
+		if errors.As(err, &deferred) && deferred.RetryAt().After(next) {
+			next = deferred.RetryAt()
+		}
+		return next, false
 	}
 	if webhookExpired(created, now) {
 		return time.Time{}, true

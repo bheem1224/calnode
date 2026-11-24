@@ -773,21 +773,28 @@ func (s *Service) Reschedule(ctx context.Context, bookingID string, newStart, ne
 // ErrDoubleBooked if the new host already has an overlapping confirmed booking.
 // Reassigning to the current host is a no-op that returns the booking unchanged.
 func (s *Service) ReassignHost(ctx context.Context, bookingID, newHostID string) (*Booking, error) {
+	b, _, err := s.ReassignHostWithChange(ctx, bookingID, newHostID)
+	return b, err
+}
+
+// ReassignHostWithChange reports whether this transaction moved the host, so a
+// retried no-op cannot cancel/recreate the event or repeat notification mail.
+func (s *Service) ReassignHostWithChange(ctx context.Context, bookingID, newHostID string) (*Booking, bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("booking: begin tx: %w", err)
+		return nil, false, fmt.Errorf("booking: begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
 	b, err := scanBooking(tx.QueryRowContext(ctx, `SELECT `+bookingColumns+` FROM bookings WHERE id = ?`, bookingID))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if b.Status == "cancelled" {
-		return nil, ErrAlreadyCancelled
+		return nil, false, ErrAlreadyCancelled
 	}
 	if b.HostID == newHostID {
-		return b, nil // already this host — nothing to do
+		return b, false, nil // already this host — nothing to do
 	}
 
 	startStr := b.StartAt.UTC().Format(time.RFC3339Nano)
@@ -796,20 +803,20 @@ func (s *Service) ReassignHost(ctx context.Context, bookingID, newHostID string)
 	// The new host must be free at this time across everything they attend.
 	busy, err := hostBusy(ctx, tx, newHostID, startStr, endStr, bookingID)
 	if err != nil {
-		return nil, fmt.Errorf("booking: reassign overlap: %w", err)
+		return nil, false, fmt.Errorf("booking: reassign overlap: %w", err)
 	}
 	if busy {
-		return nil, ErrDoubleBooked
+		return nil, false, ErrDoubleBooked
 	}
 
 	var seated int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM booking_hosts WHERE booking_id = ? AND user_id = ? AND is_primary = 0`,
 		bookingID, newHostID).Scan(&seated); err != nil {
-		return nil, fmt.Errorf("booking: reassign seat check: %w", err)
+		return nil, false, fmt.Errorf("booking: reassign seat check: %w", err)
 	}
 	if seated > 0 {
-		return nil, ErrHostAlreadyAssigned
+		return nil, false, ErrHostAlreadyAssigned
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -817,9 +824,9 @@ func (s *Service) ReassignHost(ctx context.Context, bookingID, newHostID string)
 		UPDATE bookings SET host_id = ?, updated_at = ? WHERE id = ?`,
 		newHostID, now, bookingID); err != nil {
 		if db.IsUniqueViolation(err) {
-			return nil, ErrDoubleBooked
+			return nil, false, ErrDoubleBooked
 		}
-		return nil, fmt.Errorf("booking: reassign update: %w", err)
+		return nil, false, fmt.Errorf("booking: reassign update: %w", err)
 	}
 
 	// Move the primary seat in the same transaction. hostBusy reads booking_hosts, so a
@@ -828,29 +835,29 @@ func (s *Service) ReassignHost(ctx context.Context, bookingID, newHostID string)
 	// commit, with a failure only logged. The calendar event belonged to the old host, so
 	// its ids go too - the caller cancels it and writes the new host's.
 	res, err := tx.ExecContext(ctx, `
-		UPDATE booking_hosts SET user_id = ?, external_event_id = NULL,
+		UPDATE booking_hosts SET id = ?, user_id = ?, external_event_id = NULL,
 		       external_calendar_id = NULL, external_provider = '', needs_sync = 0
-		WHERE booking_id = ? AND is_primary = 1`, newHostID, bookingID)
+		WHERE booking_id = ? AND is_primary = 1`, uid.New(), newHostID, bookingID)
 	if err != nil {
-		return nil, fmt.Errorf("booking: reassign seat: %w", err)
+		return nil, false, fmt.Errorf("booking: reassign seat: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 { // legacy booking with no booking_hosts rows
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO booking_hosts (id, booking_id, user_id, is_primary) VALUES (?, ?, ?, 1)`,
 			uid.New(), bookingID, newHostID); err != nil {
-			return nil, fmt.Errorf("booking: reassign seat insert: %w", err)
+			return nil, false, fmt.Errorf("booking: reassign seat insert: %w", err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("booking: reassign commit: %w", err)
+		return nil, false, fmt.Errorf("booking: reassign commit: %w", err)
 	}
 
 	b.HostID = newHostID
 	if t, err := time.Parse(time.RFC3339Nano, now); err == nil {
 		b.UpdatedAt = t
 	}
-	return b, nil
+	return b, true, nil
 }
 
 // CancelByToken cancels a booking authenticated by a manage token.

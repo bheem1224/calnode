@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/calnode/calnode/internal/calendar"
+	"github.com/calnode/calnode/internal/providerhttp"
 )
 
 // clientForAccount builds an authorized Graph client for one connected account
@@ -56,7 +57,12 @@ func (c *Client) ListCalendars(ctx context.Context, userID, accountEmail string)
 	}
 	next := c.apiBase + "/me/calendars?$select=id,name,isDefaultCalendar,canEdit&$top=100"
 	var out []calendar.CalendarInfo
+	seen := map[string]bool{}
 	for next != "" {
+		if seen[next] || len(seen) >= 1000 || !providerhttp.SameOrigin(c.apiBase, next) {
+			return nil, fmt.Errorf("microsoft: invalid calendar pagination")
+		}
+		seen[next] = true
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, next, nil)
 		if err != nil {
 			return nil, err
@@ -67,9 +73,9 @@ func (c *Client) ListCalendars(ctx context.Context, userID, accountEmail string)
 		}
 		var lr msCalListResp
 		if resp.StatusCode != http.StatusOK {
-			msg := graphErrBody(resp)
+			failure := providerhttp.Error(resp, "microsoft: list calendars")
 			resp.Body.Close() // #nosec G104 -- already returning a more specific error; nothing actionable on close error
-			return nil, fmt.Errorf("microsoft: list calendars status %d: %s", resp.StatusCode, msg)
+			return nil, failure
 		}
 		derr := json.NewDecoder(resp.Body).Decode(&lr)
 		resp.Body.Close() // #nosec G104 -- body already decoded above; nothing actionable on close error

@@ -1,9 +1,19 @@
 package worker
 
 import (
+	"github.com/calnode/calnode/internal/providerhttp"
 	"testing"
 	"time"
 )
+
+func TestCalendarProviderRetryAfterDefersDurableJob(t *testing.T) {
+	now := time.Now()
+	until := now.Add(3 * time.Hour)
+	next, terminal := retryAt("booking.confirm", now.Format(time.RFC3339), 1, &providerhttp.HTTPError{Operation: "calendar", Status: 429, Until: until}, now)
+	if terminal || next.Before(until) {
+		t.Fatal("calendar job ignored provider cooldown", next, terminal)
+	}
+}
 
 func TestWebhookRetryWindowJitterAndRetryAfter(t *testing.T) {
 	now := time.Now().UTC()

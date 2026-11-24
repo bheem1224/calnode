@@ -48,7 +48,9 @@ func TestInvitationContractExplicitCalendarAndAccount(t *testing.T) {
 			if r.URL.Path != "/me/events/event-id" {
 				t.Errorf("wrong event: %s", r.URL)
 			}
-			if r.Method == "PATCH" {
+			if r.Method == "GET" {
+				_, _ = w.Write([]byte(`{"start":{"dateTime":"2026-12-01T09:00:00"},"end":{"dateTime":"2026-12-01T09:45:00"}}`))
+			} else if r.Method == "PATCH" {
 				w.WriteHeader(200)
 			} else {
 				w.WriteHeader(204)
@@ -68,7 +70,7 @@ func TestInvitationContractExplicitCalendarAndAccount(t *testing.T) {
 	if err = c.CancelEvent(context.Background(), "host", cal, id); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(methods, ",") != "POST,PATCH,DELETE" {
+	if strings.Join(methods, ",") != "POST,GET,PATCH,DELETE" {
 		t.Fatal(methods)
 	}
 }

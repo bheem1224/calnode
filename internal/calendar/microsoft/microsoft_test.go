@@ -198,6 +198,10 @@ func TestUpdateEvent_patchesNewTime(t *testing.T) {
 
 	var gotMethod, gotPath, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			_, _ = w.Write([]byte(`{"start":{"dateTime":"2026-01-01T10:00:00"},"end":{"dateTime":"2026-01-01T10:30:00"}}`))
+			return
+		}
 		gotMethod, gotPath = r.Method, r.URL.Path
 		b, _ := io.ReadAll(r.Body)
 		gotBody = string(b)

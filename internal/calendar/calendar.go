@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/calnode/calnode/internal/abuse"
@@ -19,6 +20,7 @@ import (
 // CreateEventParams holds the data needed to create a calendar event. Provider-
 // agnostic: AddMeet requests the provider's online-meeting (Google Meet / Teams).
 type CreateEventParams struct {
+	IdempotencyKey        string // stable for one booking-host assignment
 	Summary               string
 	Description           string
 	Location              string // optional; e.g. the meeting link on secondary hosts' events
@@ -109,6 +111,8 @@ var freeBusyGate = abuse.NewGate(abuse.Limit("CALENDAR_CHECK_CONCURRENCY", 32))
 // Service holds the configured providers and dispatches per-user operations to
 // whichever provider that user has connected.
 type Service struct {
+	busyMu    sync.Mutex
+	busyCalls map[string]*busyCall
 	db        *sql.DB
 	providers map[string]Provider
 	primary   string // default provider for new connections (first registered)
@@ -383,6 +387,10 @@ func (s *Service) InvitesGuests(ctx context.Context, userID string) bool {
 // booking-time check's deadline. Any provider error still fails the whole call — a
 // partial union would read the unchecked provider's meetings as free time.
 func (s *Service) FreeBusy(ctx context.Context, userID string, from, to time.Time) ([]slots.Interval, error) {
+	return s.coalescedBusy(ctx, userID, from, to)
+}
+
+func (s *Service) freeBusy(ctx context.Context, userID string, from, to time.Time) ([]slots.Interval, error) {
 	type result struct {
 		busy []slots.Interval
 		err  error
@@ -390,11 +398,14 @@ func (s *Service) FreeBusy(ctx context.Context, userID string, from, to time.Tim
 	results := make(chan result, len(s.providers))
 	for _, p := range s.providers {
 		go func(p Provider) {
-			if !freeBusyGate.Enter() {
+			managed := p.Name() == "microsoft" || p.Name() == "google"
+			if !managed && !freeBusyGate.Enter() {
 				results <- result{err: abuse.ErrLimited}
 				return
 			}
-			defer freeBusyGate.Leave()
+			if !managed {
+				defer freeBusyGate.Leave()
+			}
 			iv, err := p.FreeBusy(ctx, userID, from, to)
 			results <- result{iv, err}
 		}(p)
@@ -420,6 +431,19 @@ func (s *Service) FreeBusy(ctx context.Context, userID string, from, to time.Tim
 // alongside the event id: the provider stamp is what routes later updates and cancels
 // after a destination move (issue #58).
 func (s *Service) CreateEvent(ctx context.Context, userID string, p CreateEventParams) (string, string, string, string, error) {
+	if p.IdempotencyKey != "" {
+		if provider, reference, err := s.createIntent(ctx, userID, p); err != nil {
+			return "", "", "", "", err
+		} else if provider != "" {
+			pr := s.providers[provider]
+			if pr == nil {
+				return "", "", "", "", errors.New("original calendar provider is unavailable")
+			}
+			p.DestinationCalendarID = reference
+			id, join, cal, err := pr.CreateEvent(ctx, userID, p)
+			return id, join, cal, provider, err
+		}
+	}
 	var pr Provider
 	if p.DestinationCalendarID != "" {
 		provider, _, _, err := connstore.CalendarTarget(ctx, s.db, userID, p.DestinationCalendarID)

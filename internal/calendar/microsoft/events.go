@@ -5,26 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/calnode/calnode/internal/calendar"
 	"github.com/calnode/calnode/internal/connstore"
+	"github.com/calnode/calnode/internal/providerhttp"
 )
 
 // graphTZ is the UTC wall-clock format Graph expects for event start/end.
 const graphTZ = "2006-01-02T15:04:05"
-
-// graphErrBody reads a short snippet of a Graph error response so the HTTP status
-// can be logged alongside Graph's own error code (e.g. "MailboxNotEnabledForRESTAPI"
-// when the account has no Exchange Online mailbox). Caller still closes resp.Body.
-func graphErrBody(resp *http.Response) string {
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 600))
-	return strings.TrimSpace(string(b))
-}
 
 type graphAttendee struct {
 	EmailAddress struct {
@@ -39,6 +30,8 @@ type graphLocation struct {
 }
 
 type graphEventReq struct {
+	TransactionID         string          `json:"transactionId,omitempty"`
+	Properties            []graphProperty `json:"singleValueExtendedProperties,omitempty"`
 	Subject               string          `json:"subject"`
 	Body                  *graphItemBody  `json:"body,omitempty"`
 	Start                 graphDateTime   `json:"start"`
@@ -62,6 +55,13 @@ type graphEventResp struct {
 	} `json:"onlineMeeting"`
 }
 
+type graphProperty struct {
+	ID    string `json:"id"`
+	Value string `json:"value"`
+}
+
+const operationProperty = "String {10c4a498-f01f-4f30-a4f7-e7429c827ac5} Name CalnodeOperation"
+
 // CreateEvent creates a Graph event on the user's default calendar and returns its
 // ID and, when p.AddMeet is set, the Teams join URL. Graph emails attendees its own
 // invite. Returns ("", "", nil) if the user has no is_destination connection.
@@ -75,6 +75,10 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 		Subject: p.Summary,
 		Start:   graphDateTime{DateTime: p.Start.UTC().Format(graphTZ), TimeZone: "UTC"},
 		End:     graphDateTime{DateTime: p.End.UTC().Format(graphTZ), TimeZone: "UTC"},
+	}
+	if p.IdempotencyKey != "" {
+		reqBody.TransactionID = providerhttp.Key(userID, p.IdempotencyKey)
+		reqBody.Properties = []graphProperty{{operationProperty, reqBody.TransactionID}}
 	}
 	if p.Description != "" {
 		reqBody.Body = &graphItemBody{ContentType: "text", Content: p.Description}
@@ -121,8 +125,47 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 	if err != nil {
 		return "", "", "", err
 	}
-	if destCal != "" {
+	if destCal != "" && destCal != "primary" {
 		createURL = c.apiBase + "/me/calendars/" + url.PathEscape(destCal) + "/events"
+	}
+	if p.IdempotencyKey != "" {
+		q := url.Values{"$filter": {"singleValueExtendedProperties/Any(ep: ep/id eq '" + operationProperty + "' and ep/value eq '" + reqBody.TransactionID + "')"}, "$select": {"id,onlineMeeting"}, "$top": {"2"}}
+		probe, _ := http.NewRequestWithContext(ctx, http.MethodGet, createURL+"?"+q.Encode(), nil)
+		resp, e := hc.Do(probe)
+		if e != nil {
+			return "", "", "", e
+		}
+		if resp.StatusCode != 200 {
+			err = providerhttp.Error(resp, "microsoft: find existing event")
+			resp.Body.Close()
+			return "", "", "", err
+		}
+		var found struct {
+			Value []graphEventResp `json:"value"`
+			Next  string           `json:"@odata.nextLink"`
+		}
+		e = json.NewDecoder(resp.Body).Decode(&found)
+		resp.Body.Close()
+		if e != nil {
+			return "", "", "", e
+		}
+		if len(found.Value) > 1 || found.Next != "" {
+			return "", "", "", fmt.Errorf("microsoft: ambiguous event operation")
+		}
+		if len(found.Value) == 1 {
+			ev := found.Value[0]
+			if ev.ID == "" {
+				return "", "", "", fmt.Errorf("microsoft: incomplete existing event")
+			}
+			if e = c.UpdateEvent(ctx, userID, p.DestinationCalendarID, ev.ID, p.Start, p.End); e != nil {
+				return "", "", "", e
+			}
+			join := ""
+			if ev.OnlineMeeting != nil {
+				join = ev.OnlineMeeting.JoinURL
+			}
+			return ev.ID, join, p.DestinationCalendarID, nil
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, createURL, bytes.NewReader(body))
@@ -130,6 +173,9 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 		return "", "", "", fmt.Errorf("microsoft: create event request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if p.IdempotencyKey != "" {
+		req = providerhttp.ReplaySafe(req)
+	}
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -137,7 +183,7 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return "", "", "", fmt.Errorf("microsoft: create event status %d: %s", resp.StatusCode, graphErrBody(resp))
+		return "", "", "", providerhttp.Error(resp, "microsoft: create event")
 	}
 
 	var evResp graphEventResp
@@ -161,12 +207,48 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 // event by id at /me/events/{id} regardless of which of the user's calendars holds it, so
 // unlike Google and CalDAV there is nothing to re-target.
 func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time) error {
+	return providerhttp.Serialize(ctx, providerhttp.Key(fmt.Sprintf("%p", c.db), "microsoft", userID, calendarID, eventID), func() error { return c.updateEvent(ctx, userID, calendarID, eventID, start, end) })
+}
+func (c *Client) updateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time) error {
 	if eventID == "" {
 		return nil
 	}
 	hc, err := c.clientForCalendar(ctx, userID, calendarID)
 	if err != nil || hc == nil {
 		return err
+	}
+	// A preceding PATCH may have succeeded even if its response was lost. Read
+	// current state before another write, because repeating PATCH may email again.
+	probe, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.apiBase+"/me/events/"+url.PathEscape(eventID)+"?$select=start,end", nil)
+	probe.Header.Set("Prefer", `outlook.timezone="UTC"`)
+	current, e := hc.Do(probe)
+	if e != nil {
+		return e
+	}
+	if current.StatusCode != 200 {
+		err = providerhttp.Error(current, "microsoft: read event before update")
+		current.Body.Close()
+		return err
+	}
+	var existing struct {
+		Start, End graphDateTime
+		ETag       string `json:"@odata.etag"`
+	}
+	e = json.NewDecoder(current.Body).Decode(&existing)
+	if existing.ETag == "" {
+		existing.ETag = current.Header.Get("ETag")
+	}
+	current.Body.Close()
+	if e != nil {
+		return e
+	}
+	a, ae := existing.Start.parse()
+	b, be := existing.End.parse()
+	if ae != nil || be != nil {
+		return fmt.Errorf("microsoft: incomplete event times")
+	}
+	if a.Equal(start) && b.Equal(end) {
+		return nil
 	}
 
 	body, err := json.Marshal(struct {
@@ -185,6 +267,9 @@ func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID st
 		return fmt.Errorf("microsoft: update event request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if existing.ETag != "" {
+		req.Header.Set("If-Match", existing.ETag)
+	}
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -192,7 +277,7 @@ func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID st
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("microsoft: update event status %d", resp.StatusCode)
+		return providerhttp.Error(resp, "microsoft: update event")
 	}
 	return nil
 }
@@ -221,7 +306,7 @@ func (c *Client) CancelEvent(ctx context.Context, userID, calendarID, eventID st
 	defer resp.Body.Close()
 	// 204 = deleted; 404 = already gone — both fine.
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("microsoft: cancel event status %d", resp.StatusCode)
+		return providerhttp.Error(resp, "microsoft: cancel event")
 	}
 	return nil
 }

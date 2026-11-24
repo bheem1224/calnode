@@ -96,6 +96,13 @@ jobs:
       - name: go test
         run: go test ./...
 
+      - name: Provider concurrency and retry regression tests (race detector)
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          go test -race ./internal/providerhttp ./internal/oauthstore ./internal/calendar ./internal/calendar/microsoft ./internal/gcal \
+            -run 'Test(Cooldown|Retry|SafeRetries|AccountConcurrency|BoundClients|ConcurrentAvailability|CreateIntent|StableEvent|ExchangeRejects|AvailabilityFallback|ProviderPagination)' -count=1
+
       - name: Native authentication browser verification
         run: |
           go build -o "$RUNNER_TEMP/calnode-auth-test" ./cmd/calnode

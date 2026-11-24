@@ -118,7 +118,7 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.bookingSvc.ReassignHost(r.Context(), id, req.HostID)
+	updated, changed, err := h.bookingSvc.ReassignHostWithChange(r.Context(), id, req.HostID)
 	if errors.Is(err, booking.ErrDoubleBooked) {
 		h.writeError(w, http.StatusConflict, "the chosen host already has a booking at that time")
 		return
@@ -142,6 +142,9 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, toBookingJSON(updated))
+	if !changed {
+		return
+	}
 
 	// Side effects: move the calendar event and notify attendee + new host.
 	bCopy := *updated
@@ -163,7 +166,21 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			loc := i18n.Get(orgLocale) // nil (→ English) if empty/unrecognized; i18n.Locale.T handles nil safely
+			hosts, loadErr := h.assignedHosts(ctx, bCopy.ID)
+			if loadErr != nil {
+				h.logger.Error("reassign: load calendar assignment", "error", loadErr)
+				h.nudgeCalendarReconcile()
+				return
+			}
+			assignment := assignedHost{UserID: newHostID}
+			for _, host := range hosts {
+				if host.UserID == newHostID {
+					assignment = host
+					break
+				}
+			}
 			newEventID, _, newCalID, newProvider, err := gc.CreateEvent(ctx, newHostID, calendar.CreateEventParams{
+				IdempotencyKey: calendarAssignmentKey(bCopy.ID, assignment),
 				Summary:        loc.Tf("calendar_event_summary", etName, orgName),
 				Description:    loc.Tf("calendar_event_booking_id", bCopy.ID),
 				Location:       bCopy.LocationValue, // keep the existing Meet link (don't mint a new one)
@@ -174,6 +191,7 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 			})
 			if err != nil {
 				h.logger.Error("reassign: create new calendar event", "error", err, "booking_id", bCopy.ID)
+				h.nudgeCalendarReconcile()
 			} else {
 				if _, err := h.db.ExecContext(ctx,
 					`UPDATE bookings SET external_event_id = ? WHERE id = ?`, newEventID, bCopy.ID); err != nil {
