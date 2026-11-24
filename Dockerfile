@@ -39,7 +39,8 @@ RUN apk add --no-cache ca-certificates wget
 WORKDIR /build
 
 COPY go.mod go.sum ./
-RUN go mod download
+COPY scripts/download-go-modules.sh /usr/local/bin/download-go-modules
+RUN GOTOOLCHAIN=local sh /usr/local/bin/download-go-modules
 
 COPY . .
 COPY --from=frontend-builder /app/build ./frontend/build

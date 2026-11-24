@@ -9,6 +9,9 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      # setup-go installs the requested toolchain; do not bootstrap a second one.
+      GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@v4
 
@@ -46,10 +49,33 @@ jobs:
         working-directory: frontend
         run: pnpm test:visual
 
+      - name: Resolve the required Go toolchain
+        id: go-version
+        run: |
+          version=$(awk '$1 == "toolchain" {sub(/^go/, "", $2); print $2; exit}' go.mod)
+          if [ -z "$version" ]; then version=$(awk '$1 == "go" {print $2; exit}' go.mod); fi
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Verify dependency download retries
+        run: node --test scripts/download-go-modules.test.mjs
+
       - uses: actions/setup-go@v5
+        id: setup-go
+        continue-on-error: true
         with:
-          go-version-file: go.mod
+          go-version: ${{ steps.go-version.outputs.version }}
           cache: true
+
+      - name: Retry Go setup after a download failure
+        if: steps.setup-go.outcome == 'failure'
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.go-version.outputs.version }}
+          cache: true
+
+      - name: Download verified Go dependencies with retries
+        run: sh scripts/download-go-modules.sh
 
       - name: gofmt check
         run: |
