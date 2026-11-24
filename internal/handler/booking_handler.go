@@ -730,6 +730,7 @@ type bookingJSON struct {
 	ManageURL          string `json:"manage_url,omitempty"`
 	ID                 string `json:"id"`
 	EventTypeID        string `json:"event_type_id"`
+	SingleUseLinkID    string `json:"single_use_link_id,omitempty"`
 	EventTypeSlug      string `json:"event_type_slug,omitempty"`
 	HostID             string `json:"host_id"`
 	HostName           string `json:"host_name,omitempty"` // set in the admin "All bookings" view
@@ -1841,7 +1842,7 @@ func (h *Handler) GetBooking(w http.ResponseWriter, r *http.Request) {
 	if signed {
 		grants, err := access.Load(r.Context(), h.db, userID)
 		if err == nil && access.BookingAllowed(r.Context(), h.db, userID, grants["bookings.read"], id) {
-			h.writeJSON(w, 200, toBookingJSON(b))
+			h.writeBookingDetail(w, r, b)
 			return
 		}
 	}
@@ -2028,6 +2029,15 @@ func (h *Handler) enrichBookings(ctx context.Context, bookings []booking.Booking
 		ids[i] = b.ID
 	}
 	ph := placeholders(len(ids))
+	// The saved non-secret link identity is stable even if the webhook payload
+	// omits optional link fields. Never expose the bearer token here.
+	if err := h.scanPairs(ctx, bookingSingleUseQuery, ids, func(bid, linkID string) {
+		if i, ok := idxByID[bid]; ok {
+			items[i].SingleUseLinkID = linkID
+		}
+	}); err != nil {
+		return nil, err
+	}
 
 	// Event type slugs.
 	if err := h.scanPairs(ctx, bookingSlugsQuery, ids, func(bid, val string) {
@@ -2090,6 +2100,8 @@ func (h *Handler) enrichBookings(ctx context.Context, bookings []booking.Booking
 type pairQuery string
 
 const (
+	bookingSingleUseQuery pairQuery = `SELECT booking_id, id FROM single_use_tokens WHERE booking_id IN (%s)`
+
 	bookingSlugsQuery pairQuery = `SELECT b.id, COALESCE(et.slug, '') FROM bookings b
 		 LEFT JOIN event_types et ON et.id = b.event_type_id
 		 WHERE b.id IN (%s)`
@@ -2765,5 +2777,15 @@ func (h *Handler) GetBookingPrivate(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, 404, "booking not found")
 		return
 	}
-	h.writeJSON(w, 200, toBookingJSON(b))
+	h.writeBookingDetail(w, r, b)
+}
+
+// Use the same authorized representation for a single booking and a list page.
+func (h *Handler) writeBookingDetail(w http.ResponseWriter, r *http.Request, b *booking.Booking) {
+	items, err := h.enrichBookings(r.Context(), []booking.Booking{*b}, false)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "could not load booking details")
+		return
+	}
+	h.writeJSON(w, http.StatusOK, items[0])
 }

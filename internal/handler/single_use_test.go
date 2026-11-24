@@ -252,6 +252,32 @@ func TestSingleUseLinks_lifecycleBookReplayAndManageReschedule(t *testing.T) {
 	if err := json.Unmarshal(bookRec.Body.Bytes(), &booked); err != nil || booked.ID == "" {
 		t.Fatalf("decode booking: %v / %s", err, bookRec.Body.String())
 	}
+	// The authenticated detail uses the same enrichment as the list, including
+	// the stable link reference. Anonymous reads never disclose this correlation.
+	detailReq := authReq(http.MethodGet, "/v1/bookings/"+booked.ID, "", apiKey)
+	detailReq.SetPathValue("id", booked.ID)
+	detailRec := httptest.NewRecorder()
+	h.GetBooking(detailRec, detailReq)
+	if detailRec.Code != http.StatusOK {
+		t.Fatal(detailRec.Code, detailRec.Body.String())
+	}
+	var detail struct {
+		LinkID    string `json:"single_use_link_id"`
+		Attendees []struct{ Email string }
+	}
+	if err := json.Unmarshal(detailRec.Body.Bytes(), &detail); err != nil || detail.LinkID == "" || len(detail.Attendees) != 1 || detail.Attendees[0].Email != "jane@acme.vc" {
+		t.Fatalf("incomplete authorized detail: %v %s", err, detailRec.Body.String())
+	}
+	if strings.Contains(detailRec.Body.String(), created.Token) {
+		t.Fatal("detail disclosed the bearer booking token")
+	}
+	publicReq := httptest.NewRequest(http.MethodGet, "/v1/bookings/"+booked.ID, nil)
+	publicReq.SetPathValue("id", booked.ID)
+	publicRec := httptest.NewRecorder()
+	h.GetBooking(publicRec, publicReq)
+	if strings.Contains(publicRec.Body.String(), detail.LinkID) || strings.Contains(publicRec.Body.String(), "jane@acme.vc") {
+		t.Fatal("anonymous detail disclosed private correlation or attendee")
+	}
 
 	// 5. Replay GET /t/{token} and POST /v1/bookings -> 410 Gone.
 	replayPageReq := httptest.NewRequest(http.MethodGet, "/t/"+created.Token, nil)
