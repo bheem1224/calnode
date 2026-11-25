@@ -172,11 +172,13 @@ export type SingleUseLink = {
 	used_at: string | null;
 	booking_id: string | null;
 	created_at: string;
+	has_prefill?: boolean;
 };
 
 export type CreateSingleUseLinkPayload = {
 	expires_in_hours?: number;
 	expires_in_seconds?: number;
+	prefill?: Record<string, string>;
 };
 
 export type QuestionType =

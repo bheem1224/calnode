@@ -102,11 +102,12 @@ func TestStableEventSurvivesLostResponseConcurrentRetriesAndRestart(t *testing.T
 				t.Fatal("complete provider outage reported success")
 			}
 			mu.Lock()
-			if creates != 0 {
-				t.Fatal("unavailable provider created an event or invitation")
-			}
+			outageCreates := creates
 			unavailable = false
 			mu.Unlock()
+			if outageCreates != 0 {
+				t.Fatal("unavailable provider created an event or invitation")
+			}
 			var wg sync.WaitGroup
 			for i := 0; i < 6; i++ {
 				wg.Add(1)
